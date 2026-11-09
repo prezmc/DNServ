@@ -36,7 +36,7 @@ type ListStatus struct {
 // Engine owns the current Index and rebuilds it when lists change. Lookups
 // are lock-free: a rebuild compiles a new Index and swaps it in atomically.
 type Engine struct {
-	cfg    config.FilteringConfig
+	cfg    atomic.Pointer[config.FilteringConfig]
 	dir    string
 	client *http.Client
 	log    *slog.Logger
@@ -52,18 +52,23 @@ func NewEngine(cfg config.FilteringConfig, dataDir string, client *http.Client, 
 	if client == nil {
 		client = &http.Client{Timeout: 60 * time.Second}
 	}
-	e := &Engine{cfg: cfg, dir: filepath.Join(dataDir, "lists"), client: client, log: log}
+	e := &Engine{dir: filepath.Join(dataDir, "lists"), client: client, log: log}
+	e.cfg.Store(&cfg)
 	empty := []ListStatus{}
 	e.status.Store(&empty)
 	return e
 }
 
 // Enabled reports whether filtering is on.
-func (e *Engine) Enabled() bool { return e.cfg.Enabled }
+func (e *Engine) Enabled() bool { return e.cfg.Load().Enabled }
+
+// SetConfig replaces the filtering settings. Call Rebuild afterwards when
+// lists or rules changed; Enabled takes effect at once.
+func (e *Engine) SetConfig(cfg config.FilteringConfig) { e.cfg.Store(&cfg) }
 
 // Lookup checks a normalized name against the current index.
 func (e *Engine) Lookup(name string) Match {
-	if !e.cfg.Enabled {
+	if !e.cfg.Load().Enabled {
 		return Match{}
 	}
 	return e.idx.Load().Lookup(name)
@@ -82,12 +87,13 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	start := time.Now()
+	cfg := *e.cfg.Load()
 
 	b := NewBuilder()
 	var statuses []ListStatus
 
 	custom := b.AddSource("Custom rules", TierCustom)
-	for _, line := range e.cfg.Rules {
+	for _, line := range cfg.Rules {
 		rules, ok, _ := ParseLine(line)
 		if !ok {
 			e.log.Warn("ignoring unsupported custom rule", "rule", line)
@@ -98,7 +104,7 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 		}
 	}
 
-	if e.cfg.BlockBypass {
+	if cfg.BlockBypass {
 		src := b.AddSource("Bypass protection", TierList)
 		for _, d := range BypassDomains {
 			b.Add(src, Rule{Domain: d, Kind: Suffix})
@@ -132,10 +138,10 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 		}
 		statuses = append(statuses, st)
 	}
-	for _, l := range e.cfg.Allowlists {
+	for _, l := range cfg.Allowlists {
 		load(l, true)
 	}
-	for _, l := range e.cfg.Lists {
+	for _, l := range cfg.Lists {
 		load(l, false)
 	}
 
@@ -148,10 +154,11 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 
 // Run rebuilds on the configured interval until ctx ends.
 func (e *Engine) Run(ctx context.Context) {
-	if e.cfg.RefreshInterval <= 0 {
+	every := e.cfg.Load().RefreshInterval
+	if every <= 0 {
 		return
 	}
-	t := time.NewTicker(e.cfg.RefreshInterval)
+	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
 		select {
@@ -180,7 +187,7 @@ func (e *Engine) open(ctx context.Context, src string, force bool) (io.ReadClose
 
 	sum := sha256.Sum256([]byte(src))
 	cachePath := filepath.Join(e.dir, hex.EncodeToString(sum[:8])+".txt")
-	if fi, err := os.Stat(cachePath); err == nil && !force && time.Since(fi.ModTime()) < e.cfg.RefreshInterval {
+	if fi, err := os.Stat(cachePath); err == nil && !force && time.Since(fi.ModTime()) < e.cfg.Load().RefreshInterval {
 		f, err := os.Open(cachePath)
 		if err == nil {
 			return f, true, fi.ModTime(), nil

@@ -312,6 +312,18 @@ func withStaleTTL(m *dns.Msg) *dns.Msg {
 	return out
 }
 
+// Flush drops every entry (after an upstream change, so answers from
+// the old path aren't served).
+func (c *Cache) Flush() {
+	for i := range c.shards {
+		s := &c.shards[i]
+		s.mu.Lock()
+		s.items = map[string]*list.Element{}
+		s.lru.Init()
+		s.mu.Unlock()
+	}
+}
+
 // Len returns the number of cached entries.
 func (c *Cache) Len() int {
 	n := 0

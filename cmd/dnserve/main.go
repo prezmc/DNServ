@@ -11,16 +11,22 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
+	"github.com/prezmc/dnserve/internal/api"
+	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/recursive"
 	"github.com/prezmc/dnserve/internal/server"
+	"github.com/prezmc/dnserve/internal/store"
 	"github.com/prezmc/dnserve/internal/upstream"
 )
 
@@ -39,6 +45,8 @@ func run() error {
 	checkConfig := flag.Bool("check-config", false, "validate the config and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	healthcheck := flag.String("healthcheck", "", "probe http://ADDR/healthz and exit 0 if healthy (for container health checks)")
+	resetMFA := flag.String("reset-mfa", "", "recovery: clear USERNAME's two-factor setup and exit (stop the node first)")
+	resetPassword := flag.Bool("reset-password", false, "with -reset-mfa: also set and print a new temporary password")
 	flag.Parse()
 
 	if *healthcheck != "" {
@@ -56,31 +64,50 @@ func run() error {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 
-	cfg, err := config.Load(*cfgPath)
+	// Base config: built-in defaults, then the optional file, then
+	// DNSERVE_* environment variables. Settings saved in the dashboard
+	// are layered on top, so a node needs no files to get started.
+	base, err := config.Load(*cfgPath)
 	if err != nil {
 		return err
 	}
-	if err := cfg.ApplyEnv(os.Getenv); err != nil {
+	if err := base.ApplyEnv(os.Getenv); err != nil {
 		return err
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := base.Validate(); err != nil {
 		return err
 	}
 	if *checkConfig {
 		fmt.Println("config OK")
 		return nil
 	}
-	log.Info("starting dnserve", "version", version, "config", *cfgPath, "upstream_mode", cfg.Upstream.Mode)
+	if *resetMFA != "" {
+		return recoverAccount(base.DataDir, *resetMFA, *resetPassword)
+	}
+
+	st, err := store.Open(base.DataDir)
+	if err != nil {
+		return fmt.Errorf("open state: %w", err)
+	}
+	cfg := st.State().Settings.Overlay(base)
+	if err := cfg.Validate(); err != nil {
+		log.Error("saved settings are invalid; using the file and environment config until they are fixed", "err", err)
+		cfg = base
+	}
+	log.Info("starting dnserve", "version", version, "config", *cfgPath, "data_dir", cfg.DataDir, "upstream_mode", cfg.Upstream.Mode)
+	started := time.Now()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	// Upstream, by mode.
-	up, err := buildResolver(ctx, cfg, log)
+	first, err := buildResolver(ctx, cfg, log, nil)
 	if err != nil {
 		return err
 	}
-	defer func() { stop(); up.wait() }() // stop Unbound on any exit path
+	var up atomic.Pointer[resolverSet]
+	up.Store(first)
+	defer func() { stop(); up.Load().close(nil) }() // stop Unbound on any exit path
 
 	// Cache, warmed from disk.
 	var c *cache.Cache
@@ -111,7 +138,7 @@ func run() error {
 		engine.Run(ctx)
 	}()
 
-	srv, err := server.New(cfg, c, engine, up.resolver, log)
+	srv, err := server.New(cfg, c, engine, first.resolver, log)
 	if err != nil {
 		return err
 	}
@@ -133,9 +160,75 @@ func run() error {
 		}
 	}
 
+	// Admin API: setup, sign-in, users, settings.
+	sessions, err := auth.OpenSessions(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("open sessions: %w", err)
+	}
+	adm := api.New(st, sessions, base, log.With("component", "api"))
+	adm.AllowedOrigins = splitList(os.Getenv("DNSERVE_ALLOWED_ORIGINS"))
+	adm.Status = func() any {
+		set := up.Load()
+		eff := adm.Effective()
+		out := map[string]any{
+			"version":        version,
+			"uptime_seconds": int64(time.Since(started).Seconds()),
+			"upstream_mode":  set.mode,
+			"queries":        srv.Metrics.Counts(),
+			"filter": map[string]any{
+				"enabled": engine.Enabled(), "ready": filterReady.Load(),
+				"rules": engine.Rules(), "lists": engine.Status(),
+			},
+		}
+		var ups []upstream.Stat
+		for _, g := range set.groups {
+			ups = append(ups, g.Stats()...)
+		}
+		out["upstreams"] = ups
+		if set.unbound != nil {
+			out["unbound"] = map[string]any{"ready": set.unbound.ub.Ready(), "restarts": set.unbound.ub.Restarts()}
+		}
+		if set.tunnel != nil {
+			ok, why := set.tunnel.Up()
+			out["tunnel"] = map[string]any{"up": ok, "detail": why, "interface": eff.Upstream.Tunnel.Interface}
+		}
+		if c != nil {
+			out["cache"] = c.Stats()
+		}
+		return out
+	}
+
+	// Apply saved settings live. Changes are queued and applied one at a
+	// time off the request path (starting Unbound can take seconds).
+	reload := make(chan struct{}, 1)
+	st.Subscribe(func(old, new *store.State) {
+		if !reflect.DeepEqual(old.Settings, new.Settings) {
+			select {
+			case reload <- struct{}{}:
+			default:
+			}
+		}
+	})
+	go func() {
+		applied := cfg
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-reload:
+			}
+			next := adm.Effective()
+			if err := next.Validate(); err != nil {
+				log.Error("not applying settings", "err", err)
+				continue
+			}
+			applied = applySettings(ctx, applied, next, srv, engine, &up, log)
+		}
+	}()
+
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTP.Listen,
-		Handler:           httpHandler(srv, c, engine, up, &filterReady),
+		Handler:           httpHandler(srv, c, engine, &up, &filterReady, adm.Handler()),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -152,6 +245,7 @@ func run() error {
 	defer cancel()
 	_ = httpSrv.Shutdown(shutCtx)
 	_ = srv.Shutdown(shutCtx)
+	_ = sessions.Save()
 	if c != nil && cfg.Cache.Persist {
 		if n, err := c.Save(cachePath); err != nil {
 			log.Warn("cache save failed", "err", err)
@@ -162,17 +256,101 @@ func run() error {
 	return nil
 }
 
-func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, up *resolverSet, ready *atomic.Bool) http.Handler {
+// applySettings moves the running node from cfg to next and returns what
+// is now in force.
+func applySettings(ctx context.Context, cfg, next config.Config, srv *server.Server, engine *filter.Engine, up *atomic.Pointer[resolverSet], log *slog.Logger) config.Config {
+	var newSet *resolverSet
+	if !reflect.DeepEqual(cfg.Upstream, next.Upstream) {
+		old := up.Load()
+		set, err := buildResolver(ctx, next, log, old.unbound)
+		if err != nil {
+			log.Error("upstream change failed; keeping the current upstream", "err", err)
+			next.Upstream = cfg.Upstream
+		} else {
+			newSet = set
+		}
+	}
+	var r server.Resolver
+	if newSet != nil {
+		r = newSet.resolver
+	}
+	if err := srv.Apply(r, next.DNS.AllowedNets, next.Filtering, newSet != nil); err != nil {
+		log.Error("settings change failed", "err", err)
+		if newSet != nil {
+			newSet.close(up.Load().unbound)
+		}
+		return cfg
+	}
+	if newSet != nil {
+		old := up.Swap(newSet)
+		old.close(newSet.unbound)
+		log.Info("upstream changed", "mode", next.Upstream.Mode)
+	}
+	engine.SetConfig(next.Filtering)
+	f, n := cfg.Filtering, next.Filtering
+	if !slices.Equal(f.Rules, n.Rules) || !reflect.DeepEqual(f.Lists, n.Lists) ||
+		!reflect.DeepEqual(f.Allowlists, n.Allowlists) || f.BlockBypass != n.BlockBypass {
+		if err := engine.Rebuild(ctx, false); err != nil {
+			log.Error("filter rebuild failed", "err", err)
+		}
+	}
+	return next
+}
+
+// recoverAccount is the locked-out-admin escape hatch. It needs shell
+// access to the data volume, which already implies full control.
+func recoverAccount(dataDir, username string, newPassword bool) error {
+	st, err := store.Open(dataDir)
+	if err != nil {
+		return err
+	}
+	u := st.State().UserByName(username)
+	if u == nil {
+		return fmt.Errorf("no user %q", username)
+	}
+	if _, err := st.Apply(store.NewCommand(store.OpMFAReset, "console", store.IDOnly{ID: u.ID})); err != nil {
+		return err
+	}
+	fmt.Printf("two-factor sign-in cleared for %q; set it up again at the next sign-in\n", username)
+	if newPassword {
+		pw := auth.RandomID(12)
+		hash, err := auth.HashPassword(pw)
+		if err != nil {
+			return err
+		}
+		if _, err := st.Apply(store.NewCommand(store.OpUserPassword, "console", store.UserPassword{ID: u.ID, PasswordHash: hash})); err != nil {
+			return err
+		}
+		fmt.Printf("temporary password: %s\n", pw)
+	}
+	sessions, err := auth.OpenSessions(dataDir)
+	if err == nil {
+		sessions.RevokeUser(u.ID, "")
+	}
+	return nil
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
+		out = append(out, f)
+	}
+	return out
+}
+
+func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, ups *atomic.Pointer[resolverSet], ready *atomic.Bool, apiHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	mux.Handle("/api/", apiHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		up := ups.Load()
 		if !ready.Load() {
 			http.Error(w, "filter lists loading\n", http.StatusServiceUnavailable)
 			return
 		}
-		if up.unbound != nil && !up.unbound.Ready() {
+		if up.unbound != nil && !up.unbound.ub.Ready() {
 			http.Error(w, "unbound not ready\n", http.StatusServiceUnavailable)
 			return
 		}
@@ -180,6 +358,7 @@ func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, up *
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+		up := ups.Load()
 		srv.Metrics.WritePrometheus(w)
 		if c != nil {
 			st := c.Stats()
@@ -194,8 +373,8 @@ func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, up *
 			}
 		}
 		if up.unbound != nil {
-			fmt.Fprintf(w, "# TYPE dnserve_unbound_up gauge\ndnserve_unbound_up %d\n", b2i(up.unbound.Ready()))
-			fmt.Fprintf(w, "# TYPE dnserve_unbound_restarts_total counter\ndnserve_unbound_restarts_total %d\n", up.unbound.Restarts())
+			fmt.Fprintf(w, "# TYPE dnserve_unbound_up gauge\ndnserve_unbound_up %d\n", b2i(up.unbound.ub.Ready()))
+			fmt.Fprintf(w, "# TYPE dnserve_unbound_restarts_total counter\ndnserve_unbound_restarts_total %d\n", up.unbound.ub.Restarts())
 		}
 		if up.tunnel != nil {
 			ok, _ := up.tunnel.Up()
@@ -230,22 +409,46 @@ func b2i(b bool) int {
 // resolverSet is the upstream path for the configured mode plus the parts
 // health and metrics report on.
 type resolverSet struct {
+	mode     string
 	resolver server.Resolver
 	groups   []*upstream.Group
-	unbound  *recursive.Unbound
+	unbound  *unboundProc // shared between sets while the mode needs it
 	tunnel   *recursive.Tunnel
-	done     chan struct{} // closed when Unbound has stopped
+	cancel   context.CancelFunc // stops this set's background checks
 }
 
-func (r *resolverSet) wait() {
-	if r.done != nil {
-		<-r.done
+// unboundProc is a running bundled Unbound.
+type unboundProc struct {
+	ub     *recursive.Unbound
+	cancel context.CancelFunc
+	done   chan struct{}
+	once   sync.Once
+}
+
+func (p *unboundProc) stop() {
+	p.once.Do(func() { p.cancel(); <-p.done })
+}
+
+// close stops the set's background work, and its Unbound unless keep is
+// the same process (it moved to the next set).
+func (r *resolverSet) close(keep *unboundProc) {
+	r.cancel()
+	if r.unbound != nil && r.unbound != keep {
+		r.unbound.stop()
 	}
 }
 
-func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger) (*resolverSet, error) {
+// buildResolver builds the upstream path for cfg. A running Unbound is
+// reused when the new mode needs one too, since its config doesn't depend
+// on upstream settings.
+func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger, reuse *unboundProc) (*resolverSet, error) {
 	u := cfg.Upstream
-	set := &resolverSet{}
+	sctx, cancel := context.WithCancel(ctx)
+	set := &resolverSet{mode: u.Mode, cancel: cancel}
+	fail := func(err error) (*resolverSet, error) {
+		set.close(reuse)
+		return nil, err
+	}
 	forward := func() (*upstream.Group, error) {
 		g, err := upstream.NewGroup(u.Servers, u.Bootstrap, u.Timeout, log)
 		if err == nil {
@@ -255,35 +458,44 @@ func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger) (*r
 	}
 	if u.Mode == "forward" {
 		g, err := forward()
+		if err != nil {
+			return fail(err)
+		}
 		set.resolver = g
-		return set, err
+		return set, nil
 	}
 
 	// recursive and tunnel: run the bundled Unbound.
-	r := u.Recursive
-	opts := recursive.Options{
-		Binary: r.Binary, Dir: filepath.Join(cfg.DataDir, "unbound"), Port: r.Port,
-		Threads: r.Threads, CacheMB: r.CacheMB, ServeExpired: cfg.Cache.ServeStale,
+	if reuse != nil {
+		set.unbound = reuse
+	} else {
+		r := u.Recursive
+		opts := recursive.Options{
+			Binary: r.Binary, Dir: filepath.Join(cfg.DataDir, "unbound"), Port: r.Port,
+			Threads: r.Threads, CacheMB: r.CacheMB, ServeExpired: cfg.Cache.ServeStale,
+		}
+		ub := recursive.New(opts, log.With("component", "unbound"))
+		confPath, err := ub.Prepare()
+		if err != nil {
+			return fail(err)
+		}
+		uctx, ucancel := context.WithCancel(ctx)
+		p := &unboundProc{ub: ub, cancel: ucancel, done: make(chan struct{})}
+		set.unbound = p
+		go func() {
+			defer close(p.done)
+			ub.Run(uctx, confPath)
+		}()
+		wctx, wcancel := context.WithTimeout(ctx, 15*time.Second)
+		err = ub.WaitReady(wctx)
+		wcancel()
+		if err != nil {
+			log.Error("unbound is not answering yet; DNS will SERVFAIL until it is", "err", err)
+		}
 	}
-	ub := recursive.New(opts, log.With("component", "unbound"))
-	confPath, err := ub.Prepare()
+	local, err := upstream.NewGroup([]string{"udp://" + set.unbound.ub.Addr()}, nil, u.Timeout, log)
 	if err != nil {
-		return nil, err
-	}
-	set.unbound = ub
-	set.done = make(chan struct{})
-	go func() {
-		defer close(set.done)
-		ub.Run(ctx, confPath)
-	}()
-	wctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	if err := ub.WaitReady(wctx); err != nil {
-		log.Error("unbound is not answering yet; DNS will SERVFAIL until it is", "err", err)
-	}
-	local, err := upstream.NewGroup([]string{"udp://" + ub.Addr()}, nil, u.Timeout, log)
-	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	set.groups = append(set.groups, local)
 	if u.Mode == "recursive" {
@@ -293,18 +505,18 @@ func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger) (*r
 
 	expected, err := recursive.ParsePrefixes(u.Tunnel.ExpectedEgress)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	t := &recursive.Tunnel{Primary: local, Interface: u.Tunnel.Interface, Expected: expected, Log: log.With("component", "tunnel")}
 	if u.Tunnel.OnDown == "forward" {
 		g, err := forward()
 		if err != nil {
-			return nil, err
+			return fail(err)
 		}
 		t.Fallback = g
 	}
-	t.Check(ctx)
-	go t.Run(ctx, u.Tunnel.CheckInterval)
+	t.Check(sctx)
+	go t.Run(sctx, u.Tunnel.CheckInterval)
 	set.tunnel = t
 	set.resolver = t
 	return set, nil

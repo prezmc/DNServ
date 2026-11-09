@@ -55,6 +55,17 @@ dashboard (step 1c) will handle the rest from your browser.
   Optional per-client rate limit.
 - **Observable.** `/healthz`, `/readyz` and Prometheus `/metrics` (queries by
   outcome, latency histograms, cache and upstream stats).
+- **Accounts with mandatory two-factor sign-in.** Admins, power users (an
+  admin picks what each one may change) and viewers. Every account must set
+  up an authenticator app before it can do anything, and gets ten one-time
+  recovery codes. Passwords are hashed with Argon2id; failed sign-ins are
+  throttled; sessions end on password change, MFA reset or disable.
+- **Settings change live.** Upstream mode, servers, tunnel, allowed
+  networks, lists and rules saved through the API apply without a restart,
+  and every change is in the audit log with who made it and what it was
+  before.
+- **API tokens** for scripts and home automation, limited to the
+  permissions you pick.
 
 ## Run it
 
@@ -66,10 +77,23 @@ docker run -d --name dnserve --restart unless-stopped \
 
 or `docker compose up -d` with the included `docker-compose.yml`.
 
-With no config file the node uses the defaults in
-[`dnserve.example.yaml`](dnserve.example.yaml). To customize, copy that file
-to `/data/dnserve.yaml` in the volume (or mount your own) and restart. Check a
-config without starting it with `dnserve -check-config -config FILE`.
+No config file is needed. On first start the node prints a one-time setup
+code in its log:
+
+```bash
+docker logs dnserve 2>&1 | grep setup_code
+```
+
+Use that code to create the first admin account (the web setup screen
+arrives in the next release; until then use the API below), then set up
+your authenticator app. Only someone who can read the container's logs can
+claim a new node.
+
+Settings you save are stored in the data volume and win over the config
+file and environment variables, which only provide the starting values. A
+config file is optional: copy [`dnserve.example.yaml`](dnserve.example.yaml)
+to `/data/dnserve.yaml` if you'd rather manage settings that way. Check one
+with `dnserve -check-config -config FILE`.
 
 Notes:
 
@@ -99,7 +123,47 @@ Notes:
 | `DNSERVE_BLOCK_BYPASS` | `true` | block public DoH resolvers and Private Relay |
 | `DNSERVE_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
 
-Environment variables override the optional config file.
+| `DNSERVE_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
+
+Environment variables override the optional config file; settings saved in
+the dashboard or API override both.
+
+## Admin API
+
+Everything is under `/api/v1` on port 8080. Browsers use a session cookie
+plus the `X-CSRF-Token` header from the sign-in response; scripts use
+`Authorization: Bearer dns_…` tokens.
+
+| | Endpoint |
+|---|---|
+| First run | `GET /setup`, `POST /setup` `{code, username, password}` |
+| Sign in | `POST /auth/login`, then `POST /auth/mfa` `{code}` (authenticator or recovery code) |
+| Enroll MFA | `POST /auth/totp/begin` (returns the secret and `otpauth://` URL), `POST /auth/totp/confirm` `{code}` |
+| You | `GET /auth/me`, `POST /auth/password`, `GET`/`DELETE /auth/sessions`, `POST /auth/logout` |
+| Users | `GET`/`POST /users`, `PATCH`/`DELETE /users/{id}`, `POST /users/{id}/password`, `POST /users/{id}/reset-mfa` |
+| Tokens | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
+| Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}` |
+| Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}` |
+| Status and audit | `GET /status`, `GET /audit` |
+
+Permissions: `dashboard.view`, `querylog.view`, `data.export`,
+`domains.allowblock`, `rules.edit`, `lists.manage`, `devices.manage`,
+`upstream.manage`, `network.manage` (any of these can be given to a power
+user), and the admin-only `users.manage`, `cluster.manage`,
+`backups.manage`, `audit.view`.
+
+Lost your phone? Sign in with a recovery code, or have another admin reset
+your MFA. If the only admin is locked out, stop the node and run:
+
+```bash
+docker stop dnserve
+docker run --rm -v dnserve-data:/data prezmcmahon/dnserve -reset-mfa USERNAME
+docker start dnserve
+```
+
+That clears the account's second factor (you set it up again at the next
+sign-in) and is recorded in the audit log. Add `-reset-password` to also
+print a new temporary password.
 
 ## Tunnel mode
 
@@ -177,8 +241,8 @@ secrets are set.
 ## Roadmap
 
 1. **DNS node.** 1a core node. 1b Unbound recursive mode, WireGuard
-   tunnel mode, DoH/DoT for clients (this). 1c admin API and UI with users, roles and
-   mandatory MFA. 1d per-device and per-group policies with schedules, and a
+   tunnel mode, DoH/DoT for clients. 1c admin API with users, roles and
+   mandatory MFA (this), then the web UI with a setup wizard. 1d per-device and per-group policies with schedules, and a
    load-test harness.
 2. **Clustering and backups.** Embedded Raft so any node can lead, owner
    overrides, witness mode, audit log, versioned config, scheduled encrypted
