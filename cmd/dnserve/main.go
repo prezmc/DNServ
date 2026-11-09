@@ -24,6 +24,7 @@ import (
 
 	"github.com/prezmc/dnserve/internal/api"
 	"github.com/prezmc/dnserve/internal/auth"
+	"github.com/prezmc/dnserve/internal/backup"
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/cluster"
 	"github.com/prezmc/dnserve/internal/config"
@@ -203,6 +204,23 @@ func run() error {
 	adm := api.New(st, sessions, base, log.With("component", "api"))
 	adm.AllowedOrigins = splitList(os.Getenv("DNSERVE_ALLOWED_ORIGINS"))
 	adm.Cluster = cl
+	// Scheduled backups: each node keeps its own in /data/backups; the
+	// leader also writes to the off-box folder when one is set.
+	adm.Backups = &backup.Manager{
+		Store: st, Dir: filepath.Join(cfg.DataDir, "backups"), Version: version,
+		Node:     cl.Name,
+		Cluster:  func() string { return st.State().Cluster.ID },
+		IsLeader: func() bool { return cl.LocalStatus().State == "Leader" },
+		// The same time zone as group schedules.
+		Loc: func() *time.Location {
+			if l, err := adm.Effective().Location(); err == nil {
+				return l
+			}
+			return time.UTC
+		},
+		Log: log.With("component", "backup"),
+	}
+	go adm.Backups.Run(ctx)
 	adm.QueryLog = qlog
 	adm.CheckDomain = engine.Lookup
 	adm.LookupName = srv.LookupName

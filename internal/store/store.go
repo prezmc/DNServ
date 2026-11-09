@@ -38,6 +38,11 @@ type State struct {
 	Groups    map[string]*Group  `json:"groups"`
 	Audit     []AuditEntry       `json:"audit"`
 	Cluster   ClusterState       `json:"cluster"`
+	// ConfigVersions is the settings history, oldest first; ConfigSeq
+	// numbers them.
+	ConfigVersions []ConfigVersion `json:"config_versions,omitempty"`
+	ConfigSeq      uint64          `json:"config_seq,omitempty"`
+	Backup         BackupConfig    `json:"backup"`
 	// SetupDone is set when the first admin finishes MFA enrollment.
 	SetupDone bool `json:"setup_done"`
 }
@@ -239,6 +244,11 @@ func (s *Store) applyAt(index uint64, c Command) (any, error) {
 		s.mu.Unlock()
 		return nil, err
 	}
+	summary := ""
+	if entry != nil {
+		summary = entry.Summary
+	}
+	recordVersion(s.cur, next, c, summary)
 	next.Version++
 	if index != 0 {
 		next.RaftIndex = index
