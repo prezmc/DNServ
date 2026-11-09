@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -19,6 +21,8 @@ import (
 
 	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/config"
+	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/store"
 )
 
@@ -42,6 +46,15 @@ type API struct {
 	// for reverse proxies that rewrite Host.
 	AllowedOrigins []string
 	Log            *slog.Logger
+	// QueryLog holds recent queries (nil disables the queries and devices
+	// views).
+	QueryLog *querylog.Log
+	// CheckDomain explains how the filter treats a name.
+	CheckDomain func(name string) filter.Match
+	// LookupName asks the router for a device's name ("" if unknown).
+	LookupName func(ctx context.Context, a netip.Addr) string
+
+	names namesCache
 
 	now       func() time.Time
 	setupOnce sync.Mutex
@@ -115,6 +128,14 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("PATCH /api/v1/settings", a.authed("", a.patchSettings))
 	m.HandleFunc("POST /api/v1/settings/reset", a.authed("", a.resetSettings))
 	m.HandleFunc("POST /api/v1/domains", a.authed(store.PermAllowBlock, a.domainAction))
+	m.HandleFunc("GET /api/v1/domains/check", a.authed(store.PermDashboard, a.checkDomain))
+
+	// Devices and recent queries.
+	m.HandleFunc("GET /api/v1/devices", a.authed(store.PermDashboard, a.listDevices))
+	m.HandleFunc("POST /api/v1/devices", a.authed(store.PermDevices, a.saveDevice))
+	m.HandleFunc("PUT /api/v1/devices/{id}", a.authed(store.PermDevices, a.saveDevice))
+	m.HandleFunc("DELETE /api/v1/devices/{id}", a.authed(store.PermDevices, a.deleteDevice))
+	m.HandleFunc("GET /api/v1/queries", a.authed(store.PermQueryLog, a.queries))
 
 	// Status and audit.
 	m.HandleFunc("GET /api/v1/status", a.authed(store.PermDashboard, a.status))

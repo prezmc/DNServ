@@ -66,6 +66,12 @@ setup wizard and dashboard handle the rest from your browser.
   before.
 - **API tokens** for scripts and home automation, limited to the
   permissions you pick.
+- **Devices and recent queries.** See every device using DNServe, name
+  them, and browse its most recent queries (kept in memory) with one-click
+  Block or Allow. "Check a domain" says whether a name is blocked and by
+  which rule and list. Give DNServe your router's address (`local_dns`) and
+  it shows the names your router knows and answers local names such as
+  `printer.lan` through it.
 
 ## Run it
 
@@ -95,7 +101,8 @@ Open `http://<server>:8080` and the setup wizard walks you through it:
 Then set your router's DHCP DNS server to the machine's address. Only
 someone who can read the container's logs can claim a new node.
 
-The dashboard has pages for status and one-click blocking, settings,
+The dashboard has pages for status, checking and blocking domains,
+devices, recent queries, settings,
 users (admins), the audit log (admins), and your own password, sessions
 and API tokens. It is a small built-in page with no external scripts or
 fonts, so it works without internet access. Port 8080 is plain HTTP: keep
@@ -133,9 +140,9 @@ Notes:
 | `DNSERVE_TUNNEL_EXPECTED_EGRESS` | `185.65.0.0/16` | optional VPN exit IPs to verify |
 | `DNSERVE_TUNNEL_ON_DOWN` | `block` | `forward` (encrypted fallback) or `block` |
 | `DNSERVE_ALLOWED_NETS` | `192.168.1.0/24,10.0.0.0/8` | client networks allowed to query |
+| `DNSERVE_LOCAL_DNS` | `192.168.1.1` | your router, for device names and local names |
 | `DNSERVE_BLOCK_BYPASS` | `true` | block public DoH resolvers and Private Relay |
 | `DNSERVE_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
-
 | `DNSERVE_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
 
 Environment variables override the optional config file; settings saved in
@@ -156,7 +163,9 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Users | `GET`/`POST /users`, `PATCH`/`DELETE /users/{id}`, `POST /users/{id}/password`, `POST /users/{id}/reset-mfa` |
 | Tokens | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}` |
-| Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}` |
+| Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}`, `GET /domains/check?name=` |
+| Devices | `GET`/`POST /devices` `{name, addrs}`, `PUT`/`DELETE /devices/{id}` |
+| Recent queries | `GET /queries?client=&search=&result=&before=&limit=` (`client` is an IP or device id; `result` is `blocked`, `allowed`, `failed`, …) |
 | Status and audit | `GET /status`, `GET /audit` |
 
 Permissions: `dashboard.view`, `querylog.view`, `data.export`,
@@ -255,8 +264,9 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
 
 1. **DNS node.** 1a core node. 1b Unbound recursive mode, WireGuard
    tunnel mode, DoH/DoT for clients. 1c admin API with users, roles and
-   mandatory MFA, and the web UI with a setup wizard (this). 1d per-device and per-group policies with schedules, and a
-   load-test harness.
+   mandatory MFA, and the web UI with a setup wizard. 1d devices, recent
+   queries and router names (this), then per-device and per-group policies
+   with schedules, and a load-test harness.
 2. **Clustering and backups.** Embedded Raft so any node can lead, owner
    overrides, witness mode, audit log, versioned config, scheduled encrypted
    backups.

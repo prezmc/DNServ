@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"slices"
 	"strings"
 	"time"
@@ -91,6 +92,8 @@ const (
 	OpTokenRevoke    = "token.revoke"       // IDOnly
 	OpSettingsUpdate = "settings.update"    // Settings
 	OpSettingsReset  = "settings.reset"     // SettingsReset
+	OpDeviceSave     = "device.save"        // Device (creates or replaces)
+	OpDeviceDelete   = "device.delete"      // IDOnly
 )
 
 type UserCreate struct {
@@ -338,6 +341,54 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		st.Settings.Merge(d)
 		return nil, audit("changed settings: "+strings.Join(changedFields(d), ", "), before, st.Settings), nil
 
+	case OpDeviceSave:
+		var d Device
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		d.Name = strings.TrimSpace(d.Name)
+		if d.ID == "" || d.Name == "" || utf8.RuneCountInString(d.Name) > 64 {
+			return nil, nil, errors.New("a device needs a name of 1 to 64 characters")
+		}
+		if len(d.Addrs) == 0 {
+			return nil, nil, errors.New("a device needs at least one IP address")
+		}
+		for i, a := range d.Addrs {
+			ip, err := netip.ParseAddr(strings.TrimSpace(a))
+			if err != nil {
+				return nil, nil, fmt.Errorf("%q is not an IP address", a)
+			}
+			d.Addrs[i] = ip.Unmap().String()
+			if other := st.DeviceByAddr(d.Addrs[i]); other != nil && other.ID != d.ID {
+				return nil, nil, fmt.Errorf("%s already belongs to %q", d.Addrs[i], other.Name)
+			}
+		}
+		old, existed := st.Devices[d.ID]
+		if existed {
+			d.CreatedAt = old.CreatedAt
+		} else {
+			d.CreatedAt = c.Time
+		}
+		st.Devices[d.ID] = &d
+		var before any
+		verb := "added"
+		if existed {
+			before, verb = old, "updated"
+		}
+		return d.ID, audit(fmt.Sprintf("%s device %q", verb, d.Name), before, d), nil
+
+	case OpDeviceDelete:
+		var d IDOnly
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		old, ok := st.Devices[d.ID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		delete(st.Devices, d.ID)
+		return nil, audit(fmt.Sprintf("removed device %q", old.Name), old, nil), nil
+
 	case OpSettingsReset:
 		var d SettingsReset
 		if err := dec(&d); err != nil {
@@ -455,6 +506,8 @@ func clearField(s *Settings, f string) error {
 		s.TunnelOnDown = nil
 	case "allowed_nets":
 		s.AllowedNets = nil
+	case "local_dns":
+		s.LocalDNS = nil
 	case "filtering_enabled":
 		s.FilteringEnabled = nil
 	case "block_mode":

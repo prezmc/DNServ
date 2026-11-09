@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/querylog"
 )
 
 // fakeResolver answers A queries with 192.0.2.1 and counts calls.
@@ -227,5 +229,64 @@ func TestRateLimiter(t *testing.T) {
 	}
 	if !rl.allow(ip, now.Add(time.Second)) {
 		t.Fatal("tokens should refill after a second")
+	}
+}
+
+// routerResolver plays a LAN router that knows device names.
+type routerResolver struct{ calls atomic.Int64 }
+
+func (r *routerResolver) Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, error) {
+	r.calls.Add(1)
+	m := new(dns.Msg)
+	m.SetReply(q)
+	qq := q.Question[0]
+	switch {
+	case qq.Qtype == dns.TypePTR && qq.Name == "10.1.168.192.in-addr.arpa.":
+		m.Answer = []dns.RR{&dns.PTR{Hdr: dns.RR_Header{Name: qq.Name, Rrtype: dns.TypePTR, Class: dns.ClassINET, Ttl: 60}, Ptr: "kids-ipad.lan."}}
+	case qq.Qtype == dns.TypeA && qq.Name == "nas.lan.":
+		m.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: qq.Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 60}, A: net.IPv4(192, 168, 1, 5)}}
+	default:
+		m.Rcode = dns.RcodeNameError
+	}
+	return m, nil
+}
+
+func TestLocalNamesGoToRouter(t *testing.T) {
+	up, router := &fakeResolver{}, &routerResolver{}
+	s, addr := newTestServer(t, nil, up)
+	s.SetLocalDNS(router)
+	if r := query(t, addr, "nas.lan", dns.TypeA, "udp"); len(r.Answer) != 1 {
+		t.Fatalf("nas.lan via router: %v", r)
+	}
+	if r := query(t, addr, "10.1.168.192.in-addr.arpa", dns.TypePTR, "udp"); len(r.Answer) != 1 {
+		t.Fatalf("private PTR via router: %v", r)
+	}
+	if name := s.LookupName(context.Background(), netip.MustParseAddr("192.168.1.10")); name != "kids-ipad.lan" {
+		t.Fatalf("LookupName = %q", name)
+	}
+	if up.calls.Load() != 0 {
+		t.Fatal("local names leaked upstream")
+	}
+	s.SetLocalDNS(nil)
+	if r := query(t, addr, "nas.lan", dns.TypeA, "udp"); r.Rcode != dns.RcodeNameError {
+		t.Fatalf("after clearing the router, nas.lan should be NXDOMAIN: %v", r)
+	}
+}
+
+func TestQueryLogRecords(t *testing.T) {
+	s, addr := newTestServer(t, nil, &fakeResolver{})
+	ql := querylog.New(100)
+	s.SetQueryLog(ql)
+	query(t, addr, "www.example.com", dns.TypeA, "udp")
+	query(t, addr, "x.ads.example", dns.TypeA, "udp")
+	got := ql.Query(querylog.Filter{})
+	if len(got) != 2 {
+		t.Fatalf("logged %d queries", len(got))
+	}
+	if b := got[0]; b.Name != "x.ads.example" || b.Result != querylog.Blocked || b.Rule != "||ads.example^" || b.List != "test" || !b.Client.IsLoopback() {
+		t.Fatalf("blocked entry: %+v", b)
+	}
+	if a := got[1]; a.Result != querylog.Answered || a.Answers != 1 || a.Type != "A" {
+		t.Fatalf("answered entry: %+v", a)
 	}
 }

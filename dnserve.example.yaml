@@ -9,6 +9,9 @@ dns:
   # Client networks allowed to query. Empty = private ranges only, so the
   # node never becomes an open resolver if port 53 is exposed by mistake.
   allowed_nets: []
+  # Your router, for device names in the dashboard and local names such as
+  # printer.lan. Empty = local names get "does not exist".
+  local_dns: ""
   udp_size: 1232           # EDNS buffer size (DNS Flag Day 2020)
   rate_limit: 0            # max queries/second per client IP, 0 = off
   tls:                     # encrypted DNS for your devices
