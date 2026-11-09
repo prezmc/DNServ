@@ -13,7 +13,7 @@ dashboard, users with MFA and analytics are on the way. See
 
 **No config files needed.** Pull the image and start it. Defaults work out
 of the box, common options can be set with environment variables, and the
-dashboard (step 1c) will handle the rest from your browser.
+setup wizard and dashboard handle the rest from your browser.
 
 ## What works today
 
@@ -84,10 +84,23 @@ code in its log:
 docker logs dnserve 2>&1 | grep setup_code
 ```
 
-Use that code to create the first admin account (the web setup screen
-arrives in the next release; until then use the API below), then set up
-your authenticator app. Only someone who can read the container's logs can
-claim a new node.
+Open `http://<server>:8080` and the setup wizard walks you through it:
+
+1. Enter the setup code and create the admin account.
+2. Scan the QR code with an authenticator app (1Password, Bitwarden,
+   Google or Microsoft Authenticator, Authy…) and enter a code.
+3. Save your ten recovery codes.
+4. Pick how lookups leave your network and which blocklists to use.
+
+Then set your router's DHCP DNS server to the machine's address. Only
+someone who can read the container's logs can claim a new node.
+
+The dashboard has pages for status and one-click blocking, settings,
+users (admins), the audit log (admins), and your own password, sessions
+and API tokens. It is a small built-in page with no external scripts or
+fonts, so it works without internet access. Port 8080 is plain HTTP: keep
+it on your LAN, or put it behind a reverse proxy with HTTPS (set
+`DNSERVE_ALLOWED_ORIGINS` to the proxy's host name).
 
 Settings you save are stored in the data volume and win over the config
 file and environment variables, which only provide the starting values. A
@@ -242,7 +255,7 @@ secrets are set.
 
 1. **DNS node.** 1a core node. 1b Unbound recursive mode, WireGuard
    tunnel mode, DoH/DoT for clients. 1c admin API with users, roles and
-   mandatory MFA (this), then the web UI with a setup wizard. 1d per-device and per-group policies with schedules, and a
+   mandatory MFA, and the web UI with a setup wizard (this). 1d per-device and per-group policies with schedules, and a
    load-test harness.
 2. **Clustering and backups.** Embedded Raft so any node can lead, owner
    overrides, witness mode, audit log, versioned config, scheduled encrypted
