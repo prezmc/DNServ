@@ -43,6 +43,11 @@ type DNSConfig struct {
 	// TLS configures encrypted DNS for clients: DNS over TLS and DNS over
 	// HTTPS.
 	TLS TLSConfig `yaml:"tls"`
+	// LocalDNS is the LAN router's DNS (for example "192.168.1.1"). When
+	// set, local names (.lan, .home.arpa, single labels) and reverse
+	// lookups of private addresses are forwarded to it, so device names
+	// work. Empty answers them as not found.
+	LocalDNS string `yaml:"local_dns"`
 }
 
 // TLSConfig serves DNS over TLS (RFC 7858) and DNS over HTTPS (RFC 8484)
@@ -266,6 +271,7 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	set("DNSERVE_TUNNEL_EXPECTED_EGRESS", func(v string) error { c.Upstream.Tunnel.ExpectedEgress = list(v); return nil })
 	set("DNSERVE_TUNNEL_ON_DOWN", func(v string) error { c.Upstream.Tunnel.OnDown = v; return nil })
 	set("DNSERVE_ALLOWED_NETS", func(v string) error { c.DNS.AllowedNets = list(v); return nil })
+	set("DNSERVE_LOCAL_DNS", func(v string) error { c.DNS.LocalDNS = v; return nil })
 	set("DNSERVE_BLOCK_BYPASS", func(v string) error {
 		b, err := strconv.ParseBool(v)
 		c.Filtering.BlockBypass = b
@@ -348,6 +354,11 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if c.DNS.LocalDNS != "" {
+		if _, err := LocalDNSAddr(c.DNS.LocalDNS); err != nil {
+			errs = append(errs, fmt.Errorf("dns.local_dns: %w", err))
+		}
+	}
 	for _, l := range append(append([]ListConfig(nil), c.Filtering.Lists...), c.Filtering.Allowlists...) {
 		if strings.TrimSpace(l.URL) == "" {
 			errs = append(errs, fmt.Errorf("filtering: list %q has no url", l.Name))
@@ -357,6 +368,19 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("cache.max_entries must be positive"))
 	}
 	return errors.Join(errs...)
+}
+
+// LocalDNSAddr turns "192.168.1.1" or "192.168.1.1:5353" into host:port.
+func LocalDNSAddr(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if ap, err := netip.ParseAddrPort(s); err == nil {
+		return ap.String(), nil
+	}
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		return "", fmt.Errorf("%q is not an IP address", s)
+	}
+	return netip.AddrPortFrom(a, 53).String(), nil
 }
 
 func validateUpstream(s string) error {

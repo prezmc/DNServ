@@ -69,7 +69,7 @@ function form(attrs, kids, handler) {
       out.replaceChildren();
       try {
         const note = await handler(f, ev.submitter);
-        if (note) out.replaceChildren(msg('ok', note));
+        if (note) out.replaceChildren(note instanceof Node ? note : msg('ok', note));
       } catch (e) {
         out.replaceChildren(msg('err', e.message));
       } finally {
@@ -423,26 +423,47 @@ async function setupBasics() {
 
 function setupDone() {
   store.set('wizard', null);
+  const seen = h('div', { 'aria-live': 'polite' });
   render(centered(
     h('h1', {}, "You're set up"),
     h('p', {}, 'Last step: send your devices to DNServe.'),
     routerHelp(),
+    seen,
     h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { location.hash = '#/'; boot(); } }, 'Open the dashboard')),
   ));
+  // Show devices as they arrive, so it's clear the router change worked.
+  const poll = async () => {
+    let ds;
+    try { ds = await api('GET', '/devices'); } catch (_) { return; }
+    ds = ds.filter(d => d.queries > 0);
+    fill(seen, h('h3', {}, 'Devices using DNServe'),
+      ds.length ? h('ul', {}, ds.slice(0, 8).map(d => h('li', {}, deviceLabel(d), ' ', h('span', { class: 'muted small' }, ago(d.last_seen)))))
+        : h('p', { class: 'muted small' }, h('span', { class: 'dot' }), 'Waiting for the first device\u2026 (devices pick up the change when they reconnect to Wi\u2011Fi)'));
+  };
+  poll();
+  timer = setInterval(() => { if (!document.hidden) poll(); }, 3000);
 }
 
 // ---------- app shell ----------
 
 const ROUTES = [
   { path: '', title: 'Dashboard', page: dashboard, show: () => true },
+  { path: 'devices', title: 'Devices', page: devices, show: () => true },
+  { path: 'queries', title: 'Recent queries', page: queries, show: () => can('querylog.view') },
   { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
   { path: 'audit', title: 'Audit log', page: audit, show: () => can('audit.view') },
   { path: 'account', title: 'Your account', page: account, show: () => true },
 ];
 
+// hashParams reads ?a=b from the hash (#/queries?client=x).
+function hashParams() {
+  const i = location.hash.indexOf('?');
+  return new URLSearchParams(i < 0 ? '' : location.hash.slice(i + 1));
+}
+
 function route() {
-  const path = location.hash.replace(/^#\/?/, '');
+  const path = location.hash.replace(/^#\/?/, '').replace(/\?.*$/, '');
   const r = ROUTES.find(x => x.path === path && x.show()) || ROUTES[0];
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, 'DNServe'),
@@ -463,22 +484,9 @@ function page(main, title, ...kids) { fill(main, h('h1', {}, title), kids); }
 
 async function dashboard(main) {
   const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
-  const quick = can('domains.allowblock') ? h('div', { class: 'card' },
-    h('h2', {}, 'Block or allow a domain'),
-    form({}, [
-      h('div', { class: 'row' },
-        h('input', { name: 'domain', type: 'text', placeholder: 'ads.example.com', required: true, 'aria-label': 'Domain' }),
-        h('button', { type: 'submit', value: 'block' }, 'Block'),
-        h('button', { type: 'submit', value: 'allow' }, 'Allow'),
-        h('button', { type: 'submit', value: 'clear' }, 'Remove rule')),
-      h('p', { class: 'muted small' }, 'Applies to the domain and all its subdomains. Allow always wins over blocklists. Remove rule undoes either.'),
-    ], async (f, btn) => {
-      const action = btn ? btn.value : 'block';
-      const d = val(f, 'domain').trim();
-      await api('POST', '/domains', { domain: d, action });
-      return { block: 'Blocked ', allow: 'Allowed ', clear: 'Removed your rule for ' }[action] + d + '.';
-    })) : null;
-  page(main, 'Dashboard', body, quick);
+  const devBox = h('div');
+  const ver = h('p', { class: 'muted small' });
+  page(main, 'Dashboard', body, devBox, checkDomainCard(), ver);
 
   const load = async () => {
     let s;
@@ -509,11 +517,210 @@ async function dashboard(main) {
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
-      h('p', { class: 'muted small' }, 'DNServe ', s.version),
     );
+    ver.textContent = 'DNServe ' + s.version;
   };
+  const loadDevices = async () => {
+    let ds;
+    try { ds = await api('GET', '/devices'); } catch (_) { return; }
+    const seen = ds.filter(d => d.queries > 0);
+    if (!seen.length) { devBox.replaceChildren(); return; }
+    devBox.replaceChildren(h('div', { class: 'card' },
+      h('h2', {}, 'Devices ', h('span', { class: 'muted small' }, seen.length + ' seen')),
+      deviceTable(seen.slice(0, 5), { compact: true }),
+      seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null));
+  };
+  await Promise.all([load(), loadDevices()]);
+  let tick = 0;
+  timer = setInterval(() => {
+    if (document.hidden) return;
+    load();
+    if (++tick % 3 === 0) loadDevices();
+  }, 5000);
+}
+
+// ---------- check a domain ----------
+
+function checkDomainCard() {
+  const edit = can('domains.allowblock');
+  return h('div', { class: 'card' },
+    h('h2', {}, edit ? 'Check, block or allow a domain' : 'Check a domain'),
+    form({}, [
+      h('div', { class: 'row' },
+        h('input', { name: 'domain', type: 'text', placeholder: 'ads.example.com', required: true, 'aria-label': 'Domain', spellcheck: 'false' }),
+        h('button', { type: 'submit', value: 'check' }, 'Check'),
+        edit ? [h('button', { type: 'submit', value: 'block' }, 'Block'),
+          h('button', { type: 'submit', value: 'allow' }, 'Allow'),
+          h('button', { type: 'submit', value: 'clear' }, 'Remove rule')] : null),
+      edit ? h('p', { class: 'muted small' }, 'Block and Allow cover the domain and all its subdomains. Allow always wins over blocklists. Remove rule undoes either.') : null,
+    ], async (f, btn) => {
+      const action = btn ? btn.value : 'check';
+      const d = val(f, 'domain').trim();
+      if (action !== 'check') {
+        await api('POST', '/domains', { domain: d, action });
+        return { block: 'Blocked ', allow: 'Allowed ', clear: 'Removed your rule for ' }[action] + d + '.';
+      }
+      const r = await api('GET', '/domains/check?name=' + encodeURIComponent(d));
+      const why = r.rule ? [' by ', h('code', {}, r.rule), ' from ', r.custom ? 'your custom rules' : r.list] : [];
+      const out = msg(r.blocked && !r.allowed ? 'warn' : 'ok', '');
+      fill(out, h('b', {}, r.name), r.allowed ? [' is allowed', why, '.'] : r.blocked ? [' is blocked', why, '.'] : ' is not blocked.');
+      return out;
+    }));
+}
+
+// ---------- devices ----------
+
+// deviceLabel is the friendliest name we have for a device.
+function deviceLabel(d) { return d.name || d.hostname || d.addrs[0]; }
+
+function deviceTable(list, opts) {
+  opts = opts || {};
+  const manage = !opts.compact && can('devices.manage');
+  return h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Last seen'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'), opts.compact ? null : h('th', {}))),
+    h('tbody', {}, list.map(d => h('tr', {},
+      h('td', {}, h('div', {}, can('querylog.view') ? h('a', { href: '#/queries?client=' + encodeURIComponent(d.id || d.addrs[0]) }, deviceLabel(d)) : deviceLabel(d)),
+        deviceLabel(d) !== d.addrs.join(', ') ? h('div', { class: 'muted small' }, d.name && d.hostname ? d.hostname + ' · ' : '', d.addrs.join(', ')) : null),
+      h('td', { class: 'nowrap' }, d.last_seen ? ago(d.last_seen) : 'not yet'),
+      h('td', {}, fmtNum(d.queries)),
+      h('td', {}, d.queries ? fmtNum(d.blocked) + ' (' + (100 * d.blocked / d.queries).toFixed(0) + '%)' : '—'),
+      opts.compact ? null : h('td', { class: 'nowrap' },
+        manage ? h('button', { class: 'link', onclick: () => editDevice(d) }, d.id ? 'Rename' : 'Name it') : null,
+        manage && d.id ? h('button', { class: 'link danger', onclick: async () => {
+          if (!confirm('Forget the name "' + d.name + '"? The device keeps working.')) return;
+          try { await api('DELETE', '/devices/' + d.id); route(); } catch (e) { alert(e.message); }
+        } }, 'Forget name') : null))))));
+}
+
+function editDevice(d) {
+  const dlg = dialog(d.id ? 'Rename device' : 'Name this device', form({}, [
+    h('label', { for: 'dname' }, 'Name'),
+    h('input', { id: 'dname', name: 'name', type: 'text', value: d.name || d.hostname || '', required: true, maxlength: 64, autofocus: true }),
+    h('label', { for: 'daddrs' }, 'Addresses (one per line)'),
+    h('textarea', { id: 'daddrs', name: 'addrs', spellcheck: 'false', class: 'short' }, d.addrs.join('\n')),
+    h('p', { class: 'muted small' }, 'Give the device a fixed address in your router (a DHCP reservation) so the name stays right.'),
+    h('div', { class: 'actions' },
+      h('button', { class: 'primary', type: 'submit' }, 'Save'),
+      h('button', { type: 'button', onclick: () => dlg.close() }, 'Cancel')),
+  ], async (f) => {
+    const body = { name: val(f, 'name').trim(), addrs: lines(val(f, 'addrs')) };
+    if (d.id) await api('PUT', '/devices/' + d.id, body);
+    else await api('POST', '/devices', body);
+    dlg.close();
+    route();
+  }));
+  const first = dlg.querySelector('#dname');
+  if (first) { first.focus(); first.select(); }
+}
+
+async function devices(main) {
+  page(main, 'Devices', h('p', { class: 'muted' }, 'Loading…'));
+  let list, settingsHint = null;
+  try { list = await api('GET', '/devices'); } catch (e) { return page(main, 'Devices', msg('err', e.message)); }
+  if (!list.length) {
+    return page(main, 'Devices', h('div', { class: 'card highlight' }, h('h2', {}, 'No devices yet'), routerHelp()));
+  }
+  if (!list.some(d => d.hostname) && can('network.manage')) {
+    settingsHint = msg('warn', '');
+    fill(settingsHint, 'Devices show as numbers because DNServe doesn\u2019t know your router. Add your router\u2019s address under ', h('a', { href: '#/settings' }, 'Settings \u2192 Device names'), ' to see their names.');
+  }
+  page(main, 'Devices',
+    h('p', { class: 'muted' }, 'Every device that has used DNServe since it started, most recent first.'),
+    settingsHint,
+    h('div', { class: 'card' }, deviceTable(list)));
+}
+
+// ---------- recent queries ----------
+
+const RESULTS = {
+  answered: ['Answered', 'ok'], cached: ['From cache', 'ok'], stale: ['From cache (stale)', 'ok'],
+  blocked: ['Blocked', 'bad'], local: ['Local name', 'ok'], failed: ['Failed', 'bad'],
+};
+
+async function queries(main) {
+  const params = hashParams();
+  const filter = { client: params.get('client') || '', search: params.get('search') || '', result: params.get('result') || '' };
+  const body = h('tbody');
+  const more = h('button', { type: 'button', hidden: true }, 'Show older');
+  const info = h('p', { class: 'muted small' });
+  let devs = [];
+  try { devs = await api('GET', '/devices'); } catch (_) { /* filter still works by IP */ }
+  const names = {};
+  devs.forEach(d => d.addrs.forEach(a => { names[a] = deviceLabel(d); }));
+
+  const setHash = () => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(filter)) if (v) q.set(k, v);
+    const s = q.toString();
+    history.replaceState(null, '', '#/queries' + (s ? '?' + s : ''));
+  };
+  let oldest = 0, live = true;
+  const row = (e) => {
+    const [label, kind] = RESULTS[e.result] || [e.result, ''];
+    const why = e.rule ? e.rule + (e.list ? ' (' + e.list + ')' : '') : '';
+    const blocked = e.result === 'blocked';
+    return h('tr', {},
+      h('td', { class: 'nowrap small', title: fmtTime(e.time) }, new Date(e.time).toLocaleTimeString()),
+      h('td', { class: 'small' }, names[e.client] || e.client),
+      h('td', {}, h('span', { class: 'mono' }, e.name), ' ', h('span', { class: 'muted small' }, e.type)),
+      h('td', {}, h('span', { class: 'badge ' + kind, title: why || null }, label, e.allowed ? ' · allowed' : ''),
+        why ? h('div', { class: 'muted small' }, why) : null),
+      can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
+        const action = blocked ? 'allow' : 'block';
+        try { await api('POST', '/domains', { domain: e.name, action }); ev.target.replaceWith(h('span', { class: 'small muted' }, blocked ? 'Allowed' : 'Blocked')); }
+        catch (err) { alert(err.message); }
+      } }, blocked ? 'Allow' : 'Block')) : null);
+  };
+  const q = (extra) => {
+    const u = new URLSearchParams({ limit: '100' });
+    for (const [k, v] of Object.entries(filter)) if (v) u.set(k, v);
+    for (const [k, v] of Object.entries(extra || {})) u.set(k, v);
+    return api('GET', '/queries?' + u);
+  };
+  const load = async () => {
+    let r;
+    try { r = await q(); } catch (e) { info.replaceChildren(msg('err', e.message)); return; }
+    body.replaceChildren(...r.queries.map(row));
+    oldest = r.queries.length ? r.queries[r.queries.length - 1].id : 0;
+    more.hidden = r.queries.length < 100;
+    info.textContent = r.queries.length ? 'Newest first. DNServe remembers the most recent ' + fmtNum(r.capacity) + ' queries until it restarts; longer history comes with analytics.' : '';
+    if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, Object.values(filter).some(Boolean) ? 'Nothing matches.' : 'No queries yet.')));
+  };
+  more.addEventListener('click', async () => {
+    live = false;
+    try {
+      const r = await q({ before: String(oldest) });
+      r.queries.forEach(e => body.append(row(e)));
+      if (r.queries.length) oldest = r.queries[r.queries.length - 1].id;
+      more.hidden = r.queries.length < 100;
+      pause.checked = false;
+    } catch (e) { alert(e.message); }
+  });
+  const pause = h('input', { type: 'checkbox', checked: true, onchange: (ev) => { live = ev.target.checked; if (live) load(); } });
+
+  const devSel = h('select', { name: 'client', 'aria-label': 'Device', onchange: (ev) => { filter.client = ev.target.value; setHash(); load(); } },
+    h('option', { value: '' }, 'All devices'),
+    devs.map(d => h('option', { value: d.id || d.addrs[0], selected: filter.client === (d.id || d.addrs[0]) }, deviceLabel(d))));
+  if (filter.client && !devs.some(d => (d.id || d.addrs[0]) === filter.client)) devSel.append(h('option', { value: filter.client, selected: true }, filter.client));
+  let debounce = null;
+  const search = h('input', { type: 'text', name: 'search', placeholder: 'Search domains', value: filter.search, 'aria-label': 'Search domains', spellcheck: 'false', oninput: (ev) => {
+    clearTimeout(debounce);
+    debounce = setTimeout(() => { filter.search = ev.target.value.trim(); setHash(); load(); }, 250);
+  } });
+  const resSel = h('select', { name: 'result', 'aria-label': 'Result', onchange: (ev) => { filter.result = ev.target.value; setHash(); load(); } },
+    h('option', { value: '' }, 'All results'),
+    h('option', { value: 'blocked', selected: filter.result === 'blocked' }, 'Blocked'),
+    h('option', { value: 'allowed', selected: filter.result === 'allowed' }, 'Allowed by a rule'),
+    h('option', { value: 'failed', selected: filter.result === 'failed' }, 'Failed'));
+
+  page(main, 'Recent queries',
+    h('div', { class: 'row' }, devSel, search, resSel, h('label', { class: 'inline' }, pause, 'Live')),
+    info,
+    h('div', { class: 'card' }, h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Device'), h('th', {}, 'Domain'), h('th', {}, 'Result'), can('domains.allowblock') ? h('th', {}) : null)),
+      body)), h('div', { class: 'actions' }, more)));
   await load();
-  timer = setInterval(() => { if (!document.hidden) load(); }, 5000);
+  timer = setInterval(() => { if (live && !document.hidden) load(); }, 3000);
 }
 
 // ---------- settings ----------
@@ -658,6 +865,15 @@ async function settings(main) {
   }
 
   if (can('network.manage')) {
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'Device names ', origin('local_dns')),
+      form({}, [
+        h('p', { class: 'muted' }, 'DNServe can ask your router what each device is called, and sends lookups for local names (like printer.lan) to it.'),
+        h('label', { for: 'localdns' }, 'Your router\u2019s address'),
+        h('input', { id: 'localdns', name: 'localdns', type: 'text', value: eff.DNS.LocalDNS || '', placeholder: '192.168.1.1', spellcheck: 'false' }),
+        h('p', { class: 'muted small' }, 'Usually the address you type to open your router\u2019s settings. Leave empty to turn this off.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], (f) => save({ local_dns: val(f, 'localdns').trim() }, { local_dns: eff.DNS.LocalDNS || '' }))));
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Allowed networks ', origin('allowed_nets')),
       form({}, [

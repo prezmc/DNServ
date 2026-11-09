@@ -21,6 +21,7 @@ import (
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/querylog"
 )
 
 // Resolver is the upstream path (forwarding group now; Unbound later).
@@ -39,11 +40,15 @@ type Server struct {
 	cache  *cache.Cache // nil when disabled
 	filter Filter
 	log    *slog.Logger
+	// local forwards LAN names to the router (nil: answer not found).
+	local atomic.Pointer[localFwd]
 	// live holds what settings can change while running.
 	live    atomic.Pointer[live]
 	limiter *rateLimiter
 	group   singleflight.Group
 	Metrics *Metrics
+	// qlog, when set, records every answered query.
+	qlog atomic.Pointer[querylog.Log]
 
 	mu       sync.Mutex
 	servers  []*dns.Server
@@ -217,8 +222,21 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 	if req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 || req.Response {
 		return s.finalize(req, rcodeMsg(req, dns.RcodeFormatError), udp)
 	}
-	resp, outcome := s.resolve(req)
-	s.Metrics.observe(outcome, resp, time.Since(start))
+	resp, outcome, match := s.resolve(req)
+	took := time.Since(start)
+	s.Metrics.observe(outcome, resp, took)
+	if ql := s.qlog.Load(); ql != nil {
+		q := req.Question[0]
+		e := querylog.Entry{
+			Time: start, Client: client.Unmap(), Name: filter.Normalize(q.Name), Type: dns.TypeToString[q.Qtype],
+			Result: outcomeResults[outcome], Rcode: dns.RcodeToString[resp.Rcode], Answers: len(resp.Answer),
+			Duration: float64(took.Microseconds()) / 1000, Allowed: match.Allowed,
+		}
+		if match.Blocked || match.Allowed {
+			e.Rule, e.List = match.Rule.Text(), match.Source
+		}
+		ql.Add(e)
+	}
 	return s.finalize(req, resp, udp)
 }
 
@@ -234,12 +252,17 @@ const (
 	OutError
 )
 
-func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome) {
+var outcomeResults = [...]string{
+	OutUpstream: querylog.Answered, OutCached: querylog.Cached, OutStale: querylog.Stale,
+	OutBlocked: querylog.Blocked, OutLocal: querylog.Local, OutError: querylog.Failed,
+}
+
+func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome, filter.Match) {
 	q := req.Question[0]
 	name := filter.Normalize(q.Name)
 
 	if m, ok := s.localAnswer(req, name); ok {
-		return m, OutLocal
+		return m, OutLocal, filter.Match{}
 	}
 
 	// Firefox's canary domain: NXDOMAIN tells it not to switch on its own
@@ -248,12 +271,13 @@ func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome) {
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeNameError)
 		m.Ns = []dns.RR{s.blockSOA(q.Name)}
-		return m, OutBlocked
+		return m, OutBlocked, filter.Match{Blocked: true, Source: "Firefox DoH canary", Rule: filter.Rule{Domain: "use-application-dns.net", Kind: filter.Suffix}}
 	}
 
+	var match filter.Match
 	if f := s.filter; f != nil {
-		if match := f.Lookup(name); match.Blocked {
-			return s.blocked(req), OutBlocked
+		if match = f.Lookup(name); match.Blocked {
+			return s.blocked(req), OutBlocked, match
 		}
 	}
 
@@ -267,21 +291,21 @@ func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome) {
 			res.Msg.Id = req.Id
 			res.Msg.Question = req.Question
 			if res.State == cache.Stale {
-				return res.Msg, OutStale
+				return res.Msg, OutStale, match
 			}
-			return res.Msg, OutCached
+			return res.Msg, OutCached, match
 		}
 	}
 
 	resp, err := s.fetch(key, req)
 	if err != nil {
 		s.log.Debug("upstream failed", "name", name, "type", dns.TypeToString[q.Qtype], "err", err)
-		return rcodeMsg(req, dns.RcodeServerFailure), OutError
+		return rcodeMsg(req, dns.RcodeServerFailure), OutError, match
 	}
 	out := resp.Copy()
 	out.Id = req.Id
 	out.Question = req.Question
-	return out, OutUpstream
+	return out, OutUpstream, match
 }
 
 // fetch asks upstream, collapsing identical concurrent queries into one.
@@ -476,6 +500,9 @@ func (s *Server) localAnswer(req *dns.Msg, name string) (*dns.Msg, bool) {
 		return nil, false
 	}
 	nx := func() (*dns.Msg, bool) {
+		if fwd := s.local.Load(); fwd != nil {
+			return s.forwardLocal(fwd.r, req), true
+		}
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeNameError)
 		m.Ns = []dns.RR{s.blockSOA(q.Name)}
@@ -493,6 +520,60 @@ func (s *Server) localAnswer(req *dns.Msg, name string) (*dns.Msg, bool) {
 		return nx()
 	}
 	return nil, false
+}
+
+// SetQueryLog starts recording queries into l (nil stops).
+func (s *Server) SetQueryLog(l *querylog.Log) { s.qlog.Store(l) }
+
+type localFwd struct{ r Resolver }
+
+// SetLocalDNS sets (or with nil, clears) the router that answers local
+// names and private reverse lookups.
+func (s *Server) SetLocalDNS(r Resolver) {
+	if r == nil {
+		s.local.Store(nil)
+		return
+	}
+	s.local.Store(&localFwd{r: r})
+}
+
+func (s *Server) forwardLocal(r Resolver, req *dns.Msg) *dns.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	resp, err := r.Exchange(ctx, upstreamQuery(req))
+	if err != nil {
+		s.log.Debug("local dns failed", "name", req.Question[0].Name, "err", err)
+		return rcodeMsg(req, dns.RcodeServerFailure)
+	}
+	out := resp.Copy()
+	out.Id = req.Id
+	out.Question = req.Question
+	return out
+}
+
+// LookupName returns a LAN device's name from the router's reverse DNS,
+// or "" when there is no router configured or no name.
+func (s *Server) LookupName(ctx context.Context, a netip.Addr) string {
+	fwd := s.local.Load()
+	if fwd == nil {
+		return ""
+	}
+	rev, err := dns.ReverseAddr(a.Unmap().String())
+	if err != nil {
+		return ""
+	}
+	q := new(dns.Msg)
+	q.SetQuestion(rev, dns.TypePTR)
+	resp, err := fwd.r.Exchange(ctx, q)
+	if err != nil {
+		return ""
+	}
+	for _, rr := range resp.Answer {
+		if p, ok := rr.(*dns.PTR); ok {
+			return strings.TrimSuffix(p.Ptr, ".")
+		}
+	}
+	return ""
 }
 
 func isPrivateReverse(name string) bool {

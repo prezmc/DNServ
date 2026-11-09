@@ -25,6 +25,7 @@ import (
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/recursive"
 	"github.com/prezmc/dnserve/internal/server"
 	"github.com/prezmc/dnserve/internal/store"
@@ -144,6 +145,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	qlog := querylog.New(20000)
+	srv.SetQueryLog(qlog)
+	if err := setLocalDNS(srv, cfg, log); err != nil {
+		log.Error("local dns", "err", err)
+	}
 	if err := srv.Start(); err != nil {
 		return err
 	}
@@ -169,6 +175,9 @@ func run() error {
 	}
 	adm := api.New(st, sessions, base, log.With("component", "api"))
 	adm.AllowedOrigins = splitList(os.Getenv("DNSERVE_ALLOWED_ORIGINS"))
+	adm.QueryLog = qlog
+	adm.CheckDomain = engine.Lookup
+	adm.LookupName = srv.LookupName
 	adm.Status = func() any {
 		set := up.Load()
 		eff := adm.Effective()
@@ -294,6 +303,11 @@ func applySettings(ctx context.Context, cfg, next config.Config, srv *server.Ser
 		old.close(newSet.unbound)
 		log.Info("upstream changed", "mode", next.Upstream.Mode)
 	}
+	if cfg.DNS.LocalDNS != next.DNS.LocalDNS {
+		if err := setLocalDNS(srv, next, log); err != nil {
+			log.Error("local dns change failed", "err", err)
+		}
+	}
 	engine.SetConfig(next.Filtering)
 	f, n := cfg.Filtering, next.Filtering
 	if !slices.Equal(f.Rules, n.Rules) || !reflect.DeepEqual(f.Lists, n.Lists) ||
@@ -335,6 +349,25 @@ func recoverAccount(dataDir, username string, newPassword bool) error {
 	if err == nil {
 		sessions.RevokeUser(u.ID, "")
 	}
+	return nil
+}
+
+// setLocalDNS points LAN names at the router, or clears it.
+func setLocalDNS(srv *server.Server, cfg config.Config, log *slog.Logger) error {
+	if cfg.DNS.LocalDNS == "" {
+		srv.SetLocalDNS(nil)
+		return nil
+	}
+	addr, err := config.LocalDNSAddr(cfg.DNS.LocalDNS)
+	if err != nil {
+		return err
+	}
+	g, err := upstream.NewGroup([]string{"udp://" + addr}, nil, 2*time.Second, log)
+	if err != nil {
+		return err
+	}
+	srv.SetLocalDNS(g)
+	log.Info("local names go to the router", "addr", addr)
 	return nil
 }
 

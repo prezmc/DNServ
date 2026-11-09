@@ -23,13 +23,35 @@ const MaxAudit = 10_000
 // State is the whole managed state. It is replaced, never mutated in
 // place, so readers can hold a snapshot without locks.
 type State struct {
-	Version  uint64            `json:"version"`
-	Users    map[string]*User  `json:"users"`
-	Tokens   map[string]*Token `json:"tokens"`
-	Settings Settings          `json:"settings"`
-	Audit    []AuditEntry      `json:"audit"`
+	Version  uint64             `json:"version"`
+	Users    map[string]*User   `json:"users"`
+	Tokens   map[string]*Token  `json:"tokens"`
+	Settings Settings           `json:"settings"`
+	Devices  map[string]*Device `json:"devices"`
+	Audit    []AuditEntry       `json:"audit"`
 	// SetupDone is set when the first admin finishes MFA enrollment.
 	SetupDone bool `json:"setup_done"`
+}
+
+// Device is a named client on the network, recognized by its addresses.
+// Groups and policies attach to devices.
+type Device struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Addrs     []string  `json:"addrs"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// DeviceByAddr returns the device that owns addr, if any.
+func (st *State) DeviceByAddr(addr string) *Device {
+	for _, d := range st.Devices {
+		for _, a := range d.Addrs {
+			if a == addr {
+				return d
+			}
+		}
+	}
+	return nil
 }
 
 // User is a dashboard account.
@@ -89,7 +111,7 @@ type Store struct {
 // Open loads state from dir/state.json, or starts empty.
 func Open(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, "state.json"), now: time.Now}
-	st := &State{Users: map[string]*User{}, Tokens: map[string]*Token{}}
+	st := &State{Users: map[string]*User{}, Tokens: map[string]*Token{}, Devices: map[string]*Device{}}
 	b, err := os.ReadFile(s.path)
 	switch {
 	case err == nil:
@@ -101,6 +123,9 @@ func Open(dir string) (*Store, error) {
 		}
 		if st.Tokens == nil {
 			st.Tokens = map[string]*Token{}
+		}
+		if st.Devices == nil {
+			st.Devices = map[string]*Device{}
 		}
 	case errors.Is(err, os.ErrNotExist):
 	default:
