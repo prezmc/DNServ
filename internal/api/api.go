@@ -51,6 +51,8 @@ type API struct {
 	QueryLog *querylog.Log
 	// CheckDomain explains how the filter treats a name.
 	CheckDomain func(name string) filter.Match
+	// UpdateLists re-downloads every list now (runs in the background).
+	UpdateLists func()
 	// LookupName asks the router for a device's name ("" if unknown).
 	LookupName func(ctx context.Context, a netip.Addr) string
 
@@ -107,6 +109,9 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/auth/password", a.authed("", a.changePassword))
 	m.HandleFunc("GET /api/v1/auth/sessions", a.authed("", a.mySessions))
 	m.HandleFunc("DELETE /api/v1/auth/sessions/{id}", a.authed("", a.revokeMySession))
+	m.HandleFunc("POST /api/v1/auth/recovery-codes", a.authed("", a.newRecoveryCodes))
+	m.HandleFunc("POST /api/v1/auth/authenticator/begin", a.authed("", a.replaceTOTPBegin))
+	m.HandleFunc("POST /api/v1/auth/authenticator/confirm", a.authed("", a.replaceTOTPConfirm))
 
 	// Users (admin).
 	m.HandleFunc("GET /api/v1/users", a.authed(store.PermUsers, a.listUsers))
@@ -128,6 +133,7 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("PATCH /api/v1/settings", a.authed("", a.patchSettings))
 	m.HandleFunc("POST /api/v1/settings/reset", a.authed("", a.resetSettings))
 	m.HandleFunc("POST /api/v1/domains", a.authed(store.PermAllowBlock, a.domainAction))
+	m.HandleFunc("POST /api/v1/lists/update", a.authed(store.PermLists, a.updateLists))
 	m.HandleFunc("GET /api/v1/domains/check", a.authed(store.PermDashboard, a.checkDomain))
 
 	// Devices and recent queries.
