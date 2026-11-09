@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prezmc/dnserve/internal/auth"
+	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/store"
 	"rsc.io/qr"
@@ -561,6 +562,14 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 				return
 			}
 		}
+	}
+	if patch.Records != nil {
+		recs, err := config.NormalizeRecords(*patch.Records)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		patch.Records = &recs
 	}
 	next := a.Store.State().Settings
 	next.Merge(patch)

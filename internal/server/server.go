@@ -43,6 +43,8 @@ type Server struct {
 	log    *slog.Logger
 	// local forwards LAN names to the router (nil: answer not found).
 	local atomic.Pointer[localFwd]
+	// records are the owner's local DNS records.
+	records atomic.Pointer[Records]
 	// live holds what settings can change while running.
 	live    atomic.Pointer[live]
 	limiter *rateLimiter
@@ -268,6 +270,9 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 	q := req.Question[0]
 	name := filter.Normalize(q.Name)
 
+	if m, ok := s.recordAnswer(req, name, client); ok {
+		return m, OutLocal, filter.Match{}
+	}
 	if m, ok := s.localAnswer(req, name); ok {
 		return m, OutLocal, filter.Match{}
 	}

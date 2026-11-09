@@ -592,6 +592,8 @@ func clearField(s *Settings, f string) error {
 		s.LocalDNS = nil
 	case "time_zone":
 		s.TimeZone = nil
+	case "records":
+		s.Records = nil
 	case "filtering_enabled":
 		s.FilteringEnabled = nil
 	case "block_mode":
