@@ -48,7 +48,7 @@ type staticFilter struct{ ix *filter.Index }
 
 func (s staticFilter) Lookup(n string) filter.Match { return s.ix.Lookup(n) }
 
-func newTestServer(t *testing.T, mutate func(*config.Config), r Resolver) (*Server, string) {
+func newTestServer(t testing.TB, mutate func(*config.Config), r Resolver) (*Server, string) {
 	t.Helper()
 	cfg := config.Default()
 	cfg.DNS.Listen = []string{"127.0.0.1:0"}
