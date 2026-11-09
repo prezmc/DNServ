@@ -22,6 +22,7 @@ import (
 	"time"
 	_ "time/tzdata" // schedules need zone data; the image has none
 
+	"github.com/prezmc/dnserve/internal/analytics"
 	"github.com/prezmc/dnserve/internal/api"
 	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/backup"
@@ -171,6 +172,15 @@ func run() error {
 	}
 	qlog := querylog.New(20000)
 	srv.SetQueryLog(qlog)
+	// Long-term query history, this node's own. The dashboard on any node
+	// asks the others and merges what they say.
+	hist, err := analytics.Open(filepath.Join(cfg.DataDir, "history.db"), cl.Name, cfg.History.Days, cfg.History.StatsDays, log.With("component", "analytics"))
+	if err != nil {
+		log.Error("query history is unavailable", "err", err)
+	} else {
+		srv.SetHistory(hist)
+		defer hist.Close()
+	}
 	srv.SetPolicy(policy.Build(st.State()))
 	if loc, err := cfg.Location(); err == nil {
 		srv.SetTimeZone(loc)
@@ -223,6 +233,10 @@ func run() error {
 	}
 	go adm.Backups.Run(ctx)
 	adm.QueryLog = qlog
+	if hist != nil {
+		adm.Analytics = hist
+	}
+	cl.Handle(api.PeerAnalytics, adm.PeerHandler)
 	adm.CheckDomain = engine.Lookup
 	adm.LookupName = srv.LookupName
 	var updating atomic.Bool
@@ -271,6 +285,9 @@ func run() error {
 		if c != nil {
 			out["cache"] = c.Stats()
 		}
+		if hist != nil {
+			out["history"] = hist.Stats()
+		}
 		ls := cl.LocalStatus()
 		out["cluster"] = map[string]any{
 			"healthy": ls.LeaderID != "", "leader": st.State().Cluster.NodeName(ls.LeaderID),
@@ -286,6 +303,10 @@ func run() error {
 		// Groups are cheap to compile, so apply them right here.
 		if !reflect.DeepEqual(old.Groups, new.Groups) || !reflect.DeepEqual(old.Devices, new.Devices) {
 			srv.SetPolicy(policy.Build(new))
+		}
+		if hist != nil && (!reflect.DeepEqual(old.Settings.HistoryDays, new.Settings.HistoryDays) || !reflect.DeepEqual(old.Settings.StatsDays, new.Settings.StatsDays)) {
+			h := new.Settings.Overlay(base).History
+			hist.SetRetention(h.Days, h.StatsDays)
 		}
 		if !reflect.DeepEqual(old.Settings, new.Settings) {
 			select {

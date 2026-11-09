@@ -24,6 +24,9 @@ type Settings struct {
 	Lists            *[]config.ListConfig `json:"lists,omitempty"`
 	Allowlists       *[]config.ListConfig `json:"allowlists,omitempty"`
 	Rules            *[]string            `json:"rules,omitempty"`
+
+	HistoryDays *int `json:"history_days,omitempty"`
+	StatsDays   *int `json:"stats_days,omitempty"`
 }
 
 // Overlay returns base with every set field replaced.
@@ -73,6 +76,12 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.Rules != nil {
 		c.Filtering.Rules = append([]string(nil), (*s.Rules)...)
+	}
+	if s.HistoryDays != nil {
+		c.History.Days = *s.HistoryDays
+	}
+	if s.StatsDays != nil {
+		c.History.StatsDays = *s.StatsDays
 	}
 	return c
 }
@@ -124,6 +133,12 @@ func (s *Settings) Merge(p Settings) {
 	if p.Rules != nil {
 		s.Rules = p.Rules
 	}
+	if p.HistoryDays != nil {
+		s.HistoryDays = p.HistoryDays
+	}
+	if p.StatsDays != nil {
+		s.StatsDays = p.StatsDays
+	}
 }
 
 // Touches reports which permission areas a patch changes.
@@ -135,3 +150,7 @@ func (p Settings) Touches() (upstream, network, lists, rules bool) {
 	rules = p.Rules != nil
 	return
 }
+
+// TouchesHistory reports whether a patch changes how long query history is
+// kept (an admin decision, since it is about privacy).
+func (p Settings) TouchesHistory() bool { return p.HistoryDays != nil || p.StatsDays != nil }

@@ -52,6 +52,8 @@ type Server struct {
 	Metrics *Metrics
 	// qlog, when set, records every answered query.
 	qlog atomic.Pointer[querylog.Log]
+	// hist, when set, also gets every answered query (long-term history).
+	hist atomic.Pointer[recorderBox]
 	// policy holds device groups (nil: everyone gets the shared filter).
 	policy atomic.Pointer[policy.Set]
 	loc    atomic.Pointer[time.Location] // for schedules; nil = time.Local
@@ -231,7 +233,8 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 	resp, outcome, match := s.resolve(req, client)
 	took := time.Since(start)
 	s.Metrics.observe(outcome, resp, took)
-	if ql := s.qlog.Load(); ql != nil {
+	ql, hist := s.qlog.Load(), s.hist.Load()
+	if ql != nil || hist != nil {
 		q := req.Question[0]
 		e := querylog.Entry{
 			Time: start, Client: client.Unmap(), Name: filter.Normalize(q.Name), Type: dns.TypeToString[q.Qtype],
@@ -244,7 +247,12 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 				e.Rule = match.Rule.Text()
 			}
 		}
-		ql.Add(e)
+		if ql != nil {
+			ql.Add(e)
+		}
+		if hist != nil {
+			hist.r.Record(e)
+		}
 	}
 	return s.finalize(req, resp, udp)
 }
@@ -558,6 +566,20 @@ func (s *Server) SetTimeZone(l *time.Location) { s.loc.Store(l) }
 
 // SetQueryLog starts recording queries into l (nil stops).
 func (s *Server) SetQueryLog(l *querylog.Log) { s.qlog.Store(l) }
+
+// Recorder takes a copy of every answered query. Record must not block.
+type Recorder interface{ Record(querylog.Entry) }
+
+type recorderBox struct{ r Recorder }
+
+// SetHistory sends every answered query to r as well (nil stops).
+func (s *Server) SetHistory(r Recorder) {
+	if r == nil {
+		s.hist.Store(nil)
+		return
+	}
+	s.hist.Store(&recorderBox{r})
+}
 
 type localFwd struct{ r Resolver }
 

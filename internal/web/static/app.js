@@ -564,7 +564,8 @@ function setupDone() {
 const ROUTES = [
   { path: '', title: 'Dashboard', page: dashboard, show: () => true },
   { path: 'devices', title: 'Devices', page: devices, show: () => true },
-  { path: 'queries', title: 'Recent queries', page: queries, show: () => can('querylog.view') },
+  { path: 'analytics', title: 'Analytics', page: analyticsPage, show: () => can('dashboard.view') },
+  { path: 'queries', title: 'Query log', page: queries, show: () => can('querylog.view') },
   { path: 'names', title: 'Local names', page: localNames, show: () => can('network.manage') },
   { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
@@ -609,8 +610,9 @@ function page(main, title, ...kids) { fill(main, h('h1', {}, title), kids); }
 async function dashboard(main) {
   const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
   const devBox = h('div');
+  const chartBox = h('div');
   const ver = h('p', { class: 'muted small' });
-  page(main, 'Dashboard', body, devBox, checkDomainCard(), ver);
+  page(main, 'Dashboard', body, chartBox, devBox, checkDomainCard(), ver);
 
   const load = async () => {
     let s;
@@ -659,12 +661,13 @@ async function dashboard(main) {
       deviceTable(seen.slice(0, 5), { compact: true }),
       seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null));
   };
-  await Promise.all([load(), loadDevices()]);
+  await Promise.all([load(), loadDevices(), dashboardChart(chartBox)]);
   let tick = 0;
   timer = setInterval(() => {
     if (document.hidden) return;
     load();
     if (++tick % 3 === 0) loadDevices();
+    if (tick % 12 === 0) dashboardChart(chartBox);
   }, 5000);
 }
 
@@ -892,10 +895,11 @@ const RESULTS = {
 
 async function queries(main) {
   const params = hashParams();
-  const filter = { client: params.get('client') || '', search: params.get('search') || '', result: params.get('result') || '' };
+  const filter = { client: params.get('client') || '', search: params.get('search') || '', result: params.get('result') || '', range: RANGES[params.get('range')] ? params.get('range') : '24h' };
   const body = h('tbody');
   const more = h('button', { type: 'button', hidden: true }, 'Show older');
   const info = h('p', { class: 'muted small' });
+  const nodesNote = h('div');
   let devs = [];
   try { devs = await api('GET', '/devices'); } catch (_) { /* filter still works by IP */ }
   const names = {};
@@ -903,19 +907,22 @@ async function queries(main) {
 
   const setHash = () => {
     const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(filter)) if (v) q.set(k, v);
+    for (const [k, v] of Object.entries(filter)) if (v && !(k === 'range' && v === '24h')) q.set(k, v);
     const s = q.toString();
     history.replaceState(null, '', '#/queries' + (s ? '?' + s : ''));
   };
-  let oldest = 0, live = true;
+  // useHistory: search each server's saved history (merged), or, when
+  // history is off, the recent queries this server holds in memory.
+  let oldest = 0, live = true, useHistory = true, multi = false;
   const row = (e) => {
     const [label, kind] = RESULTS[e.result] || [e.result, ''];
     const why = e.rule ? e.rule + (e.list ? ' (' + e.list + ')' : '') : '';
     const blocked = e.result === 'blocked';
     return h('tr', {},
-      h('td', { class: 'nowrap small', title: fmtTime(e.time) }, new Date(e.time).toLocaleTimeString()),
-      h('td', { class: 'small' }, names[e.client] || e.client),
-      h('td', {}, h('span', { class: 'mono' }, e.name), ' ', h('span', { class: 'muted small' }, e.type)),
+      h('td', { class: 'nowrap small', title: fmtTime(e.time) }, new Date(e.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })),
+      h('td', { class: 'small' }, names[e.client] || e.client, multi && e.node ? h('div', { class: 'muted' }, 'via ', e.node) : null),
+      h('td', {}, can('dashboard.view') && useHistory ? h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(e.name, filter.range === '1h' ? '24h' : filter.range) }, e.name) : h('span', { class: 'mono' }, e.name),
+        ' ', h('span', { class: 'muted small' }, e.type)),
       h('td', {}, h('span', { class: 'badge ' + kind, title: why || null }, label, e.allowed ? ' · allowed' : ''),
         why ? h('div', { class: 'muted small' }, why) : null),
       can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
@@ -924,27 +931,45 @@ async function queries(main) {
         catch (err) { toast(err.message, 'err'); }
       } }, blocked ? 'Allow' : 'Block')) : null);
   };
-  const q = (extra) => {
+  const qs = (extra) => {
     const u = new URLSearchParams({ limit: '100' });
-    for (const [k, v] of Object.entries(filter)) if (v) u.set(k, v);
+    for (const [k, v] of Object.entries(filter)) if (v && (useHistory || k !== 'range')) u.set(k, v);
     for (const [k, v] of Object.entries(extra || {})) u.set(k, v);
-    return api('GET', '/queries?' + u);
+    return u;
   };
+  const q = async (extra) => {
+    if (useHistory) {
+      const r = await api('GET', '/analytics/queries?' + qs(extra));
+      if (r.detail) {
+        multi = (r.nodes || []).length > 1;
+        r.device_names && Object.entries(r.device_names).forEach(([k, v]) => { if (v && !names[k]) names[k] = v; });
+        fill(nodesNote, coverage(r.nodes));
+        return r;
+      }
+      useHistory = false;
+      rangeSel.hidden = true;
+      if (exportBtn) exportBtn.hidden = true;
+    }
+    return api('GET', '/queries?' + qs(extra));
+  };
+  const cursor = (e) => (useHistory ? e.t : e.id);
   const load = async () => {
     let r;
     try { r = await q(); } catch (e) { info.replaceChildren(msg('err', e.message)); return; }
     body.replaceChildren(...r.queries.map(row));
-    oldest = r.queries.length ? r.queries[r.queries.length - 1].id : 0;
+    oldest = r.queries.length ? cursor(r.queries[r.queries.length - 1]) : 0;
     more.hidden = r.queries.length < 100;
-    info.textContent = r.queries.length ? 'Newest first. DNServe remembers the most recent ' + fmtNum(r.capacity) + ' queries until it restarts; longer history comes with analytics.' : '';
-    if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, Object.values(filter).some(Boolean) ? 'Nothing matches.' : 'No queries yet.')));
+    info.textContent = !r.queries.length ? '' : useHistory
+      ? 'Newest first, from every server’s saved history.'
+      : 'Newest first. Query history is off, so this shows the most recent ' + fmtNum(r.capacity) + ' queries this server has seen since it started.';
+    if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, ['client', 'search', 'result'].some(k => filter[k]) ? 'Nothing matches.' : 'No queries yet.')));
   };
   more.addEventListener('click', async () => {
     live = false;
     try {
       const r = await q({ before: String(oldest) });
       r.queries.forEach(e => body.append(row(e)));
-      if (r.queries.length) oldest = r.queries[r.queries.length - 1].id;
+      if (r.queries.length) oldest = cursor(r.queries[r.queries.length - 1]);
       more.hidden = r.queries.length < 100;
       pause.checked = false;
     } catch (e) { toast(e.message, 'err'); }
@@ -964,16 +989,238 @@ async function queries(main) {
     h('option', { value: '' }, 'All results'),
     h('option', { value: 'blocked', selected: filter.result === 'blocked' }, 'Blocked'),
     h('option', { value: 'allowed', selected: filter.result === 'allowed' }, 'Allowed by a rule'),
+    h('option', { value: 'cached', selected: filter.result === 'cached' }, 'From cache'),
     h('option', { value: 'failed', selected: filter.result === 'failed' }, 'Failed'));
+  const rangeSel = h('select', { name: 'range', 'aria-label': 'Period', onchange: (ev) => { filter.range = ev.target.value; setHash(); load(); } },
+    Object.entries(RANGES).map(([k, v]) => h('option', { value: k, selected: filter.range === k }, v)));
+  const exportBtn = can('data.export') ? h('button', { type: 'button', onclick: async () => {
+    try { await fetchFile('GET', '/analytics/export?' + qs({ limit: '50000' })); } catch (e) { toast(e.message, 'err'); }
+  } }, 'Export CSV') : null;
 
-  page(main, 'Recent queries',
-    h('div', { class: 'row' }, devSel, search, resSel, h('label', { class: 'inline' }, pause, 'Live')),
-    info,
+  page(main, 'Query log',
+    h('div', { class: 'row' }, devSel, search, resSel, rangeSel, h('label', { class: 'inline' }, pause, 'Live'), exportBtn),
+    nodesNote, info,
     h('div', { class: 'card' }, h('div', { class: 'scroll' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Device'), h('th', {}, 'Domain'), h('th', {}, 'Result'), can('domains.allowblock') ? h('th', {}) : null)),
       body)), h('div', { class: 'actions' }, more)));
   await load();
-  timer = setInterval(() => { if (live && !document.hidden) load(); }, 3000);
+  timer = setInterval(() => { if (live && !document.hidden && !document.querySelector('dialog[open]')) load(); }, 3000);
+}
+
+// ---------- analytics ----------
+
+const RANGES = { '1h': 'Last hour', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days' };
+
+function svg(tag, attrs, ...kids) {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs || {})) if (v !== null && v !== undefined) el.setAttribute(k, v);
+  kids.flat().forEach(k => k && el.append(k));
+  return el;
+}
+
+// bucketLabel formats a bucket start for the chart's axis and tooltip.
+function bucketLabel(t, step, long) {
+  const d = new Date(t * 1000);
+  if (step >= 86400) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  if (step >= 3600 && (long || step > 3600)) return d.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// queryChart draws allowed and blocked queries per bucket as stacked
+// bars, with a tooltip per bar and a table for screen readers.
+function queryChart(sum) {
+  const step = sum.step;
+  const from = Math.floor(new Date(sum.from).getTime() / 1000), to = Math.floor(new Date(sum.to).getTime() / 1000);
+  const byT = new Map(sum.series.map(p => [p.t, p]));
+  // Fill empty buckets so gaps show as gaps.
+  const first = sum.series.length ? Math.min(sum.series[0].t, from - ((from % step) + step) % step) : from;
+  const pts = [];
+  for (let t = first; t < to; t += step) pts.push(byT.get(t) || { t, total: 0, blocked: 0 });
+  if (!pts.length) return null;
+  const W = 720, H = 180, padL = 44, padB = 22, padT = 8;
+  const maxV = Math.max(1, ...pts.map(p => p.total));
+  const nice = (() => { const m = Math.pow(10, Math.floor(Math.log10(maxV))); return Math.ceil(maxV / m) * m; })();
+  const y = (v) => padT + (H - padT - padB) * (1 - v / nice);
+  const bw = (W - padL) / pts.length;
+  const barW = Math.max(1, Math.min(28, bw - 2));
+  const tip = h('div', { class: 'chart-tip', hidden: true });
+  const g = [];
+  [0, 0.5, 1].forEach(f => {
+    const v = Math.round(nice * f);
+    g.push(svg('line', { x1: padL, x2: W, y1: y(v), y2: y(v), class: 'grid-line' }));
+    g.push(svg('text', { x: padL - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, document.createTextNode(fmtNum(v))));
+  });
+  const every = Math.ceil(pts.length / 6);
+  pts.forEach((p, i) => {
+    const x = padL + i * bw + (bw - barW) / 2;
+    const allowed = p.total - p.blocked;
+    const r = Math.min(3, barW / 2);
+    const yA = y(allowed), yB = y(p.total);
+    if (allowed > 0) g.push(svg('rect', { x, y: yA, width: barW, height: Math.max(1, y(0) - yA), rx: r, class: 'bar-allowed' }));
+    if (p.blocked > 0) g.push(svg('rect', { x, y: yB, width: barW, height: Math.max(1, yA - yB - (allowed > 0 ? 2 : 0)), rx: r, class: 'bar-blocked' }));
+    if (i % every === 0) g.push(svg('text', { x: x + barW / 2, y: H - 6, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(bucketLabel(p.t, step))));
+    const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - padB, class: 'hit' });
+    const show = () => {
+      fill(tip, h('b', {}, bucketLabel(p.t, step, true)), h('div', {}, fmtNum(p.total), ' queries'),
+        h('div', {}, h('span', { class: 'key blocked' }), fmtNum(p.blocked), ' blocked', p.total ? ' (' + (100 * p.blocked / p.total).toFixed(1) + '%)' : ''),
+        p.total ? h('div', { class: 'muted' }, (p.ms_sum / p.total).toFixed(1), ' ms average') : null);
+      tip.hidden = false;
+      const left = ((padL + i * bw + bw / 2) / W) * 100;
+      tip.style.left = Math.min(80, Math.max(5, left)) + '%';
+    };
+    hit.addEventListener('mouseenter', show);
+    hit.addEventListener('focus', show);
+    hit.addEventListener('mouseleave', () => { tip.hidden = true; });
+    g.push(hit);
+  });
+  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Queries over time: allowed and blocked' }, g);
+  const table = h('details', { class: 'small' }, h('summary', { class: 'muted' }, 'Show as a table'),
+    h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'))),
+      h('tbody', {}, pts.filter(p => p.total).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.total)), h('td', {}, fmtNum(p.blocked))))))));
+  return h('div', {},
+    h('div', { class: 'legend small' }, h('span', {}, h('span', { class: 'key allowed' }), 'Allowed'), h('span', {}, h('span', { class: 'key blocked' }), 'Blocked')),
+    h('div', { class: 'chart-wrap' }, chart, tip), table);
+}
+
+// coverage says which servers' history is included.
+function coverage(nodes) {
+  if (!nodes || nodes.length < 2 && nodes.every(n => n.ok)) return null;
+  const missing = nodes.filter(n => !n.ok);
+  if (!missing.length) return h('p', { class: 'muted small' }, 'Includes history from ', nodes.map(n => n.name).join(', '), '.');
+  return msg('warn', 'Not included: ' + missing.map(n => n.name + ' (' + (n.error || 'no answer') + ')').join(', ') +
+    '. Each server keeps its own history, so its queries are missing until it is back.');
+}
+
+// domainButton blocks or allows a domain in one click, based on how it is
+// treated now, and offers Undo for the owner's own rule.
+function domainButton(name, now) {
+  if (!can('domains.allowblock')) return null;
+  const action = now && now.custom ? 'clear' : (now && now.blocked ? 'allow' : 'block');
+  const label = { clear: now && now.blocked ? 'Unblock' : 'Undo allow', allow: 'Allow', block: 'Block' }[action];
+  return h('button', { class: 'link', type: 'button', onclick: async (ev) => {
+    ev.stopPropagation();
+    try {
+      await api('POST', '/domains', { domain: name, action });
+      ev.target.replaceWith(h('span', { class: 'small muted' }, { clear: 'Rule removed', allow: 'Allowed', block: 'Blocked' }[action]));
+    } catch (e) { toast(e.message, 'err'); }
+  } }, label);
+}
+
+function caughtBy(r) {
+  if (!r.list && !r.rule) return null;
+  return h('div', { class: 'muted small' }, 'Caught by ', r.rule ? h('code', {}, r.rule) : null, r.list ? [' on ', r.list === 'Custom rules' ? 'your custom rules' : r.list] : null);
+}
+
+// bar is a thin meter under a top-list row, scaled to the list's first row.
+function bar(part, top) {
+  const s = h('span');
+  s.style.width = (top ? Math.max(1, 100 * part / top) : 0) + '%';
+  return h('div', { class: 'meter', 'aria-hidden': 'true' }, s);
+}
+
+async function domainDialog(name, range) {
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
+  const d = dialog(name, [body, h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Close'))]);
+  d.classList.add('wide');
+  let r;
+  try { r = await api('GET', '/analytics/domain?' + new URLSearchParams({ name, range })); } catch (e) { fill(body, msg('err', e.message)); return; }
+  const c = r.counts || { total: 0, blocked: 0 };
+  const now = r.now || {};
+  fill(body,
+    h('p', {}, now.allowed ? ['Allowed now', now.rule ? [' by ', h('code', {}, now.rule)] : null, now.list ? [' (', now.custom ? 'your custom rules' : now.list, ')'] : null]
+      : now.blocked ? ['Blocked now by ', h('code', {}, now.rule), ' on ', now.custom ? 'your custom rules' : now.list] : 'Not blocked now.', ' ', domainButton(name, now)),
+    r.caught_by && !now.blocked ? h('p', { class: 'muted small' }, 'Was last blocked by ', h('code', {}, r.caught_by.rule), ' on ', r.caught_by.list, '.') : null,
+    h('div', { class: 'grid' },
+      h('div', { class: 'tile' }, h('div', { class: 'label' }, RANGES[range]), h('div', { class: 'value' }, fmtNum(c.total))),
+      h('div', { class: 'tile' }, h('div', { class: 'label' }, 'Blocked'), h('div', { class: 'value' }, fmtNum(c.blocked)))),
+    r.last_seen ? h('p', { class: 'muted small' }, 'First seen ', fmtTime(r.first_seen), ' · last seen ', fmtTime(r.last_seen)) : null,
+    c.total ? queryChart(r) : h('p', { class: 'muted' }, 'No queries for this domain in this period.'),
+    r.devices && r.devices.length ? [h('h3', {}, 'Devices that asked'), h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'))),
+      h('tbody', {}, r.devices.map(x => h('tr', {},
+        h('td', {}, h('a', { href: '#/queries?' + new URLSearchParams({ client: x.device || x.key, search: name }), onclick: () => d.close() }, x.label || x.key)),
+        h('td', {}, fmtNum(x.total)), h('td', {}, fmtNum(x.blocked)))))))] : null,
+    coverage(r.nodes));
+}
+
+async function analyticsPage(main) {
+  const params = hashParams();
+  const st = { range: RANGES[params.get('range')] ? params.get('range') : '24h', client: params.get('client') || '' };
+  const perDevice = can('querylog.view');
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
+  let devs = [];
+  if (perDevice) { try { devs = await api('GET', '/devices'); } catch (_) { /* filter still works by IP */ } }
+  const setHash = () => {
+    const q = new URLSearchParams();
+    if (st.range !== '24h') q.set('range', st.range);
+    if (st.client) q.set('client', st.client);
+    history.replaceState(null, '', '#/analytics' + (q.toString() ? '?' + q : ''));
+  };
+  const rangeBtns = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, Object.keys(RANGES).map(k =>
+    h('button', { type: 'button', 'aria-pressed': String(k === st.range), onclick: (ev) => {
+      st.range = k; rangeBtns.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.target)));
+      setHash(); load();
+    } }, k)));
+  const devSel = perDevice ? h('select', { 'aria-label': 'Device', onchange: (ev) => { st.client = ev.target.value; setHash(); load(); } },
+    h('option', { value: '' }, 'All devices'),
+    devs.map(d => h('option', { value: d.id || d.addrs[0], selected: st.client === (d.id || d.addrs[0]) }, deviceLabel(d)))) : null;
+  page(main, 'Analytics', h('div', { class: 'row' }, rangeBtns, devSel), body);
+
+  const q = (path, extra) => {
+    const u = new URLSearchParams({ range: st.range, ...extra });
+    if (st.client) u.set('client', st.client);
+    return api('GET', '/analytics/' + path + '?' + u);
+  };
+  const topList = (title, rows, kind) => { const total = rows.length ? rows[0].total : 0; return h('div', { class: 'card' }, h('h2', {}, title),
+    !rows.length ? h('p', { class: 'muted' }, 'Nothing yet.') : h('table', { class: 'top' }, h('tbody', {}, rows.map(r => {
+      if (kind === 'clients') {
+        return h('tr', {}, h('td', {}, h('a', { href: '#/analytics?' + new URLSearchParams({ client: r.device || r.key, range: st.range }) }, r.label || r.addrs[0]),
+          r.label ? h('div', { class: 'muted small' }, r.addrs.join(', ')) : null, bar(r.total, total)),
+        h('td', { class: 'num' }, fmtNum(r.total), r.blocked ? h('div', { class: 'muted small' }, fmtNum(r.blocked), ' blocked') : null));
+      }
+      return h('tr', {},
+        h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(r.key, st.range) }, r.key),
+          kind === 'blocked' ? caughtBy(r) : null, bar(r.total, total)),
+        h('td', { class: 'num' }, fmtNum(r.total)),
+        h('td', { class: 'nowrap' }, domainButton(r.key, r.now)));
+    })))); };
+
+  const load = async () => {
+    let sum, dom, blk, cli;
+    try {
+      [sum, dom, blk, cli] = await Promise.all([q('summary'), q('top', { by: 'domains', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
+        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null)]);
+    } catch (e) { fill(body, msg('err', e.message)); return; }
+    const c = sum.counts;
+    const pct = (n) => (c.total ? (100 * n / c.total).toFixed(1) + '%' : '—');
+    const tile = (label, value, note) => h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), note ? h('div', { class: 'muted small' }, note) : null);
+    fill(body,
+      !sum.stats && !sum.detail ? msg('warn', 'Query history is turned off, so there is nothing to show. ' + (isAdmin() ? 'Turn it on under Settings → Query history.' : 'An admin can turn it on.')) : null,
+      coverage(sum.nodes),
+      h('div', { class: 'grid' },
+        tile('Queries', fmtNum(c.total)),
+        tile('Blocked', fmtNum(c.blocked), pct(c.blocked)),
+        tile('Answered from cache', pct(c.cached)),
+        tile('Average response', c.total ? (c.ms_sum / c.total).toFixed(1) + ' ms' : '—'),
+        st.client ? null : tile('Devices', fmtNum(sum.devices))),
+      h('div', { class: 'card' }, h('h2', {}, 'Queries over time'), c.total ? queryChart(sum) : h('p', { class: 'muted' }, 'No queries in this period.')),
+      h('div', { class: 'cols' }, topList('Top domains', dom.rows, 'domains'), topList('Top blocked', blk.rows, 'blocked')),
+      cli ? topList('Busiest devices', cli.rows, 'clients') : null,
+      perDevice && st.client ? h('p', {}, h('a', { href: '#/queries?client=' + encodeURIComponent(st.client) }, 'See every query from this device')) : null);
+  };
+  await load();
+  timer = setInterval(() => { if (!document.hidden && !document.querySelector('dialog[open]')) load(); }, 30000);
+}
+
+// dashboardChart is the dashboard's last-24-hours card.
+async function dashboardChart(box) {
+  let sum;
+  try { sum = await api('GET', '/analytics/summary?range=24h'); } catch (_) { return; }
+  if (!sum.counts || !sum.counts.total) { box.replaceChildren(); return; }
+  box.replaceChildren(h('div', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', {}, 'Last 24 hours'), h('a', { href: '#/analytics', class: 'small' }, 'Analytics')),
+    h('p', { class: 'muted small' }, fmtNum(sum.counts.total), ' queries, ', fmtNum(sum.counts.blocked), ' blocked, from ', fmtNum(sum.devices), sum.devices === 1 ? ' device.' : ' devices.'),
+    queryChart(sum)));
 }
 
 // ---------- settings ----------
@@ -1148,6 +1395,25 @@ async function settings(main) {
         h('textarea', { name: 'nets', spellcheck: 'false', 'aria-label': 'Allowed networks', class: 'short', placeholder: 'Private networks (default):\n192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12 and others' }, (eff.DNS.AllowedNets || []).join('\n')),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ allowed_nets: lines(val(f, 'nets')) }, { allowed_nets: norm(eff.DNS.AllowedNets) }))));
+  }
+
+  if (isAdmin()) {
+    const hc = eff.History;
+    let hs = null;
+    try { hs = (await api('GET', '/status')).history; } catch (_) { /* size unknown */ }
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'Query history ', origin('history_days', 'stats_days')),
+      form({ 'data-track': true }, [
+        h('p', { class: 'muted' }, 'Each server keeps its own history for Analytics and the Query log. Nothing leaves your servers. Set a number to 0 to keep none.'),
+        h('label', { for: 'hdays' }, 'Keep every query for (days)'),
+        h('input', { id: 'hdays', name: 'hdays', type: 'number', min: 0, max: 365, value: hc.Days }),
+        h('p', { class: 'muted small' }, 'Lets you search what each device looked up. Takes about 25 MB per day kept for every 100,000 queries a day; a typical home makes 10,000 to 50,000.'),
+        h('label', { for: 'sdays' }, 'Keep hourly totals for (days)'),
+        h('input', { id: 'sdays', name: 'sdays', type: 'number', min: 0, max: 730, value: hc.StatsDays }),
+        h('p', { class: 'muted small' }, 'Charts and top lists. Much smaller than every query.'),
+        hs ? h('p', { class: 'muted small' }, 'This server’s history uses ', fmtSize(hs.bytes), '.', hs.dropped ? ' ' + fmtNum(hs.dropped) + ' queries weren’t saved because the disk couldn’t keep up.' : '') : null,
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], (f) => save({ history_days: Number(val(f, 'hdays')), stats_days: Number(val(f, 'sdays')) }, { history_days: hc.Days, stats_days: hc.StatsDays }))));
   }
 
   page(main, 'Settings', sections);

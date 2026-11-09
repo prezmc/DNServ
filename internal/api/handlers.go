@@ -551,7 +551,12 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 			return
 		}
 	}
-	if !(up || nw || lists || rules) {
+	hist := patch.TouchesHistory()
+	if hist && !p.Can(store.PermUsers) {
+		writeErr(w, http.StatusForbidden, "only admins can change how long query history is kept")
+		return
+	}
+	if !(up || nw || lists || rules || hist) {
 		writeErr(w, http.StatusBadRequest, "nothing to change")
 		return
 	}
