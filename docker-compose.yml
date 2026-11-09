@@ -1,0 +1,19 @@
+services:
+  dnserve:
+    image: prezmcmahon/dnserve:latest
+    build: .
+    container_name: dnserve
+    restart: unless-stopped
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "8080:8080/tcp"
+    volumes:
+      - dnserve-data:/data
+      # Optional: your own config (see dnserve.example.yaml).
+      # - ./dnserve.yaml:/data/dnserve.yaml:ro
+    environment:
+      - TZ=America/Chicago
+
+volumes:
+  dnserve-data:
