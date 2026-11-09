@@ -16,7 +16,9 @@ import (
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/policy"
 	"github.com/prezmc/dnserve/internal/querylog"
+	"github.com/prezmc/dnserve/internal/store"
 )
 
 // fakeResolver answers A queries with 192.0.2.1 and counts calls.
@@ -289,4 +291,46 @@ func TestQueryLogRecords(t *testing.T) {
 	if a := got[1]; a.Result != querylog.Answered || a.Answers != 1 || a.Type != "A" {
 		t.Fatalf("answered entry: %+v", a)
 	}
+}
+
+func TestGroupPolicies(t *testing.T) {
+	s, addr := newTestServer(t, nil, &fakeResolver{})
+	st := &store.State{
+		Groups: map[string]*store.Group{
+			"kids": {ID: "kids", Name: "Kids", Rules: []string{"||games.example^"}},
+			"work": {ID: "work", Name: "Work", SkipBlocklists: true},
+		},
+		Devices: map[string]*store.Device{"me": {ID: "me", Name: "Me", Addrs: []string{"127.0.0.1"}, Group: "kids"}},
+	}
+	s.SetPolicy(policy.Build(st))
+	if r := query(t, addr, "games.example", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatalf("group rule not applied: %v", r)
+	}
+	if r := query(t, addr, "x.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatalf("shared list not applied to group: %v", r)
+	}
+	st.Devices["me"].Group = "work"
+	s.SetPolicy(policy.Build(st))
+	if r := query(t, addr, "x.ads.example", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("work group should skip shared lists: %v", r)
+	}
+	if r := query(t, addr, "games.example", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("kids rule leaked to work: %v", r)
+	}
+	s.SetPolicy(nil)
+	if r := query(t, addr, "x.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatalf("no policy: shared list should apply: %v", r)
+	}
+}
+
+func isBlocked(r *dns.Msg) bool {
+	if r.Rcode == dns.RcodeNameError {
+		return true
+	}
+	for _, rr := range r.Answer {
+		if a, ok := rr.(*dns.A); ok && a.A.IsUnspecified() {
+			return true
+		}
+	}
+	return false
 }

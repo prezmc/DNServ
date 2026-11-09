@@ -136,6 +136,10 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("PUT /api/v1/devices/{id}", a.authed(store.PermDevices, a.saveDevice))
 	m.HandleFunc("DELETE /api/v1/devices/{id}", a.authed(store.PermDevices, a.deleteDevice))
 	m.HandleFunc("GET /api/v1/queries", a.authed(store.PermQueryLog, a.queries))
+	m.HandleFunc("GET /api/v1/groups", a.authed(store.PermDashboard, a.listGroups))
+	m.HandleFunc("POST /api/v1/groups", a.authed(store.PermDevices, a.saveGroup))
+	m.HandleFunc("PUT /api/v1/groups/{id}", a.authed(store.PermDevices, a.saveGroup))
+	m.HandleFunc("DELETE /api/v1/groups/{id}", a.authed(store.PermDevices, a.deleteGroup))
 
 	// Status and audit.
 	m.HandleFunc("GET /api/v1/status", a.authed(store.PermDashboard, a.status))

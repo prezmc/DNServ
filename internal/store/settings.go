@@ -15,6 +15,7 @@ type Settings struct {
 
 	AllowedNets []string `json:"allowed_nets,omitempty"`
 	LocalDNS    *string  `json:"local_dns,omitempty"`
+	TimeZone    *string  `json:"time_zone,omitempty"`
 
 	FilteringEnabled *bool                `json:"filtering_enabled,omitempty"`
 	BlockMode        *string              `json:"block_mode,omitempty"`
@@ -47,6 +48,9 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.LocalDNS != nil {
 		c.DNS.LocalDNS = *s.LocalDNS
+	}
+	if s.TimeZone != nil {
+		c.TimeZone = *s.TimeZone
 	}
 	if s.FilteringEnabled != nil {
 		c.Filtering.Enabled = *s.FilteringEnabled
@@ -92,6 +96,9 @@ func (s *Settings) Merge(p Settings) {
 	if p.LocalDNS != nil {
 		s.LocalDNS = p.LocalDNS
 	}
+	if p.TimeZone != nil {
+		s.TimeZone = p.TimeZone
+	}
 	if p.FilteringEnabled != nil {
 		s.FilteringEnabled = p.FilteringEnabled
 	}
@@ -116,7 +123,7 @@ func (s *Settings) Merge(p Settings) {
 func (p Settings) Touches() (upstream, network, lists, rules bool) {
 	upstream = p.UpstreamMode != nil || p.UpstreamServers != nil || p.TunnelInterface != nil ||
 		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil
-	network = p.AllowedNets != nil || p.LocalDNS != nil
+	network = p.AllowedNets != nil || p.LocalDNS != nil || p.TimeZone != nil
 	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.FilteringEnabled != nil || p.BlockMode != nil
 	rules = p.Rules != nil
 	return

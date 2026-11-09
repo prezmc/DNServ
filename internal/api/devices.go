@@ -12,6 +12,7 @@ import (
 
 	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/policy"
 	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/store"
 )
@@ -54,6 +55,7 @@ type deviceView struct {
 	Name      string    `json:"name"`
 	Hostname  string    `json:"hostname,omitempty"` // from the router
 	Addrs     []string  `json:"addrs"`
+	Group     string    `json:"group,omitempty"`
 	Queries   int64     `json:"queries"`
 	Blocked   int64     `json:"blocked"`
 	FirstSeen time.Time `json:"first_seen,omitzero"`
@@ -65,7 +67,7 @@ func (a *API) listDevices(w http.ResponseWriter, r *http.Request, p *Principal) 
 	byAddr := map[string]*deviceView{}
 	out := []*deviceView{}
 	for _, d := range st.Devices {
-		v := &deviceView{ID: d.ID, Name: d.Name, Addrs: slices.Clone(d.Addrs)}
+		v := &deviceView{ID: d.ID, Name: d.Name, Addrs: slices.Clone(d.Addrs), Group: d.Group}
 		out = append(out, v)
 		for _, ad := range d.Addrs {
 			byAddr[ad] = v
@@ -117,19 +119,26 @@ func (a *API) saveDevice(w http.ResponseWriter, r *http.Request, p *Principal) {
 	var req struct {
 		Name  string
 		Addrs []string
+		Group *string // nil keeps the current group
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
 	id := r.PathValue("id")
 	status := http.StatusOK
+	group := ""
 	if id == "" {
 		id, status = auth.RandomID(9), http.StatusCreated
-	} else if _, ok := a.Store.State().Devices[id]; !ok {
+	} else if old, ok := a.Store.State().Devices[id]; !ok {
 		writeErr(w, http.StatusNotFound, "not found")
 		return
+	} else {
+		group = old.Group
 	}
-	if _, ok := a.apply(w, store.NewCommand(store.OpDeviceSave, p.Actor(), store.Device{ID: id, Name: req.Name, Addrs: req.Addrs})); !ok {
+	if req.Group != nil {
+		group = *req.Group
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpDeviceSave, p.Actor(), store.Device{ID: id, Name: req.Name, Addrs: req.Addrs, Group: group})); !ok {
 		return
 	}
 	writeJSON(w, status, a.Store.State().Devices[id])
@@ -200,4 +209,127 @@ func (a *API) checkDomain(w http.ResponseWriter, r *http.Request, p *Principal) 
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// groupView adds what's happening now to a group.
+type groupView struct {
+	*store.Group
+	Devices []string `json:"devices"` // device ids
+	Active  []string `json:"active"`  // schedules running now
+}
+
+func (a *API) listGroups(w http.ResponseWriter, r *http.Request, p *Principal) {
+	st := a.Store.State()
+	eff := a.Effective()
+	loc, err := eff.Location()
+	if err != nil {
+		loc = time.UTC
+	}
+	now := a.now().In(loc)
+	set := policy.Build(st)
+	out := []groupView{}
+	for _, g := range st.Groups {
+		v := groupView{Group: g, Devices: []string{}, Active: []string{}}
+		for _, d := range st.Devices {
+			if d.Group == g.ID {
+				v.Devices = append(v.Devices, d.ID)
+			}
+		}
+		slices.Sort(v.Devices)
+		if cg := set.Group(g.ID); cg != nil {
+			v.Active = append(v.Active, cg.Active(now)...)
+		}
+		out = append(out, v)
+	}
+	slices.SortFunc(out, func(x, y groupView) int { return strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name)) })
+	zone := loc.String()
+	if zone == "Local" {
+		zone = now.Format("MST") // the container's TZ, usually UTC
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"groups": out, "time_zone": zone, "now": now.Format("Mon 15:04")})
+}
+
+func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var req struct {
+		store.Group
+		Devices *[]string // device ids to put in this group (nil leaves them)
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	g := req.Group
+	id := r.PathValue("id")
+	status := http.StatusOK
+	st := a.Store.State()
+	if id == "" {
+		id, status = auth.RandomID(9), http.StatusCreated
+	} else if _, ok := st.Groups[id]; !ok {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	g.ID = id
+	check := func(where string, lines []string) bool {
+		for _, l := range lines {
+			l = strings.TrimSpace(l)
+			if l == "" || strings.HasPrefix(l, "#") || strings.HasPrefix(l, "!") {
+				continue
+			}
+			if _, ok, _ := filter.ParseLine(l); !ok {
+				writeErr(w, http.StatusBadRequest, where+": "+strconv.Quote(l)+" is not a rule DNServe understands")
+				return false
+			}
+		}
+		return true
+	}
+	if !check("rules", g.Rules) {
+		return
+	}
+	for _, sc := range g.Schedules {
+		if !check(sc.Name, sc.Rules) {
+			return
+		}
+	}
+	if req.Devices != nil {
+		for _, d := range *req.Devices {
+			if st.Devices[d] == nil {
+				writeErr(w, http.StatusBadRequest, "unknown device "+strconv.Quote(d))
+				return
+			}
+		}
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpGroupSave, p.Actor(), g)); !ok {
+		return
+	}
+	if req.Devices != nil {
+		// Move devices in and out. Each move is its own audited change.
+		st = a.Store.State()
+		want := map[string]bool{}
+		for _, d := range *req.Devices {
+			want[d] = true
+		}
+		for _, d := range st.Devices {
+			target := d.Group
+			if want[d.ID] {
+				target = id
+			} else if d.Group == id {
+				target = ""
+			}
+			if target == d.Group {
+				continue
+			}
+			nd := *d
+			nd.Group = target
+			if _, ok := a.apply(w, store.NewCommand(store.OpDeviceSave, p.Actor(), nd)); !ok {
+				return
+			}
+		}
+	}
+	writeJSON(w, status, a.Store.State().Groups[id])
+}
+
+func (a *API) deleteGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if _, ok := a.apply(w, store.NewCommand(store.OpGroupDelete, p.Actor(), store.IDOnly{ID: r.PathValue("id")})); !ok {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

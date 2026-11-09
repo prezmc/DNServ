@@ -77,4 +77,6 @@ filtering:
 http:
   listen: ":8080"          # /healthz, /readyz, /metrics
 
+# Time zone for group schedules, e.g. Europe/London (default: TZ or UTC).
+time_zone: ""
 data_dir: /data
