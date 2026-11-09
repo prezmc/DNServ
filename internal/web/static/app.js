@@ -89,6 +89,12 @@ function fmtTime(t) {
   if (!t || t.startsWith('0001')) return '—';
   return new Date(t).toLocaleString();
 }
+function ago(t) {
+  if (!t || t.startsWith('0001')) return '\u2014';
+  const sec = Math.max(0, (Date.now() - new Date(t).getTime()) / 1000);
+  if (sec < 90) return 'just now';
+  return fmtDur(sec) + ' ago';
+}
 function fmtDur(sec) {
   const d = Math.floor(sec / 86400), hr = Math.floor(sec / 3600) % 24, m = Math.floor(sec / 60) % 60;
   if (d) return d + 'd ' + hr + 'h';
@@ -128,18 +134,65 @@ const POWER_PERMS = ['dashboard.view', 'querylog.view', 'data.export', 'domains.
 const VIEWER_PERMS = ['dashboard.view', 'querylog.view'];
 
 const PROVIDERS = {
-  cloudflare: { name: 'Cloudflare (1.1.1.1)', servers: ['https://cloudflare-dns.com/dns-query', 'tls://one.one.one.one'] },
-  quad9: { name: 'Quad9 (9.9.9.9, blocks malware)', servers: ['https://dns.quad9.net/dns-query', 'tls://dns.quad9.net'] },
+  cloudflare: { name: 'Cloudflare (1.1.1.1)', note: 'Fast, no filtering of its own.', servers: ['https://cloudflare-dns.com/dns-query', 'tls://one.one.one.one'] },
+  quad9: { name: 'Quad9 (9.9.9.9)', note: 'Non-profit; also blocks known malware domains.', servers: ['https://dns.quad9.net/dns-query', 'tls://dns.quad9.net'] },
+  mullvad: { name: 'Mullvad', note: 'Privacy-focused, keeps no logs.', servers: ['https://dns.mullvad.net/dns-query', 'tls://dns.mullvad.net'] },
+};
+const providerFor = (servers) => Object.keys(PROVIDERS).find(k => JSON.stringify(PROVIDERS[k].servers) === JSON.stringify(servers || [])) || 'custom';
+
+const MODES = {
+  forward: { title: 'Encrypted forwarding (recommended)', note: "Lookups go encrypted to a public resolver you pick, so your ISP can't see or change them." },
+  recursive: { title: 'Full recursion', note: 'DNServe asks the domain servers itself and checks DNSSEC. No single company sees all your lookups, but your ISP can see them.' },
+  tunnel: { title: 'Recursion through a VPN', note: 'Full recursion with every lookup sent through a WireGuard VPN, hidden from your ISP.' },
 };
 
+// Protection levels are tiers of one list (HaGeZi Multi), so exactly one
+// is used. Add-ons stack on top.
 const HAGEZI = 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/';
-const PRESET_LISTS = [
-  { name: 'HaGeZi Light', url: HAGEZI + 'light.txt', note: 'Ads and trackers; almost never breaks a site.' },
-  { name: 'HaGeZi Multi Normal', url: HAGEZI + 'multi.txt', note: 'Balanced ads, tracking and malware.' },
-  { name: 'HaGeZi Multi Pro', url: HAGEZI + 'pro.txt', note: 'Stricter; the default. Rarely needs an allow rule.' },
-  { name: 'HaGeZi Threat Intelligence', url: HAGEZI + 'tif.txt', note: 'Malware, phishing and scam domains.' },
-  { name: 'StevenBlack hosts', url: 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts', note: 'Classic unified hosts list.' },
+const LEVELS = [
+  { id: 'off', name: 'Off', note: 'No blocklist. Your own rules still apply.' },
+  { id: 'light', name: 'Light', list: { name: 'HaGeZi Light', url: HAGEZI + 'light.txt' }, note: 'Ads and trackers only. Almost never breaks a site.' },
+  { id: 'normal', name: 'Standard', list: { name: 'HaGeZi Multi Normal', url: HAGEZI + 'multi.txt' }, note: 'Ads, tracking, malware and scams. A good fit for most homes.' },
+  { id: 'pro', name: 'Strong', list: { name: 'HaGeZi Multi Pro', url: HAGEZI + 'pro.txt' }, note: 'Blocks more trackers and telemetry. Now and then a site needs an allow rule.' },
 ];
+const ADDONS = [
+  { name: 'HaGeZi Threat Intelligence', url: HAGEZI + 'tif.txt', title: 'Extra malware and phishing protection', note: 'Fresh lists of scam, phishing and malware domains.' },
+];
+const PRESET_LISTS = LEVELS.filter(l => l.list).map(l => l.list).concat(ADDONS.map(a => ({ name: a.name, url: a.url })),
+  [{ name: 'StevenBlack hosts', url: 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts' }]);
+const levelOf = (lists) => {
+  const on = new Set((lists || []).filter(l => l.enabled).map(l => l.url));
+  const hit = LEVELS.filter(l => l.list && on.has(l.list.url));
+  return hit.length ? hit[hit.length - 1].id : 'off';
+};
+// applyLevel returns lists with exactly the chosen level and add-ons from
+// the presets, keeping any other lists the user added.
+function applyLevel(lists, level, addons) {
+  const managed = new Set(LEVELS.filter(l => l.list).map(l => l.list.url).concat(ADDONS.map(a => a.url)));
+  const keep = (lists || []).filter(l => !managed.has(l.url));
+  const lv = LEVELS.find(l => l.id === level);
+  const out = lv && lv.list ? [{ name: lv.list.name, url: lv.list.url, enabled: true }] : [];
+  return out.concat(ADDONS.filter(a => addons.has(a.url)).map(a => ({ name: a.name, url: a.url, enabled: true })), keep);
+}
+
+// dnsAddress is what devices should use, judged from how this browser
+// reached the dashboard.
+function dnsAddress() {
+  const host = location.hostname.replace(/^\[|\]$/g, '');
+  const isIP = /^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':');
+  const loopback = host === 'localhost' || host.startsWith('127.') || host === '::1';
+  return { host, ok: isIP && !loopback, loopback };
+}
+
+function routerHelp() {
+  const a = dnsAddress();
+  return [
+    h('p', {}, "Set your router's DNS server (usually under DHCP or LAN settings) to:"),
+    a.loopback ? msg('warn', "You opened the dashboard on this machine itself, so use the machine's LAN address (for example 192.168.1.10), not " + a.host + '.')
+      : h('p', {}, h('code', { class: 'big' }, a.host), a.ok ? null : h('span', { class: 'muted small' }, '  (use the IP address this name points to)')),
+    h('p', { class: 'muted small' }, "Leave the secondary DNS empty or point it at a second DNServe node. A public one such as 8.8.8.8 lets devices skip filtering. Devices switch over when they reconnect to Wi-Fi."),
+  ];
+}
 
 // ---------- boot ----------
 
@@ -174,22 +227,38 @@ function setupAccount() {
   render(centered(
     wizardSteps(1),
     h('h1', {}, 'Welcome to DNServe'),
-    h('p', { class: 'muted' }, 'Create the admin account for this node. To prove you own it, enter the setup code from the container log:'),
-    h('p', {}, h('code', {}, 'docker logs dnserve 2>&1 | grep setup_code')),
+    h('p', { class: 'muted' }, "First, prove this is your server. DNServe printed a setup code in its container log when it started. It's in a box headed \u201cDNServe first-run setup\u201d. From a terminal:"),
+    h('p', {}, h('code', {}, 'docker logs dnserve')),
+    h('p', { class: 'muted small' }, 'Using Portainer, Synology, Unraid or similar? Open the container and look at its log.'),
     form({}, [
       h('label', { for: 'code' }, 'Setup code'),
-      h('input', { id: 'code', name: 'code', type: 'text', autocomplete: 'off', placeholder: 'ABCD-EFGH', required: true, autofocus: true }),
-      h('label', { for: 'username' }, 'Admin username'),
+      h('input', { id: 'code', name: 'code', class: 'code', type: 'text', autocomplete: 'off', placeholder: 'ABCD-EFGH', required: true, autofocus: true }),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Continue')),
+    ], async (f) => {
+      const code = val(f, 'code');
+      await api('POST', '/setup/check', { code });
+      setupAdmin(code);
+    }),
+  ));
+}
+
+function setupAdmin(code) {
+  render(centered(
+    wizardSteps(1),
+    h('h1', {}, 'Create your admin account'),
+    h('p', { class: 'muted' }, 'This account can change everything, including other users.'),
+    form({}, [
+      h('label', { for: 'username' }, 'Username'),
       h('input', { id: 'username', name: 'username', type: 'text', autocomplete: 'username', value: 'admin', required: true }),
       h('label', { for: 'password' }, 'Password'),
-      h('input', { id: 'password', name: 'password', type: 'password', autocomplete: 'new-password', minlength: 12, required: true }),
+      h('input', { id: 'password', name: 'password', type: 'password', autocomplete: 'new-password', minlength: 12, required: true, autofocus: true }),
       h('p', { class: 'muted small' }, 'At least 12 characters. A few random words works well.'),
       h('label', { for: 'confirm' }, 'Confirm password'),
       h('input', { id: 'confirm', name: 'confirm', type: 'password', autocomplete: 'new-password', required: true }),
-      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Create admin account')),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Create account'), h('button', { class: 'link', type: 'button', onclick: setupAccount }, 'Back')),
     ], async (f) => {
       if (val(f, 'password') !== val(f, 'confirm')) throw new Error("The passwords don't match.");
-      await api('POST', '/setup', { code: val(f, 'code'), username: val(f, 'username').trim(), password: val(f, 'password') });
+      await api('POST', '/setup', { code, username: val(f, 'username').trim(), password: val(f, 'password') });
       store.set('wizard', '1');
       await boot();
     }),
@@ -289,50 +358,63 @@ function recoveryCodes(codes, wizard) {
 // ---------- first-run basics ----------
 
 async function setupBasics() {
-  let s;
+  let s, st;
   try {
-    s = await api('GET', '/settings');
+    [s, st] = await Promise.all([api('GET', '/settings'), api('GET', '/status')]);
   } catch (e) {
     return render(centered(msg('err', e.message)));
   }
   const eff = s.effective;
-  const curURLs = new Set((eff.Filtering.Lists || []).filter(l => l.enabled).map(l => l.url));
-  const mode = eff.Upstream.Mode;
-  const choice = (value, title, note) => h('label', { class: 'choice' },
-    h('input', { type: 'radio', name: 'mode', value, checked: mode === value }),
-    h('span', {}, h('b', {}, title), h('span', { class: 'muted small' }, note)));
+  const tunnelOK = st.tunnel_interface_present !== false || eff.Upstream.Mode === 'tunnel';
+  const prov = providerFor(eff.Upstream.Servers);
+  const onURLs = new Set((eff.Filtering.Lists || []).filter(l => l.enabled).map(l => l.url));
+
+  const providerBox = h('div', { class: 'indent' },
+    h('label', { for: 'provider' }, 'Resolver'),
+    h('select', { id: 'provider', name: 'provider' },
+      Object.entries(PROVIDERS).map(([k, p]) => h('option', { value: k, selected: prov === k }, p.name + ' \u2014 ' + p.note)),
+      prov === 'custom' ? h('option', { value: 'custom', selected: true }, 'Keep my custom servers') : null));
+  const modeChoice = (m) => {
+    const disabled = m === 'tunnel' && !tunnelOK;
+    return h('label', { class: 'choice' + (disabled ? ' disabled' : '') },
+      h('input', { type: 'radio', name: 'mode', value: m, checked: eff.Upstream.Mode === m, disabled,
+        onchange: () => { providerBox.hidden = m !== 'forward'; } }),
+      h('span', {}, h('b', {}, MODES[m].title), h('span', { class: 'muted small' }, ' ' + MODES[m].note),
+        disabled ? h('span', { class: 'small warn-text' }, ' Needs the VPN setup in deploy/docker-compose.tunnel.yml; no VPN connection was found.') : null,
+        m === 'forward' ? providerBox : null));
+  };
+  providerBox.hidden = eff.Upstream.Mode !== 'forward';
+  const level = levelOf(eff.Filtering.Lists);
 
   render(h('div', { class: 'center' }, h('div', { class: 'card wide' },
     wizardSteps(4),
-    h('h1', {}, 'Choose how DNServe works'),
-    h('p', { class: 'muted' }, 'You can change all of this later in Settings.'),
+    h('h1', {}, 'Choose how DNServe protects you'),
+    h('p', { class: 'muted' }, 'The defaults suit most homes. You can change all of this later in Settings.'),
     form({}, [
-      h('h2', {}, 'How lookups leave your network'),
-      h('div', { class: 'choices' },
-        choice('forward', 'Encrypted forwarding (recommended)', ' Lookups go encrypted (DNS over HTTPS) to a public resolver, so your ISP can\'t see or change them.'),
-        choice('recursive', 'Full recursion', ' DNServe asks the root and domain servers itself, checking DNSSEC. No single resolver sees all your lookups, but your ISP can see them.'),
-        choice('tunnel', 'Recursion through a VPN', ' Recursion with every lookup sent through a WireGuard VPN. Needs the gluetun sidecar from deploy/docker-compose.tunnel.yml.')),
-      h('label', { for: 'provider' }, 'Resolver for encrypted forwarding'),
-      h('select', { id: 'provider', name: 'provider' },
-        Object.entries(PROVIDERS).map(([k, p]) => h('option', { value: k, selected: JSON.stringify(eff.Upstream.Servers) === JSON.stringify(p.servers) }, p.name)),
-        h('option', { value: 'keep', selected: !Object.values(PROVIDERS).some(p => JSON.stringify(eff.Upstream.Servers) === JSON.stringify(p.servers)) }, 'Keep current: ' + (eff.Upstream.Servers || []).join(', '))),
+      h('h2', {}, 'Blocking'),
+      h('div', { class: 'choices' }, LEVELS.map(l => h('label', { class: 'choice' },
+        h('input', { type: 'radio', name: 'level', value: l.id, checked: level === l.id }),
+        h('span', {}, h('b', {}, l.name), h('span', { class: 'muted small' }, ' ' + l.note))))),
+      ADDONS.map(a => h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'addon', value: a.url, checked: onURLs.has(a.url) }),
+        h('span', {}, h('b', {}, a.title), ' ', h('span', { class: 'muted small' }, a.note)))),
 
-      h('h2', { class: 'mt' }, 'Blocklists'),
-      PRESET_LISTS.map(l => h('label', { class: 'inline' },
-        h('input', { type: 'checkbox', name: 'list', value: l.url, checked: curURLs.has(l.url) }),
-        h('span', {}, h('b', {}, l.name), ' ', h('span', { class: 'muted small' }, l.note)))),
+      h('h2', { class: 'mt' }, 'Privacy'),
+      h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
+
+      h('h2', { class: 'mt' }, 'Extra protection'),
       h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: eff.Filtering.BlockBypass }),
-        h('span', {}, h('b', {}, 'Stop devices from bypassing DNServe'), ' ', h('span', { class: 'muted small' }, 'Blocks public DNS-over-HTTPS resolvers and iCloud Private Relay.'))),
+        h('span', {}, h('b', {}, "Don't let devices skip DNServe"), ' ', h('span', { class: 'muted small' }, 'Blocks browsers and apps from using their own encrypted DNS (and iCloud Private Relay). Good for families. A few apps may then fail to connect.'))),
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save and finish'), h('button', { type: 'button', onclick: setupDone }, 'Skip')),
     ], async (f) => {
-      const patch = { upstream_mode: f.elements.mode.value };
-      const prov = val(f, 'provider');
-      if (prov !== 'keep') patch.upstream_servers = PROVIDERS[prov].servers;
-      const picked = new Set([...f.querySelectorAll('input[name=list]:checked')].map(i => i.value));
-      const keep = (eff.Filtering.Lists || []).filter(l => !PRESET_LISTS.some(p => p.url === l.url));
-      patch.lists = keep.concat(PRESET_LISTS.filter(p => picked.has(p.url)).map(p => ({ name: p.name, url: p.url, enabled: true })));
-      patch.block_bypass = f.elements.bypass.checked;
-      if (!can('lists.manage')) { delete patch.lists; delete patch.block_bypass; }
+      const mode = f.querySelector('input[name=mode]:checked').value;
+      const patch = { upstream_mode: mode };
+      const p = val(f, 'provider');
+      if (mode === 'forward' && PROVIDERS[p]) patch.upstream_servers = PROVIDERS[p].servers;
+      if (can('lists.manage')) {
+        const addons = new Set([...f.querySelectorAll('input[name=addon]:checked')].map(i => i.value));
+        patch.lists = applyLevel(eff.Filtering.Lists, f.querySelector('input[name=level]:checked').value, addons);
+        patch.block_bypass = f.elements.bypass.checked;
+      }
       await api('PATCH', '/settings', patch);
       setupDone();
     }),
@@ -343,9 +425,8 @@ function setupDone() {
   store.set('wizard', null);
   render(centered(
     h('h1', {}, "You're set up"),
-    h('p', {}, 'Now point your devices at this server for DNS. The easiest way is your router: set its DHCP DNS server to'),
-    h('p', {}, h('code', {}, location.hostname)),
-    h('p', { class: 'muted small' }, "Use this machine's LAN address if that isn't it. Devices pick up the change when they reconnect or renew their lease."),
+    h('p', {}, 'Last step: send your devices to DNServe.'),
+    routerHelp(),
     h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { location.hash = '#/'; boot(); } }, 'Open the dashboard')),
   ));
 }
@@ -389,13 +470,13 @@ async function dashboard(main) {
         h('input', { name: 'domain', type: 'text', placeholder: 'ads.example.com', required: true, 'aria-label': 'Domain' }),
         h('button', { type: 'submit', value: 'block' }, 'Block'),
         h('button', { type: 'submit', value: 'allow' }, 'Allow'),
-        h('button', { type: 'submit', value: 'clear' }, 'Clear')),
-      h('p', { class: 'muted small' }, 'Applies to the domain and all its subdomains. Allow always wins over blocklists.'),
+        h('button', { type: 'submit', value: 'clear' }, 'Remove rule')),
+      h('p', { class: 'muted small' }, 'Applies to the domain and all its subdomains. Allow always wins over blocklists. Remove rule undoes either.'),
     ], async (f, btn) => {
       const action = btn ? btn.value : 'block';
       const d = val(f, 'domain').trim();
       await api('POST', '/domains', { domain: d, action });
-      return { block: 'Blocked ', allow: 'Allowed ', clear: 'Cleared rules for ' }[action] + d + '.';
+      return { block: 'Blocked ', allow: 'Allowed ', clear: 'Removed your rule for ' }[action] + d + '.';
     })) : null;
   page(main, 'Dashboard', body, quick);
 
@@ -407,26 +488,28 @@ async function dashboard(main) {
     const pct = (n) => (total ? (100 * n / total).toFixed(1) + '%' : '—');
     const tile = (label, value) => h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value));
     const health = [];
-    health.push(h('p', {}, 'Resolution: ', h('b', {}, { forward: 'encrypted forwarding', recursive: 'full recursion (Unbound)', tunnel: 'recursion through VPN' }[s.upstream_mode] || s.upstream_mode)));
+    health.push(h('p', {}, 'Lookups: ', h('b', {}, { forward: 'encrypted forwarding', recursive: 'full recursion', tunnel: 'recursion through a VPN' }[s.upstream_mode] || s.upstream_mode)));
     if (s.unbound) health.push(h('p', {}, h('span', { class: 'dot ' + (s.unbound.ready ? 'ok' : 'bad') }), 'Unbound ', s.unbound.ready ? 'running' : 'not answering', s.unbound.restarts ? ' (restarted ' + s.unbound.restarts + '×)' : ''));
     if (s.tunnel) health.push(h('p', {}, h('span', { class: 'dot ' + (s.tunnel.up ? 'ok' : 'bad') }), 'VPN tunnel ', s.tunnel.up ? 'up' : 'down', s.tunnel.detail ? ' — ' + s.tunnel.detail : ''));
     if (s.filter && !s.filter.ready) health.push(msg('warn', 'Blocklists are still loading.'));
+    const upName = (u) => (/^udp:\/\/127\.0\.0\.1:/.test(u) ? 'Unbound (built in)' : u.replace(/^https:\/\/([^/]+).*/, '$1 (HTTPS)').replace(/^tls:\/\/([^:]+).*/, '$1 (TLS)'));
     fill(body,
+      total === 0 ? h('div', { class: 'card highlight' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
+      h('p', { class: 'muted small' }, 'Counting since DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.'),
       h('div', { class: 'grid' },
         tile('Queries', fmtNum(total)),
-        tile('Blocked', fmtNum(q.blocked) + ' · ' + pct(q.blocked || 0)),
+        tile('Blocked', total ? fmtNum(q.blocked) + ' (' + pct(q.blocked || 0) + ')' : '0'),
         tile('Answered from cache', pct((q.cached || 0) + (q.stale || 0))),
-        tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0)),
-        tile('Uptime', fmtDur(s.uptime_seconds || 0))),
+        tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0))),
       h('div', { class: 'card' }, h('h2', {}, 'Health'), health,
         (s.upstreams && s.upstreams.length) ? h('div', { class: 'scroll' }, h('table', {},
-          h('thead', {}, h('tr', {}, h('th', {}, 'Upstream'), h('th', {}, 'Latency'), h('th', {}, 'Queries'), h('th', {}, 'Failures'))),
-          h('tbody', {}, s.upstreams.map(u => h('tr', {}, h('td', { class: 'mono' }, u.server), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'), h('td', {}, fmtNum(u.queries)), h('td', {}, fmtNum(u.failures))))))) : null),
+          h('thead', {}, h('tr', {}, h('th', {}, 'Resolver'), h('th', {}, 'Latency'), h('th', {}, 'Queries'), h('th', {}, 'Failures'))),
+          h('tbody', {}, s.upstreams.map(u => h('tr', {}, h('td', { title: u.server }, upName(u.server)), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'), h('td', {}, fmtNum(u.queries)), h('td', {}, fmtNum(u.failures))))))) : null),
       (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card' }, h('h2', {}, 'Lists'), h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
-        h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, fmtTime(l.updated)),
-          h('td', {}, l.error ? h('span', { class: 'badge bad' }, l.error) : h('span', { class: 'badge ok' }, l.from_cache ? 'from cache' : 'ok')))))))) : null,
-      h('p', { class: 'muted small' }, 'DNServe ', s.version, '. Per-device analytics arrive in a later step.'),
+        h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
+          h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
+      h('p', { class: 'muted small' }, 'DNServe ', s.version),
     );
   };
   await load();
@@ -442,16 +525,16 @@ async function settings(main) {
   const eff = s.effective, saved = s.saved || {};
   const sections = [];
 
-  // A badge and reset link for fields saved here (they override the file
-  // and environment).
+  // Fields changed in the dashboard get a "changed" badge and, for admins,
+  // a way back to the default.
   const origin = (...fields) => {
     const set = fields.filter(f => saved[f] !== undefined && saved[f] !== null);
-    if (!set.length) return h('span', { class: 'badge' }, 'from file or defaults');
-    return h('span', {}, h('span', { class: 'badge' }, 'saved here'),
+    if (!set.length) return null;
+    return h('span', {}, h('span', { class: 'badge' }, 'changed'),
       isAdmin() ? h('button', { class: 'link small', type: 'button', onclick: async () => {
-        if (!confirm('Go back to the value from the config file or defaults?')) return;
+        if (!confirm('Go back to the default for this section?')) return;
         try { await api('POST', '/settings/reset', { fields: set }); route(); } catch (e) { alert(e.message); }
-      } }, 'reset') : null);
+      } }, 'reset to default') : null);
   };
   // save sends only the fields that differ from what's in force, so
   // untouched values keep following the config file.
@@ -468,27 +551,47 @@ async function settings(main) {
 
   if (can('upstream.manage')) {
     const u = eff.Upstream;
-    const opt = (v, t) => h('option', { value: v, selected: u.Mode === v }, t);
+    let tunnelOK = true;
+    try { const st = await api('GET', '/status'); tunnelOK = st.tunnel_interface_present !== false || u.Mode === 'tunnel'; } catch (_) { /* keep enabled */ }
+    const prov = providerFor(u.Servers);
+    const servers = h('textarea', { id: 'servers', name: 'servers', spellcheck: 'false', class: 'short' }, (u.Servers || []).join('\n'));
+    const custom = h('div', { hidden: prov !== 'custom' },
+      h('label', { for: 'servers' }, 'Your servers, one per line'), servers,
+      h('p', { class: 'muted small' }, 'https://\u2026/dns-query for DNS over HTTPS, tls://name for DNS over TLS.'));
+    const picker = h('select', { id: 'provider', name: 'provider', onchange: (ev) => {
+      custom.hidden = ev.target.value !== 'custom';
+      if (PROVIDERS[ev.target.value]) servers.value = PROVIDERS[ev.target.value].servers.join('\n');
+    } }, Object.entries(PROVIDERS).map(([k, p]) => h('option', { value: k, selected: prov === k }, p.name + ' \u2014 ' + p.note)),
+      h('option', { value: 'custom', selected: prov === 'custom' }, 'Custom servers\u2026'));
+    const fwd = h('div', { class: 'indent', hidden: u.Mode === 'recursive' },
+      h('label', { for: 'provider' }, u.Mode === 'tunnel' ? 'Resolver (used only while the VPN is down)' : 'Resolver'), picker, custom);
+    const tunnelOpts = h('details', { class: 'indent', open: u.Mode === 'tunnel', hidden: u.Mode !== 'tunnel' }, h('summary', {}, 'VPN options'),
+      h('label', { for: 'tif' }, 'VPN network interface'),
+      h('input', { id: 'tif', name: 'tif', type: 'text', value: u.Tunnel.Interface || '' }),
+      h('label', { for: 'egress' }, 'Expected VPN exit addresses (optional, one per line)'),
+      h('textarea', { id: 'egress', name: 'egress', spellcheck: 'false', class: 'short' }, (u.Tunnel.ExpectedEgress || []).join('\n')),
+      h('label', { for: 'ondown' }, 'If the VPN goes down'),
+      h('select', { id: 'ondown', name: 'ondown' },
+        h('option', { value: 'forward', selected: u.Tunnel.OnDown === 'forward' }, 'Keep working with encrypted forwarding until it is back'),
+        h('option', { value: 'block', selected: u.Tunnel.OnDown === 'block' }, 'Stop answering (never send a lookup outside the VPN)')));
+    const modeChoice = (m) => {
+      const disabled = m === 'tunnel' && !tunnelOK;
+      return h('label', { class: 'choice' + (disabled ? ' disabled' : '') },
+        h('input', { type: 'radio', name: 'mode', value: m, checked: u.Mode === m, disabled, onchange: () => {
+          fwd.hidden = m === 'recursive'; tunnelOpts.hidden = m !== 'tunnel';
+        } }),
+        h('span', {}, h('b', {}, MODES[m].title.replace(' (recommended)', '')), h('span', { class: 'muted small' }, ' ' + MODES[m].note),
+          disabled ? h('span', { class: 'small warn-text' }, ' Needs the VPN setup in deploy/docker-compose.tunnel.yml; no VPN connection was found.') : null));
+    };
     sections.push(h('div', { class: 'card' },
-      h('h2', {}, 'Resolution ', origin('upstream_mode', 'upstream_servers', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
+      h('h2', {}, 'Privacy ', origin('upstream_mode', 'upstream_servers', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
+      h('p', { class: 'muted' }, 'How DNServe looks up the domains it doesn\u2019t block.'),
       form({}, [
-        h('label', { for: 'mode' }, 'Mode'),
-        h('select', { id: 'mode', name: 'mode' }, opt('forward', 'Encrypted forwarding'), opt('recursive', 'Full recursion (Unbound)'), opt('tunnel', 'Recursion through a VPN tunnel')),
-        h('label', { for: 'servers' }, 'Forwarding servers (one per line; also the fallback in tunnel mode)'),
-        h('textarea', { id: 'servers', name: 'servers', spellcheck: 'false' }, (u.Servers || []).join('\n')),
-        h('p', { class: 'muted small' }, 'https://… for DNS over HTTPS, tls://… for DNS over TLS, udp:// or tcp:// for plain DNS.'),
-        h('details', { open: u.Mode === 'tunnel' }, h('summary', {}, 'Tunnel options'),
-          h('label', { for: 'tif' }, 'VPN interface that must be up'),
-          h('input', { id: 'tif', name: 'tif', type: 'text', value: u.Tunnel.Interface || '' }),
-          h('label', { for: 'egress' }, 'Expected VPN exit IPs or ranges (optional, one per line)'),
-          h('textarea', { id: 'egress', name: 'egress', spellcheck: 'false', class: 'short' }, (u.Tunnel.ExpectedEgress || []).join('\n')),
-          h('label', { for: 'ondown' }, 'When the tunnel is down'),
-          h('select', { id: 'ondown', name: 'ondown' },
-            h('option', { value: 'forward', selected: u.Tunnel.OnDown === 'forward' }, 'Use encrypted forwarding until it is back'),
-            h('option', { value: 'block', selected: u.Tunnel.OnDown === 'block' }, 'Fail lookups (never leak outside the VPN)'))),
+        h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
+        fwd, tunnelOpts,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({
-        upstream_mode: val(f, 'mode'), upstream_servers: lines(val(f, 'servers')),
+        upstream_mode: f.querySelector('input[name=mode]:checked').value, upstream_servers: lines(servers.value),
         tunnel_interface: val(f, 'tif').trim(), tunnel_expected_egress: lines(val(f, 'egress')), tunnel_on_down: val(f, 'ondown'),
       }, {
         upstream_mode: u.Mode, upstream_servers: norm(u.Servers),
@@ -525,7 +628,7 @@ async function settings(main) {
       h('h2', {}, 'Filtering ', origin('filtering_enabled', 'block_mode', 'block_bypass', 'lists', 'allowlists')),
       form({}, [
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'enabled', checked: fl.Enabled }), 'Filtering on'),
-        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: fl.BlockBypass }), 'Stop devices from bypassing DNServe (blocks public DoH resolvers and iCloud Private Relay)'),
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: fl.BlockBypass }), "Don't let devices skip DNServe (blocks apps' own encrypted DNS and iCloud Private Relay)"),
         h('label', { for: 'bmode' }, 'Blocked domains answer with'),
         h('select', { id: 'bmode', name: 'bmode' },
           h('option', { value: 'null_ip', selected: fl.BlockMode === 'null_ip' }, '0.0.0.0 / :: (fastest for apps)'),
@@ -559,12 +662,12 @@ async function settings(main) {
       h('h2', {}, 'Allowed networks ', origin('allowed_nets')),
       form({}, [
         h('p', { class: 'muted' }, 'Only devices in these networks may use this DNS server. Leave empty to allow private networks only (the safe default).'),
-        h('textarea', { name: 'nets', spellcheck: 'false', 'aria-label': 'Allowed networks', class: 'short' }, (eff.DNS.AllowedNets || []).join('\n')),
+        h('textarea', { name: 'nets', spellcheck: 'false', 'aria-label': 'Allowed networks', class: 'short', placeholder: 'Private networks (default):\n192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12 and others' }, (eff.DNS.AllowedNets || []).join('\n')),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ allowed_nets: lines(val(f, 'nets')) }, { allowed_nets: norm(eff.DNS.AllowedNets) }))));
   }
 
-  page(main, 'Settings', h('p', { class: 'muted' }, 'Settings saved here are stored on the node and take priority over its config file and environment variables.'), sections);
+  page(main, 'Settings', sections);
 }
 
 // ---------- users ----------

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,6 +114,8 @@ func (e *env) setupAdmin() (*client, string) {
 	if code == "" {
 		e.t.Fatal("no setup code")
 	}
+	c.want(403, "POST", "/api/v1/setup/check", map[string]string{"code": "WRONG"}, nil)
+	c.want(204, "POST", "/api/v1/setup/check", map[string]string{"code": strings.ToLower(strings.ReplaceAll(code, "-", " "))}, nil)
 	c.want(403, "POST", "/api/v1/setup", map[string]string{"code": "WRONG", "username": "admin", "password": pw}, nil)
 	c.want(201, "POST", "/api/v1/setup", map[string]string{"code": code, "username": "admin", "password": pw}, nil)
 	// Not signed in until MFA is enrolled.
@@ -136,6 +139,7 @@ func TestSetupAndSignIn(t *testing.T) {
 	admin.want(200, "GET", "/api/v1/users", nil, nil)
 
 	// Setup can't run twice.
+	e.client().want(409, "POST", "/api/v1/setup/check", map[string]string{"code": "X"}, nil)
 	e.client().want(409, "POST", "/api/v1/setup", map[string]string{"code": "X", "username": "evil", "password": pw}, nil)
 
 	// Writes need the CSRF token.

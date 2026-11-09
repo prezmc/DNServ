@@ -1,10 +1,10 @@
 name: Publish image
 
-# Builds multi-arch images (amd64, arm64) and pushes them to Docker Hub on
-# every push to main (tag "latest") and on version tags (v1.2.3).
-# One-time setup: add repository secrets DOCKERHUB_USERNAME and
-# DOCKERHUB_TOKEN (Settings > Secrets and variables > Actions). Without them
-# this workflow builds but skips the push.
+# Builds multi-arch images (amd64, arm64) on every push to main (tag
+# "latest") and on version tags (v1.2.3), and pushes them to GitHub
+# Container Registry as ghcr.io/prezmc/dnserve. That needs no setup.
+# Optional: also push to Docker Hub by adding repository secrets
+# DOCKERHUB_USERNAME and DOCKERHUB_TOKEN.
 
 on:
   push:
@@ -14,27 +14,41 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     env:
-      HAS_SECRETS: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+      HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Log in to Docker Hub
-        if: env.HAS_SECRETS == 'true'
+        if: env.HAS_DOCKERHUB == 'true'
         uses: docker/login-action@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Image names
+        id: names
+        run: |
+          echo "images<<EOF" >> "$GITHUB_OUTPUT"
+          echo "ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_DOCKERHUB" = "true" ]; then echo "prezmcmahon/dnserve" >> "$GITHUB_OUTPUT"; fi
+          echo "EOF" >> "$GITHUB_OUTPUT"
       - name: Image tags
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: prezmcmahon/dnserve
+          images: ${{ steps.names.outputs.images }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
@@ -44,6 +58,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ env.HAS_SECRETS == 'true' }}
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ github.ref_name }}-${{ github.sha }}
