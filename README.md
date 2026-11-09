@@ -202,6 +202,10 @@ DNS nodes: a witness on the same box doesn't help when that box fails. With
 an even number of full nodes (4, 6, …) a witness also lets the cluster lose
 one more node.
 
+Clients only take two DNS servers? See
+[docs/floating-dns-addresses.md](docs/floating-dns-addresses.md) for putting
+any number of nodes behind two floating addresses with keepalived.
+
 By default a node learns its cluster address from the address its dashboard
 is opened at, or, for a witness, from the address the other node sees it
 connect from. Set `DNSERVE_CLUSTER_ADVERTISE` (for example
