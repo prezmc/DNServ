@@ -69,6 +69,7 @@ function form(attrs, kids, handler) {
       out.replaceChildren();
       try {
         const note = await handler(f, ev.submitter);
+        delete f.dataset.dirty;
         if (note) out.replaceChildren(note instanceof Node ? note : msg('ok', note));
       } catch (e) {
         out.replaceChildren(msg('err', e.message));
@@ -77,6 +78,11 @@ function form(attrs, kids, handler) {
       }
     },
   }), kids, out);
+  if (f.hasAttribute('data-track')) {
+    const mark = () => { f.dataset.dirty = '1'; };
+    f.addEventListener('input', mark);
+    f.addEventListener('change', mark);
+  }
   return f;
 }
 
@@ -111,6 +117,43 @@ function download(name, text) {
   document.body.append(a);
   a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+// tempPass makes a random temporary password that's easy to read out
+// (no 0/O or 1/l/I): four groups of four, about 80 bits.
+function tempPass() {
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
+  const r = new Uint32Array(16);
+  crypto.getRandomValues(r);
+  return [...r].map((x, i) => (i && i % 4 === 0 ? '-' : '') + abc[x % abc.length]).join('');
+}
+
+// inviteText is a message an admin can send to a new user.
+function inviteText(username, password) {
+  return 'You have an account on DNServe, our home network\u2019s DNS filter.\n\n' +
+    '1. Open ' + location.origin + '/\n' +
+    '2. Sign in as ' + username + ' with the temporary password ' + password + '\n' +
+    '3. Set up an authenticator app when asked (for example Google Authenticator, Microsoft Authenticator or 1Password)\n' +
+    '4. Then choose your own password under Your account.\n';
+}
+
+// deviceName turns a browser's user agent into "Chrome on macOS".
+function deviceName(ua) {
+  if (!ua) return 'Unknown device';
+  const browser = /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera' : /Firefox\//.test(ua) ? 'Firefox'
+    : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : /curl|python|Go-http/i.test(ua) ? 'Script' : 'Browser';
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android'
+    : /Mac OS X|Macintosh/.test(ua) ? 'macOS' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : '';
+  return os ? browser + ' on ' + os : browser;
+}
+
+function inviteBox(note, username, password) {
+  const text = inviteText(username, password);
+  return h('div', {},
+    msg('ok', note),
+    h('p', { class: 'small' }, 'Send them this (it is not shown again):'),
+    h('textarea', { class: 'tall', readonly: true, 'aria-label': 'Invite message' }, text),
+    h('div', { class: 'actions' }, h('button', { type: 'button', onclick: (ev) => navigator.clipboard.writeText(text).then(() => { ev.target.textContent = 'Copied'; }) }, 'Copy message')));
 }
 
 // ---------- constants ----------
@@ -212,7 +255,20 @@ async function boot() {
   route();
 }
 
-window.addEventListener('hashchange', () => { if (ME && ME.signed_in) route(); });
+// Moving away from a settings form with unsaved changes asks first.
+let shownHash = location.hash, goingBack = false;
+const unsaved = () => !!document.querySelector('form[data-dirty]');
+window.addEventListener('hashchange', async () => {
+  if (!(ME && ME.signed_in)) return;
+  if (goingBack) { goingBack = false; return; }
+  if (unsaved() && !(await ask('Leave without saving your changes?', 'Leave', false))) {
+    goingBack = true;
+    location.hash = shownHash;
+    return;
+  }
+  route();
+});
+window.addEventListener('beforeunload', (ev) => { if (unsaved()) { ev.preventDefault(); ev.returnValue = ''; } });
 document.addEventListener('DOMContentLoaded', boot);
 
 // ---------- sign-in pages ----------
@@ -465,13 +521,19 @@ function hashParams() {
 function route() {
   const path = location.hash.replace(/^#\/?/, '').replace(/\?.*$/, '');
   const r = ROUTES.find(x => x.path === path && x.show()) || ROUTES[0];
+  const menu = h('button', { type: 'button', class: 'menu', 'aria-expanded': 'false', 'aria-controls': 'navlinks', onclick: () => {
+    const open = nav.classList.toggle('open');
+    menu.setAttribute('aria-expanded', String(open));
+  } }, r.title + ' \u25be');
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
-    h('div', { class: 'brand' }, 'DNServe'),
-    ROUTES.filter(x => x.show()).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, x.title)),
+    h('div', { class: 'brand' }, 'DNServe', menu),
+    h('div', { id: 'navlinks', class: 'links' },
+      ROUTES.filter(x => x.show()).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, x.title))),
     h('div', { class: 'spacer' }),
     h('div', { class: 'who' }, ME.user.username, ' · ', ME.user.role),
     h('button', { class: 'link', onclick: async () => { try { await api('POST', '/auth/logout'); } catch (_) { /* ignore */ } csrf = ''; ME = null; boot(); } }, 'Sign out'));
   const main = h('main', {});
+  shownHash = location.hash;
   render(h('div', { class: 'shell' }, nav, main));
   document.title = r.title + ' · DNServe';
   r.page(main);
@@ -513,7 +575,7 @@ async function dashboard(main) {
         (s.upstreams && s.upstreams.length) ? h('div', { class: 'scroll' }, h('table', {},
           h('thead', {}, h('tr', {}, h('th', {}, 'Resolver'), h('th', {}, 'Latency'), h('th', {}, 'Queries'), h('th', {}, 'Failures'))),
           h('tbody', {}, s.upstreams.map(u => h('tr', {}, h('td', { title: u.server }, upName(u.server)), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'), h('td', {}, fmtNum(u.queries)), h('td', {}, fmtNum(u.failures))))))) : null),
-      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card' }, h('h2', {}, 'Lists'), h('div', { class: 'scroll' }, h('table', {},
+      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), updateListsButton()), h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
@@ -537,6 +599,21 @@ async function dashboard(main) {
     load();
     if (++tick % 3 === 0) loadDevices();
   }, 5000);
+}
+
+// updateListsButton downloads every list again now, instead of waiting
+// for the daily refresh.
+function updateListsButton() {
+  if (!can('lists.manage')) return null;
+  const b = h('button', { type: 'button', class: 'small', onclick: async () => {
+    b.disabled = true;
+    try {
+      await api('POST', '/lists/update');
+      toast('Downloading the lists again. The new rules apply as soon as they are in, usually within a minute.');
+    } catch (e) { toast(e.message, 'err'); }
+    setTimeout(() => { b.disabled = false; }, 10000);
+  } }, 'Update lists now');
+  return b;
 }
 
 // ---------- check a domain ----------
@@ -588,8 +665,8 @@ function deviceTable(list, opts) {
       opts.compact ? null : h('td', { class: 'nowrap' },
         manage ? h('button', { class: 'link', onclick: () => editDevice(d, opts.groupList || []) }, d.id ? 'Rename' : 'Name it') : null,
         manage && d.id ? h('button', { class: 'link danger', onclick: async () => {
-          if (!confirm('Forget the name "' + d.name + '"? The device keeps working.')) return;
-          try { await api('DELETE', '/devices/' + d.id); route(); } catch (e) { alert(e.message); }
+          if (!(await ask('Forget the name "' + d.name + '"?', 'Forget name'))) return;
+          try { await api('DELETE', '/devices/' + d.id); route(); } catch (e) { toast(e.message, 'err'); }
         } }, 'Forget name') : null))))));
 }
 
@@ -665,8 +742,8 @@ function groupsCard(groups, devs, gs) {
         manage ? h('td', { class: 'nowrap' },
           h('button', { class: 'link', onclick: () => editGroup(g, named, gs) }, 'Edit'),
           h('button', { class: 'link danger', onclick: async () => {
-            if (!confirm('Delete the group "' + g.name + '"? Its devices go back to the household settings.')) return;
-            try { await api('DELETE', '/groups/' + g.id); route(); } catch (e) { alert(e.message); }
+            if (!(await ask('Delete the group "' + g.name + '"? Its devices go back to the household settings.', 'Delete group'))) return;
+            try { await api('DELETE', '/groups/' + g.id); route(); } catch (e) { toast(e.message, 'err'); }
           } }, 'Delete')) : null))))) : null,
     h('p', { class: 'muted small' }, 'Schedules follow ', h('b', {}, gs.time_zone), ' time (now ', gs.now, ').', can('network.manage') ? [' ', h('a', { href: '#/settings' }, 'Change')] : null),
     manage ? h('div', { class: 'actions' },
@@ -777,7 +854,7 @@ async function queries(main) {
       can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
         const action = blocked ? 'allow' : 'block';
         try { await api('POST', '/domains', { domain: e.name, action }); ev.target.replaceWith(h('span', { class: 'small muted' }, blocked ? 'Allowed' : 'Blocked')); }
-        catch (err) { alert(err.message); }
+        catch (err) { toast(err.message, 'err'); }
       } }, blocked ? 'Allow' : 'Block')) : null);
   };
   const q = (extra) => {
@@ -803,7 +880,7 @@ async function queries(main) {
       if (r.queries.length) oldest = r.queries[r.queries.length - 1].id;
       more.hidden = r.queries.length < 100;
       pause.checked = false;
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast(e.message, 'err'); }
   });
   const pause = h('input', { type: 'checkbox', checked: true, onchange: (ev) => { live = ev.target.checked; if (live) load(); } });
 
@@ -848,8 +925,8 @@ async function settings(main) {
     if (!set.length) return null;
     return h('span', {}, h('span', { class: 'badge' }, 'changed'),
       isAdmin() ? h('button', { class: 'link small', type: 'button', onclick: async () => {
-        if (!confirm('Go back to the default for this section?')) return;
-        try { await api('POST', '/settings/reset', { fields: set }); route(); } catch (e) { alert(e.message); }
+        if (!(await ask('Go back to the default for this section?', 'Reset', false))) return;
+        try { await api('POST', '/settings/reset', { fields: set }); route(); } catch (e) { toast(e.message, 'err'); }
       } }, 'reset to default') : null);
   };
   // save sends only the fields that differ from what's in force, so
@@ -902,7 +979,7 @@ async function settings(main) {
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Privacy ', origin('upstream_mode', 'upstream_servers', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
       h('p', { class: 'muted' }, 'How DNServe looks up the domains it doesn\u2019t block.'),
-      form({}, [
+      form({ 'data-track': true }, [
         h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
         fwd, tunnelOpts,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
@@ -942,7 +1019,7 @@ async function settings(main) {
     const block = listEditor('lists', fl.Lists), allow = listEditor('allowlists', fl.Allowlists);
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Filtering ', origin('filtering_enabled', 'block_mode', 'block_bypass', 'lists', 'allowlists')),
-      form({}, [
+      form({ 'data-track': true }, [
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'enabled', checked: fl.Enabled }), 'Filtering on'),
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: fl.BlockBypass }), "Don't let devices skip DNServe (blocks apps' own encrypted DNS and iCloud Private Relay)"),
         h('label', { for: 'bmode' }, 'Blocked domains answer with'),
@@ -950,7 +1027,7 @@ async function settings(main) {
           h('option', { value: 'null_ip', selected: fl.BlockMode === 'null_ip' }, '0.0.0.0 / :: (fastest for apps)'),
           h('option', { value: 'nxdomain', selected: fl.BlockMode === 'nxdomain' }, 'Domain does not exist (NXDOMAIN)'),
           h('option', { value: 'refused', selected: fl.BlockMode === 'refused' }, 'Refused')),
-        h('h3', {}, 'Blocklists'), block,
+        h('div', { class: 'row spread mt' }, h('h3', {}, 'Blocklists'), updateListsButton()), block,
         h('h3', {}, 'Allowlists'), h('p', { class: 'muted small' }, 'Domains on these lists are never blocked by a blocklist.'), allow,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({
@@ -965,7 +1042,7 @@ async function settings(main) {
   if (can('rules.edit')) {
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Custom rules ', origin('rules')),
-      form({}, [
+      form({ 'data-track': true }, [
         h('textarea', { name: 'rules', spellcheck: 'false', 'aria-label': 'Custom rules', class: 'tall' }, (eff.Filtering.Rules || []).join('\n')),
         h('p', { class: 'muted small' }, h('code', {}, '||ads.example.com^'), ' blocks a domain and its subdomains · ', h('code', {}, '@@||cdn.example.com^'), ' always allows · ',
           h('code', {}, '*.tracker.example'), ' subdomains only · ', h('code', {}, 'exact.example.com'), ' just that name. Custom rules beat every list.'),
@@ -976,7 +1053,7 @@ async function settings(main) {
   if (can('network.manage')) {
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Device names ', origin('local_dns')),
-      form({}, [
+      form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'DNServe can ask your router what each device is called, and sends lookups for local names (like printer.lan) to it.'),
         h('label', { for: 'localdns' }, 'Your router\u2019s address'),
         h('input', { id: 'localdns', name: 'localdns', type: 'text', value: eff.DNS.LocalDNS || '', placeholder: '192.168.1.1', spellcheck: 'false' }),
@@ -990,7 +1067,7 @@ async function settings(main) {
     const tz = h('input', { id: 'tz', name: 'tz', type: 'text', value: eff.TimeZone || '', placeholder: 'Container time zone (UTC unless TZ is set)', list: 'tzlist', spellcheck: 'false' });
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Time zone ', origin('time_zone')),
-      form({}, [
+      form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'Group schedules, such as bedtimes, follow this time zone.'),
         h('label', { for: 'tz' }, 'Time zone'), tz,
         h('datalist', { id: 'tzlist' }, zones.map(z => h('option', { value: z }))),
@@ -999,7 +1076,7 @@ async function settings(main) {
       ], (f) => save({ time_zone: val(f, 'tz').trim() }, { time_zone: eff.TimeZone || '' }))));
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Allowed networks ', origin('allowed_nets')),
-      form({}, [
+      form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'Only devices in these networks may use this DNS server. Leave empty to allow private networks only (the safe default).'),
         h('textarea', { name: 'nets', spellcheck: 'false', 'aria-label': 'Allowed networks', class: 'short', placeholder: 'Private networks (default):\n192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12 and others' }, (eff.DNS.AllowedNets || []).join('\n')),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
@@ -1039,12 +1116,31 @@ function dialog(title, kids) {
   return d;
 }
 
+// ask replaces the browser's confirm box: it resolves true if the person agrees.
+function ask(question, okLabel, danger) {
+  return new Promise((resolve) => {
+    let answer = false;
+    const ok = h('button', { class: danger === false ? 'primary' : 'primary danger-fill', type: 'button', onclick: () => { answer = true; d.close(); } }, okLabel || 'OK');
+    const d = dialog(question, h('div', { class: 'actions' }, ok, h('button', { type: 'button', autofocus: true, onclick: () => d.close() }, 'Cancel')));
+    d.addEventListener('close', () => resolve(answer));
+  });
+}
+
+// toast shows a short message at the bottom of the page.
+function toast(text, kind) {
+  let box = document.getElementById('toasts');
+  if (!box) { box = h('div', { id: 'toasts', 'aria-live': 'polite' }); document.body.append(box); }
+  const t = msg(kind || 'ok', text);
+  box.append(t);
+  setTimeout(() => t.remove(), kind === 'err' ? 8000 : 4000);
+}
+
 async function users(main) {
   page(main, 'Users', h('p', { class: 'muted' }, 'Loading…'));
   let list;
   try { list = await api('GET', '/users'); } catch (e) { return page(main, 'Users', msg('err', e.message)); }
 
-  const act = async (fn) => { try { const note = await fn(); if (note) alert(note); route(); } catch (e) { alert(e.message); } };
+  const act = async (fn) => { try { const note = await fn(); if (note) toast(note); route(); } catch (e) { toast(e.message, 'err'); } };
   const rows = list.map(u => h('tr', {},
     h('td', {}, h('b', {}, u.username), u.id === ME.user.id ? ' (you)' : '', u.disabled ? ' ' : null, u.disabled ? h('span', { class: 'badge bad' }, 'disabled') : null),
     h('td', {}, u.role),
@@ -1054,8 +1150,8 @@ async function users(main) {
       h('button', { class: 'link', onclick: () => editUser(u) }, 'Edit'),
       h('button', { class: 'link', onclick: () => act(() => api('PATCH', '/users/' + u.id, { disabled: !u.disabled })) }, u.disabled ? 'Enable' : 'Disable'),
       h('button', { class: 'link', onclick: () => tempPassword(u) }, 'Set password'),
-      u.mfa_enrolled ? h('button', { class: 'link', onclick: () => confirm('Reset two-factor sign-in for ' + u.username + '? They will set it up again at their next sign-in.') && act(() => api('POST', '/users/' + u.id + '/reset-mfa')) }, 'Reset 2FA') : null,
-      u.id !== ME.user.id ? h('button', { class: 'link danger', onclick: () => confirm('Delete ' + u.username + '? Their API tokens stop working.') && act(() => api('DELETE', '/users/' + u.id)) }, 'Delete') : null))));
+      u.mfa_enrolled ? h('button', { class: 'link', onclick: async () => (await ask('Reset two-factor sign-in for ' + u.username + '? They set it up again at their next sign-in.', 'Reset 2FA')) && act(() => api('POST', '/users/' + u.id + '/reset-mfa')) }, 'Reset 2FA') : null,
+      u.id !== ME.user.id ? h('button', { class: 'link danger', onclick: async () => (await ask('Delete ' + u.username + '? Their API tokens stop working.', 'Delete user')) && act(() => api('DELETE', '/users/' + u.id)) }, 'Delete') : null))));
 
   const picker = permPicker('viewer', []);
   page(main, 'Users',
@@ -1066,15 +1162,18 @@ async function users(main) {
       form({}, [
         h('div', { class: 'row' },
           h('input', { name: 'username', type: 'text', placeholder: 'Username', required: true, autocomplete: 'off', 'aria-label': 'Username' }),
-          h('input', { name: 'password', type: 'password', placeholder: 'Temporary password (12+ characters)', required: true, autocomplete: 'new-password', minlength: 12, 'aria-label': 'Temporary password' })),
+          h('input', { name: 'password', type: 'text', placeholder: 'Temporary password (12+ characters)', required: true, autocomplete: 'off', spellcheck: 'false', minlength: 12, 'aria-label': 'Temporary password', value: tempPass() }),
+          h('button', { type: 'button', onclick: (ev) => { ev.target.closest('form').elements.password.value = tempPass(); } }, 'New password')),
         h('label', {}, 'Role'), roleSelect('viewer', picker),
         h('label', {}, 'Permissions'), picker,
         h('p', { class: 'muted small' }, 'They sign in with this password and must set up an authenticator app before doing anything else.'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Add user')),
       ], async (f) => {
-        await api('POST', '/users', { username: val(f, 'username').trim(), password: val(f, 'password'), role: val(f, 'role'), perms: picker.read() });
-        setTimeout(route, 900);
-        return 'Added ' + val(f, 'username').trim() + '. Give them the temporary password.';
+        const name = val(f, 'username').trim(), pass = val(f, 'password');
+        await api('POST', '/users', { username: name, password: pass, role: val(f, 'role'), perms: picker.read() });
+        const d = dialog('Added ' + name, [inviteBox(name + ' can sign in now.', name, pass),
+          h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: () => d.close() }, 'Done'))]);
+        d.addEventListener('close', () => route());
       })));
 
   function editUser(u) {
@@ -1093,12 +1192,16 @@ async function users(main) {
   function tempPassword(u) {
     const d = dialog('Set a password for ' + u.username, form({}, [
       h('p', { class: 'muted' }, 'This signs them out everywhere. Their two-factor setup is kept.'),
-      h('input', { name: 'password', type: 'password', autocomplete: 'new-password', minlength: 12, required: true, autofocus: true, 'aria-label': 'New password' }),
+      h('div', { class: 'row' },
+        h('input', { name: 'password', type: 'text', autocomplete: 'off', spellcheck: 'false', minlength: 12, required: true, autofocus: true, 'aria-label': 'New password', value: tempPass() }),
+        h('button', { type: 'button', onclick: (ev) => { ev.target.closest('form').elements.password.value = tempPass(); } }, 'New password')),
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Set password'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
     ], async (f) => {
-      await api('POST', '/users/' + u.id + '/password', { password: val(f, 'password') });
+      const pass = val(f, 'password');
+      await api('POST', '/users/' + u.id + '/password', { password: pass });
       d.close();
-      route();
+      const d2 = dialog('New password for ' + u.username, [inviteBox('Password set.', u.username, pass),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: () => d2.close() }, 'Done'))]);
     }));
   }
 }
@@ -1122,6 +1225,65 @@ async function audit(main) {
 }
 
 // ---------- account ----------
+
+// showCodes puts fresh recovery codes in a dialog.
+function showCodes(title, codes) {
+  const text = 'DNServe recovery codes for ' + ME.user.username + ' on ' + location.hostname + '\n' +
+    'Each code works once. Keep them somewhere safe.\n\n' + codes.join('\n') + '\n';
+  const done = h('button', { class: 'primary', type: 'button', disabled: true, onclick: () => d.close() }, 'Done');
+  const d = dialog(title, [
+    h('p', { class: 'muted' }, 'Your old recovery codes no longer work. Each of these lets you sign in once if you lose your phone.'),
+    h('div', { class: 'codes mono' }, codes.map(c => h('div', {}, c))),
+    h('div', { class: 'actions' },
+      h('button', { type: 'button', onclick: () => download('dnserve-recovery-codes.txt', text) }, 'Download'),
+      h('button', { type: 'button', onclick: (ev) => navigator.clipboard.writeText(text).then(() => { ev.target.textContent = 'Copied'; }) }, 'Copy')),
+    h('label', { class: 'inline' }, h('input', { type: 'checkbox', onchange: (ev) => { done.disabled = !ev.target.checked; } }), "I've saved these codes"),
+    h('div', { class: 'actions' }, done)]);
+  d.addEventListener('cancel', (ev) => { if (done.disabled) ev.preventDefault(); });
+  d.addEventListener('close', async () => { try { ME = await api('GET', '/auth/me'); } catch (_) { /* keep */ } route(); });
+}
+
+function newRecovery() {
+  const d = dialog('Make new recovery codes', form({}, [
+    h('p', { class: 'muted' }, 'Your current recovery codes stop working.'),
+    h('label', { for: 'rpw' }, 'Your password'),
+    h('input', { id: 'rpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true, autofocus: true }),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Make new codes'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+  ], async (f) => {
+    const r = await api('POST', '/auth/recovery-codes', { password: val(f, 'password') });
+    d.close();
+    showCodes('Your new recovery codes', r.recovery_codes);
+  }));
+}
+
+function newAuthenticator() {
+  const body = h('div');
+  const d = dialog('Move to a new phone or app', body);
+  fill(body, form({}, [
+    h('p', { class: 'muted' }, 'Your current app keeps working until the new one is confirmed.'),
+    h('label', { for: 'apw' }, 'Your password'),
+    h('input', { id: 'apw', name: 'password', type: 'password', autocomplete: 'current-password', required: true, autofocus: true }),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Continue'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+  ], async (f) => {
+    const t = await api('POST', '/auth/authenticator/begin', { password: val(f, 'password') });
+    fill(body,
+      h('p', { class: 'muted' }, 'Scan this with the new app:'),
+      t.qr_png ? h('img', { class: 'qr', src: t.qr_png, alt: 'QR code for your authenticator app' }) : null,
+      h('details', {}, h('summary', { class: 'small' }, "Can't scan? Enter the key by hand"),
+        h('p', { class: 'small' }, 'Account: ', h('b', {}, ME.user.username), ', key: ', h('code', {}, t.secret.match(/.{1,4}/g).join(' ')), ' (time-based, 6 digits).')),
+      form({}, [
+        h('label', { for: 'ncode' }, 'Code from the new app'),
+        h('input', { id: 'ncode', name: 'code', class: 'code', type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 7, required: true }),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Switch to this app'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+      ], async (f2) => {
+        const r = await api('POST', '/auth/authenticator/confirm', { code: val(f2, 'code') });
+        d.close();
+        showCodes('New app is on. Save your new recovery codes', r.recovery_codes);
+      }));
+    const c = body.querySelector('#ncode');
+    if (c) c.focus();
+  }));
+}
 
 async function account(main) {
   page(main, 'Your account', h('p', { class: 'muted' }, 'Loading…'));
@@ -1149,20 +1311,26 @@ async function account(main) {
         return 'Password changed.';
       })),
 
+    h('div', { class: 'card' }, h('h2', {}, 'Two-factor sign-in'),
+      h('p', { class: 'muted' }, 'You have ', h('b', {}, String(ME.user.recovery_codes_left !== undefined ? ME.user.recovery_codes_left : '?')), ' unused recovery codes.'),
+      h('div', { class: 'actions' },
+        h('button', { type: 'button', onclick: () => newAuthenticator() }, 'Move to a new phone or app'),
+        h('button', { type: 'button', onclick: () => newRecovery() }, 'Make new recovery codes'))),
+
     h('div', { class: 'card' }, h('h2', {}, 'Signed-in sessions'),
       h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'IP'), h('th', {}, 'Signed in'), h('th', {}, 'Last used'), h('th', {}))),
         h('tbody', {}, sessions.filter(x => x.stage === 'full').map(x => h('tr', {},
-          h('td', { class: 'small' }, x.user_agent || '—'), h('td', {}, x.ip), h('td', {}, fmtTime(x.created)), h('td', {}, fmtTime(x.last_seen)),
+          h('td', { title: x.user_agent || '' }, deviceName(x.user_agent)), h('td', {}, x.ip), h('td', {}, fmtTime(x.created)), h('td', {}, fmtTime(x.last_seen)),
           h('td', {}, x.id === ME.session_id ? h('span', { class: 'badge' }, 'this one')
-            : h('button', { class: 'link danger', onclick: async () => { try { await api('DELETE', '/auth/sessions/' + x.id); route(); } catch (e) { alert(e.message); } } }, 'Sign out')))))))),
+            : h('button', { class: 'link danger', onclick: async () => { try { await api('DELETE', '/auth/sessions/' + x.id); route(); } catch (e) { toast(e.message, 'err'); } } }, 'Sign out')))))))),
 
     h('div', { class: 'card' }, h('h2', {}, 'API tokens'),
       h('p', { class: 'muted' }, 'For scripts and home automation. Send as ', h('code', {}, 'Authorization: Bearer <token>'), '. A token can do only what you pick, and never more than your own account.'),
       tokens.length ? h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Can'), h('th', {}, 'Created'), h('th', {}, 'Expires'), h('th', {}))),
         h('tbody', {}, tokens.map(t => h('tr', {}, h('td', {}, t.name), h('td', { class: 'small' }, (t.perms || []).map(p => PERMS[p] || p).join(', ')), h('td', {}, fmtTime(t.created_at)), h('td', {}, t.expires_at ? fmtTime(t.expires_at) : 'never'),
-          h('td', {}, h('button', { class: 'link danger', onclick: async () => { if (!confirm('Revoke ' + t.name + '?')) return; try { await api('DELETE', '/tokens/' + t.id); route(); } catch (e) { alert(e.message); } } }, 'Revoke'))))))) : null,
+          h('td', {}, h('button', { class: 'link danger', onclick: async () => { if (!(await ask('Revoke the token "' + t.name + '"? Anything using it stops working.', 'Revoke'))) return; try { await api('DELETE', '/tokens/' + t.id); route(); } catch (e) { toast(e.message, 'err'); } } }, 'Revoke'))))))) : null,
       h('h3', {}, 'New token'),
       form({}, [
         h('div', { class: 'row' },

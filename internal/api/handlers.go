@@ -612,3 +612,75 @@ func (a *API) audit(w http.ResponseWriter, r *http.Request, p *Principal) {
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// sessionWithPassword checks that the caller is a person (not a token)
+// who just re-entered their password, for changes to their second factor.
+func (a *API) sessionWithPassword(w http.ResponseWriter, r *http.Request, p *Principal, password string) bool {
+	if p.Session == nil {
+		writeErr(w, http.StatusForbidden, "API tokens can't change sign-in settings")
+		return false
+	}
+	if !auth.VerifyPassword(p.User.PasswordHash, password) {
+		writeErr(w, http.StatusUnauthorized, "current password is wrong")
+		return false
+	}
+	return true
+}
+
+// newRecoveryCodes replaces the caller's recovery codes.
+func (a *API) newRecoveryCodes(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var req struct{ Password string }
+	if !readJSON(w, r, &req) || !a.sessionWithPassword(w, r, p, req.Password) {
+		return
+	}
+	codes, hashes := auth.NewRecoveryCodes(10)
+	if _, ok := a.apply(w, store.NewCommand(store.OpRecoveryReset, p.Actor(), store.RecoveryReset{ID: p.User.ID, Hashes: hashes})); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
+}
+
+// replaceTOTPBegin starts moving the caller to a new authenticator. The
+// old one keeps working until the new one is confirmed.
+func (a *API) replaceTOTPBegin(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var req struct{ Password string }
+	if !readJSON(w, r, &req) || !a.sessionWithPassword(w, r, p, req.Password) {
+		return
+	}
+	a.totpBegin(w, r, p)
+}
+
+func (a *API) replaceTOTPConfirm(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if p.Session == nil {
+		writeErr(w, http.StatusForbidden, "API tokens can't change sign-in settings")
+		return
+	}
+	var req struct{ Code string }
+	if !readJSON(w, r, &req) {
+		return
+	}
+	u := p.User
+	if u.TOTPPending == "" {
+		writeErr(w, http.StatusBadRequest, "start again: no new authenticator is being set up")
+		return
+	}
+	step, ok := auth.VerifyTOTP(u.TOTPPending, req.Code, a.now())
+	if !ok {
+		writeErr(w, http.StatusUnauthorized, "that code doesn't match; check the app's clock and try the next code")
+		return
+	}
+	codes, hashes := auth.NewRecoveryCodes(10)
+	if _, ok := a.apply(w, store.NewCommand(store.OpTOTPConfirm, p.Actor(), store.TOTPConfirm{ID: u.ID, Step: step, RecoveryHashes: hashes})); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"recovery_codes": codes})
+}
+
+func (a *API) updateLists(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if a.UpdateLists == nil {
+		writeErr(w, http.StatusServiceUnavailable, "list updates aren't available on this node")
+		return
+	}
+	a.UpdateLists()
+	w.WriteHeader(http.StatusAccepted)
+}

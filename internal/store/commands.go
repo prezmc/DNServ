@@ -79,23 +79,24 @@ func NewCommand(op, actor string, data any) Command {
 
 // Command ops and their data.
 const (
-	OpUserCreate     = "user.create"        // UserCreate
-	OpUserUpdate     = "user.update"        // UserUpdate
-	OpUserDelete     = "user.delete"        // IDOnly
-	OpUserPassword   = "user.password"      // UserPassword
-	OpTOTPBegin      = "user.totp_begin"    // TOTPBegin
-	OpTOTPConfirm    = "user.totp_confirm"  // TOTPConfirm
-	OpTOTPUsed       = "user.totp_used"     // TOTPUsed
-	OpRecoveryUsed   = "user.recovery_used" // RecoveryUsed
-	OpMFAReset       = "user.mfa_reset"     // IDOnly
-	OpTokenCreate    = "token.create"       // Token
-	OpTokenRevoke    = "token.revoke"       // IDOnly
-	OpSettingsUpdate = "settings.update"    // Settings
-	OpSettingsReset  = "settings.reset"     // SettingsReset
-	OpDeviceSave     = "device.save"        // Device (creates or replaces)
-	OpDeviceDelete   = "device.delete"      // IDOnly
-	OpGroupSave      = "group.save"         // Group (creates or replaces)
-	OpGroupDelete    = "group.delete"       // IDOnly
+	OpUserCreate     = "user.create"         // UserCreate
+	OpUserUpdate     = "user.update"         // UserUpdate
+	OpUserDelete     = "user.delete"         // IDOnly
+	OpUserPassword   = "user.password"       // UserPassword
+	OpTOTPBegin      = "user.totp_begin"     // TOTPBegin
+	OpTOTPConfirm    = "user.totp_confirm"   // TOTPConfirm
+	OpTOTPUsed       = "user.totp_used"      // TOTPUsed
+	OpRecoveryUsed   = "user.recovery_used"  // RecoveryUsed
+	OpRecoveryReset  = "user.recovery_reset" // RecoveryReset
+	OpMFAReset       = "user.mfa_reset"      // IDOnly
+	OpTokenCreate    = "token.create"        // Token
+	OpTokenRevoke    = "token.revoke"        // IDOnly
+	OpSettingsUpdate = "settings.update"     // Settings
+	OpSettingsReset  = "settings.reset"      // SettingsReset
+	OpDeviceSave     = "device.save"         // Device (creates or replaces)
+	OpDeviceDelete   = "device.delete"       // IDOnly
+	OpGroupSave      = "group.save"          // Group (creates or replaces)
+	OpGroupDelete    = "group.delete"        // IDOnly
 )
 
 type UserCreate struct {
@@ -122,6 +123,10 @@ type TOTPUsed struct {
 	Step int64
 }
 type RecoveryUsed struct{ ID, Hash string }
+type RecoveryReset struct {
+	ID     string
+	Hashes []string
+}
 
 // SettingsReset clears the named fields so the file/env/default applies.
 type SettingsReset struct{ Fields []string }
@@ -255,12 +260,28 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		if u.TOTPPending == "" {
 			return nil, nil, errors.New("no authenticator enrollment in progress")
 		}
+		verb := "enrolled"
+		if u.TOTPSecret != "" {
+			verb = "replaced"
+		}
 		u.TOTPSecret, u.TOTPPending, u.TOTPLastStep = u.TOTPPending, "", d.Step
 		u.RecoveryHashes = d.RecoveryHashes
 		if u.Role == RoleAdmin {
 			st.SetupDone = true
 		}
-		return nil, audit(fmt.Sprintf("enrolled authenticator app for %q", u.Username), nil, nil), nil
+		return nil, audit(fmt.Sprintf("%s authenticator app for %q", verb, u.Username), nil, nil), nil
+
+	case OpRecoveryReset:
+		var d RecoveryReset
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		u, ok := st.Users[d.ID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		u.RecoveryHashes = d.Hashes
+		return nil, audit(fmt.Sprintf("made new recovery codes for %q", u.Username), nil, nil), nil
 
 	case OpTOTPUsed:
 		var d TOTPUsed

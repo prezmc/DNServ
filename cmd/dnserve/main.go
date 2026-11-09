@@ -184,6 +184,18 @@ func run() error {
 	adm.QueryLog = qlog
 	adm.CheckDomain = engine.Lookup
 	adm.LookupName = srv.LookupName
+	var updating atomic.Bool
+	adm.UpdateLists = func() {
+		if !updating.CompareAndSwap(false, true) {
+			return // one at a time
+		}
+		go func() {
+			defer updating.Store(false)
+			if err := engine.Rebuild(ctx, true); err != nil {
+				log.Warn("list update failed", "err", err)
+			}
+		}()
+	}
 	adm.Status = func() any {
 		set := up.Load()
 		eff := adm.Effective()
