@@ -32,8 +32,11 @@ type Node struct {
 	Addr string `json:"addr"`
 	// NeverLeader keeps a full copy of the settings but never votes or
 	// leads (a Raft non-voter).
-	NeverLeader bool      `json:"never_leader,omitempty"`
-	JoinedAt    time.Time `json:"joined_at"`
+	NeverLeader bool `json:"never_leader,omitempty"`
+	// Witness votes and keeps the log but doesn't answer DNS. It hands
+	// leadership to a full node whenever it gets it.
+	Witness  bool      `json:"witness,omitempty"`
+	JoinedAt time.Time `json:"joined_at"`
 }
 
 // JoinCode lets one new node join. Only a hash of its secret is kept.
@@ -151,10 +154,13 @@ func applyCluster(st *State, c Command, dec func(any) error) (any, *AuditEntry, 
 		if d.NeverLeader && cs.Preferred == d.ID {
 			return nil, nil, errors.New("this is the preferred leader; pick another preferred leader first")
 		}
-		if d.NeverLeader && !old.NeverLeader && voters(cs) <= 1 {
+		if d.NeverLeader && !old.NeverLeader && leaders(cs) <= 1 {
 			return nil, nil, errors.New("at least one node must be able to lead")
 		}
-		d.JoinedAt = old.JoinedAt
+		d.JoinedAt, d.Witness = old.JoinedAt, old.Witness
+		if d.Witness && d.NeverLeader {
+			return nil, nil, errors.New("a witness always votes; remove it instead")
+		}
 		before := *old
 		cs.Nodes[d.ID] = &d
 		if before.Addr != d.Addr && before.Name == d.Name && before.NeverLeader == d.NeverLeader {
@@ -175,7 +181,7 @@ func applyCluster(st *State, c Command, dec func(any) error) (any, *AuditEntry, 
 			return nil, nil, errors.New("the last node can't be removed")
 		}
 		delete(cs.Nodes, d.ID)
-		if voters(cs) == 0 {
+		if leaders(cs) == 0 {
 			return nil, nil, errors.New("at least one remaining node must be able to lead")
 		}
 		if cs.Preferred == d.ID {
@@ -198,6 +204,9 @@ func applyCluster(st *State, c Command, dec func(any) error) (any, *AuditEntry, 
 		}
 		if n.NeverLeader {
 			return nil, nil, fmt.Errorf("%q is set to never lead", n.Name)
+		}
+		if n.Witness {
+			return nil, nil, fmt.Errorf("%q is a witness; it doesn't lead", n.Name)
 		}
 		cs.Preferred = d.ID
 		return nil, audit(fmt.Sprintf("made %q the preferred leader", n.Name), nil, nil), nil
@@ -278,10 +287,11 @@ func applyCluster(st *State, c Command, dec func(any) error) (any, *AuditEntry, 
 	return nil, nil, fmt.Errorf("unknown command %q", c.Op)
 }
 
-func voters(cs *ClusterState) int {
+// leaders counts full nodes that may lead.
+func leaders(cs *ClusterState) int {
 	n := 0
 	for _, x := range cs.Nodes {
-		if !x.NeverLeader {
+		if !x.NeverLeader && !x.Witness {
 			n++
 		}
 	}

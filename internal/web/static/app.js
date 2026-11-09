@@ -1276,6 +1276,7 @@ const ROLES = {
   follower: ['Follower', 'ok', 'Has every change and can take over as leader.'],
   joining: ['Catching up', '', 'Getting a copy of the settings. It starts voting once it has caught up.'],
   standby: ['Never leads', '', 'Keeps a full copy and answers DNS, but never leads or votes.'],
+  witness: ['Witness', 'ok', 'Votes so the cluster keeps a majority. It doesn\u2019t answer DNS.'],
   adding: ['Adding', '', 'Being added to the cluster.'],
 };
 
@@ -1299,9 +1300,17 @@ async function clusterPage(main) {
   } else {
     status.push(msg('ok', 'All changes are shared between ' + nodes.length + ' nodes. ' + (nodes.find(n => n.leader) || {}).name + ' is leading.'));
   }
+  const hasWitness = nodes.some(n => n.witness);
+  if (c.healthy && nodes.length > 1) {
+    status.push(h('p', {}, c.tolerates > 0
+      ? 'Changes keep working with ' + c.tolerates + (c.tolerates === 1 ? ' voting node' : ' voting nodes') + ' down.'
+      : 'Changes pause while any voting node is down. DNS keeps working on every node either way.'));
+  }
   if (c.healthy && c.voters === 2) {
-    status.push(h('p', { class: 'muted small' }, 'With two voting nodes, changes pause while either one is down (DNS keeps working on both). If one server is more reliable, set the other to ',
-      h('b', {}, 'Never lead'), ': then the reliable one keeps taking changes on its own. A small third "witness" node is coming in a later update.'));
+    status.push(h('p', { class: 'muted small' }, 'To keep taking changes with either node down, add a ', h('b', {}, 'witness'),
+      ' on a third machine (see below). Or, if one server is more reliable, set the other to ', h('b', {}, 'Never lead'), '.'));
+  } else if (c.healthy && c.voters >= 4 && c.voters % 2 === 0 && !hasWitness) {
+    status.push(h('p', { class: 'muted small' }, 'With an even number of voting nodes, adding a witness lets the cluster lose one more node and keep taking changes.'));
   }
 
   const roleBadge = (n) => {
@@ -1317,9 +1326,9 @@ async function clusterPage(main) {
     h('td', { class: 'small muted' }, n.version || ''),
     h('td', {}, c.healthy && !c.left_out ? h('div', { class: 'row' },
       h('button', { class: 'link', onclick: () => renameNode(n) }, 'Rename'),
-      !n.leader && !n.never_leader && n.voter && (!preferredSet || n.preferred) ? h('button', { class: 'link', onclick: () => act(() => api('POST', '/cluster/transfer', { to: n.id }), n.name + ' is leading now') }, 'Make leader') : null,
-      !n.never_leader ? h('button', { class: 'link', onclick: () => act(() => api('POST', '/cluster/preferred', { id: n.preferred ? '' : n.id }), n.preferred ? 'No preferred leader' : n.name + ' leads whenever it’s up') }, n.preferred ? 'Stop preferring' : 'Prefer as leader') : null,
-      h('button', { class: 'link', onclick: () => neverLead(n) }, n.never_leader ? 'Allow to lead' : 'Never lead'),
+      !n.leader && !n.never_leader && !n.witness && n.voter && (!preferredSet || n.preferred) ? h('button', { class: 'link', onclick: () => act(() => api('POST', '/cluster/transfer', { to: n.id }), n.name + ' is leading now') }, 'Make leader') : null,
+      !n.never_leader && !n.witness ? h('button', { class: 'link', onclick: () => act(() => api('POST', '/cluster/preferred', { id: n.preferred ? '' : n.id }), n.preferred ? 'No preferred leader' : n.name + ' leads whenever it’s up') }, n.preferred ? 'Stop preferring' : 'Prefer as leader') : null,
+      !n.witness ? h('button', { class: 'link', onclick: () => neverLead(n) }, n.never_leader ? 'Allow to lead' : 'Never lead') : null,
       !n.self && !n.leader ? h('button', { class: 'link danger', onclick: async () => (await ask('Remove ' + n.name + ' from the cluster? It stops getting changes. To add it again it needs a new join code.', 'Remove node')) && act(() => api('DELETE', '/cluster/nodes/' + n.id), n.name + ' removed') }, 'Remove') : null) : null)));
 
   const addCard = c.healthy && !c.left_out ? h('div', { class: 'card' }, h('h2', {}, 'Add a node'),
@@ -1327,6 +1336,7 @@ async function clusterPage(main) {
       h('li', {}, 'On the new server, start DNServe the same way as this one (the same ', h('code', {}, 'docker compose'), ' file works). Make sure port ', h('b', {}, '8081'), ' is published and open between the servers.'),
       h('li', {}, 'Open its dashboard, enter its setup code, and choose ', h('b', {}, 'No, add this server to my DNServe'), '.'),
       h('li', {}, 'Paste the join code from here. It works once, for an hour.')),
+    h('p', { class: 'muted small' }, 'Adding a ', h('b', {}, 'witness'), ' instead? It\u2019s the same image on a third machine; it only votes, so it needs very little. Make a join code and the next screen shows the command to start it.'),
     form({}, [
       h('label', { for: 'host' }, 'Other nodes reach this one at'),
       h('div', { class: 'row' }, h('input', { id: 'host', name: 'host', type: 'text', value: c.advertise_learned ? (c.advertise || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '') : location.hostname, required: true, spellcheck: 'false' }), h('span', { class: 'muted' }, ':' + ((c.advertise || '').match(/:(\d+)$/) || [, '8081'])[1])),
@@ -1334,12 +1344,18 @@ async function clusterPage(main) {
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Make a join code')),
     ], async (f) => {
       const r = await api('POST', '/cluster/join-codes', { host: val(f, 'host').trim() });
+      const cmd = 'docker run -d --name dnserve-witness --restart unless-stopped \\\n  -p 8081:8081 -v dnserve-witness:/data \\\n  -e DNSERVE_ROLE=witness -e DNSERVE_JOIN=' + r.code + ' \\\n  ghcr.io/prezmc/dnserve:latest';
+      const copy = (text) => (ev) => navigator.clipboard.writeText(text).then(() => { ev.target.textContent = 'Copied'; });
       const d = dialog('Join code', [
-        h('p', {}, 'Paste this into the new server’s setup page. It works once and expires at ' + fmtTime(r.expires_at) + '.'),
-        h('textarea', { class: 'tall code', readonly: true, 'aria-label': 'Join code' }, r.code),
-        h('div', { class: 'actions' },
-          h('button', { class: 'primary', type: 'button', onclick: (ev) => navigator.clipboard.writeText(r.code).then(() => { ev.target.textContent = 'Copied'; }) }, 'Copy'),
-          h('button', { type: 'button', onclick: () => d.close() }, 'Done'))]);
+        h('p', {}, 'For a full node, paste this into the new server’s setup page. It works once and expires at ' + fmtTime(r.expires_at) + '.'),
+        h('textarea', { class: 'code', readonly: true, 'aria-label': 'Join code' }, r.code),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: copy(r.code) }, 'Copy code')),
+        h('details', {}, h('summary', {}, 'Starting a witness instead'),
+          h('p', { class: 'small' }, 'On the third machine, run:'),
+          h('textarea', { class: 'tall code', readonly: true, 'aria-label': 'Witness command' }, cmd),
+          h('div', { class: 'actions' }, h('button', { type: 'button', onclick: copy(cmd) }, 'Copy command'))),
+        h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Done'))]);
+      d.classList.add('wide');
       d.addEventListener('close', () => route());
     })) : null;
 
