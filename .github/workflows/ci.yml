@@ -24,6 +24,12 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q unbound dns-root-data
           sudo systemctl disable --now unbound || true
+          # Ubuntu's AppArmor profile confines /usr/sbin/unbound to its own
+          # directories, so it can't read a config in the test's temp dir.
+          # The DNServe image (Alpine) has no such profile.
+          if [ -f /etc/apparmor.d/usr.sbin.unbound ]; then
+            sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.unbound || true
+          fi
       - run: go test -race ./...
       - name: Benchmarks (smoke)
         run: go test -run '^$' -bench . -benchtime 200ms ./internal/...

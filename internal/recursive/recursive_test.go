@@ -57,7 +57,9 @@ func TestUnboundLifecycle(t *testing.T) {
 		t.Skip("no DNSSEC trust anchor installed")
 	}
 	port := freePort(t)
-	u := New(Options{Binary: "unbound", Dir: filepath.Join(t.TempDir(), "unbound"), Port: port, CacheMB: 16}, quiet())
+	// Unbound's own log goes to the test output, so a failure shows why.
+	logger := slog.New(slog.NewTextHandler(testWriter{t}, nil))
+	u := New(Options{Binary: "unbound", Dir: filepath.Join(t.TempDir(), "unbound"), Port: port, CacheMB: 16}, logger)
 	path, err := u.Prepare()
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +89,13 @@ func TestUnboundLifecycle(t *testing.T) {
 	if err := u.WaitReady(wctx2); err != nil {
 		t.Fatal("unbound was not restarted:", err)
 	}
+}
+
+type testWriter struct{ t *testing.T }
+
+func (w testWriter) Write(p []byte) (int, error) {
+	w.t.Log(strings.TrimSpace(string(p)))
+	return len(p), nil
 }
 
 func freePort(t *testing.T) int {

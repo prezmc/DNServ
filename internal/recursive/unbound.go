@@ -266,10 +266,12 @@ func (u *Unbound) runOnce(ctx context.Context, confPath string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	go u.pipeLogs(stderr)
+	// Per os/exec, all reads from the pipe must finish before Wait.
+	logsDone := make(chan struct{})
+	go func() { u.pipeLogs(stderr); close(logsDone) }()
 
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	go func() { <-logsDone; done <- cmd.Wait() }()
 
 	probeCtx, cancelProbe := context.WithCancel(ctx)
 	defer cancelProbe()
