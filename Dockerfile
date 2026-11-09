@@ -19,7 +19,7 @@ COPY --from=build /out/dnserve /out/dnsbench /usr/local/bin/
 COPY dnserve.example.yaml /etc/dnserve/dnserve.example.yaml
 ENV DNSERVE_CONFIG=/data/dnserve.yaml
 VOLUME /data
-EXPOSE 53/udp 53/tcp 853/tcp 443/tcp 8080/tcp
+EXPOSE 53/udp 53/tcp 853/tcp 443/tcp 8080/tcp 8081/tcp
 USER dnserve
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD ["/usr/local/bin/dnserve", "-healthcheck", "127.0.0.1:8080"]
 ENTRYPOINT ["/usr/local/bin/dnserve"]

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -26,6 +27,7 @@ type Config struct {
 	Cache     CacheConfig     `yaml:"cache"`
 	Filtering FilteringConfig `yaml:"filtering"`
 	HTTP      HTTPConfig      `yaml:"http"`
+	Cluster   ClusterConfig   `yaml:"cluster"`
 	DataDir   string          `yaml:"data_dir"`
 	// TimeZone is an IANA name such as "Europe/London" used for group
 	// schedules. Empty means the container's TZ, or UTC.
@@ -172,6 +174,16 @@ type HTTPConfig struct {
 	Listen string `yaml:"listen"`
 }
 
+// ClusterConfig is how nodes reach each other. Every node runs the cluster
+// listener, even alone, so another node can join it at any time.
+type ClusterConfig struct {
+	// Listen is the address for node-to-node traffic (mutual TLS).
+	Listen string `yaml:"listen"`
+	// Advertise is the host:port other nodes use to reach this one. Empty
+	// means learn it from the address the dashboard was opened at.
+	Advertise string `yaml:"advertise"`
+}
+
 // Default returns a configuration that works out of the box: encrypted
 // forwarding to Cloudflare over DNS over HTTPS, caching on, filtering on.
 func Default() Config {
@@ -221,6 +233,7 @@ func Default() Config {
 			RefreshInterval: 24 * time.Hour,
 		},
 		HTTP:    HTTPConfig{Listen: ":8080"},
+		Cluster: ClusterConfig{Listen: ":8081"},
 		DataDir: "/data",
 	}
 }
@@ -281,6 +294,8 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 		c.Filtering.BlockBypass = b
 		return err
 	})
+	set("DNSERVE_CLUSTER_LISTEN", func(v string) error { c.Cluster.Listen = v; return nil })
+	set("DNSERVE_CLUSTER_ADVERTISE", func(v string) error { c.Cluster.Advertise = v; return nil })
 	set("DNSERVE_BLOCK_MODE", func(v string) error { c.Filtering.BlockMode = v; return nil })
 	return errors.Join(errs...)
 }
@@ -345,6 +360,14 @@ func (c Config) Validate() error {
 	}
 	if c.Upstream.Timeout <= 0 {
 		errs = append(errs, errors.New("upstream.timeout must be positive"))
+	}
+	if _, _, err := net.SplitHostPort(c.Cluster.Listen); err != nil {
+		errs = append(errs, fmt.Errorf("cluster.listen: %q is not host:port (for example :8081)", c.Cluster.Listen))
+	}
+	if a := c.Cluster.Advertise; a != "" {
+		if h, p, err := net.SplitHostPort(a); err != nil || h == "" || p == "" {
+			errs = append(errs, fmt.Errorf("cluster.advertise: %q is not host:port (for example 192.168.1.10:8081)", a))
+		}
 	}
 	switch c.Filtering.BlockMode {
 	case "null_ip", "nxdomain", "refused":

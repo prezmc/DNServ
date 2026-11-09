@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/prezmc/dnserve/internal/auth"
+	"github.com/prezmc/dnserve/internal/cluster"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/querylog"
@@ -56,7 +57,16 @@ type API struct {
 	// LookupName asks the router for a device's name ("" if unknown).
 	LookupName func(ctx context.Context, a netip.Addr) string
 
+	// Cluster is this node's cluster membership (nil: not clustered, as
+	// in tests).
+	Cluster *cluster.Cluster
+
 	names namesCache
+
+	// mfaSteps guards against reuse of authenticator codes when the
+	// cluster can't record them (no leader). Per node, in memory.
+	mfaMu    sync.Mutex
+	mfaSteps map[string]int64
 
 	now       func() time.Time
 	setupOnce sync.Mutex
@@ -146,6 +156,9 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/groups", a.authed(store.PermDevices, a.saveGroup))
 	m.HandleFunc("PUT /api/v1/groups/{id}", a.authed(store.PermDevices, a.saveGroup))
 	m.HandleFunc("DELETE /api/v1/groups/{id}", a.authed(store.PermDevices, a.deleteGroup))
+
+	// Cluster.
+	a.clusterRoutes(m)
 
 	// Status and audit.
 	m.HandleFunc("GET /api/v1/status", a.authed(store.PermDashboard, a.status))
@@ -366,10 +379,8 @@ func (a *API) apply(w http.ResponseWriter, c store.Command) (any, bool) {
 	switch {
 	case err == nil:
 		return res, true
-	case errors.Is(err, store.ErrNotFound):
-		writeErr(w, http.StatusNotFound, "not found")
 	default:
-		writeErr(w, http.StatusBadRequest, err.Error())
+		a.writeStoreErr(w, err)
 	}
 	return nil, false
 }

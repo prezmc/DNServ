@@ -77,6 +77,13 @@ filtering:
 http:
   listen: ":8080"          # /healthz, /readyz, /metrics
 
+# Node-to-node traffic for clustering (mutual TLS). Add a node from the
+# dashboard under Cluster; nothing here is needed for that.
+cluster:
+  listen: ":8081"
+  # advertise: "192.168.1.10:8081"   # how other nodes reach this one; by
+  #                                  # default learned from the dashboard URL
+
 # Time zone for group schedules, e.g. Europe/London (default: TZ or UTC).
 time_zone: ""
 data_dir: /data

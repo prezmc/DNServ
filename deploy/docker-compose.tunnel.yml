@@ -24,7 +24,7 @@ services:
       - WIREGUARD_ADDRESSES=10.64.0.2/32
       - SERVER_COUNTRIES=Sweden
       # Let your LAN reach DNServe through gluetun's firewall.
-      - FIREWALL_INPUT_PORTS=53,853,8080
+      - FIREWALL_INPUT_PORTS=53,853,8080,8081
       # DNServe answers DNS on port 53, so gluetun's own DNS must be off
       # (DNS_SERVER on recent gluetun versions, DOT on older ones).
       - DNS_SERVER=off
@@ -35,6 +35,7 @@ services:
       - "53:53/tcp"
       - "853:853/tcp"
       - "8080:8080/tcp"
+      - "8081:8081/tcp"   # node-to-node (clustering)
 
   dnserve:
     image: ghcr.io/prezmc/dnserve:latest

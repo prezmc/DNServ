@@ -246,7 +246,11 @@ async function boot() {
     return render(h('div', { class: 'center' }, h('div', { class: 'card' }, h('h1', {}, 'DNServe'), msg('err', 'Could not reach the node: ' + e.message), h('button', { onclick: boot }, 'Try again'))));
   }
   if (!ME.signed_in) {
-    if (ME.setup_needed) return setupAccount();
+    if (ME.setup_needed) {
+      let su = {};
+      try { su = await api('GET', '/setup'); } catch (_) { /* show setup */ }
+      return su.joining ? joinWaiting() : setupAccount();
+    }
     if (ME.stage === 'enroll') return enroll();
     if (ME.stage === 'mfa') return mfa();
     return login();
@@ -293,9 +297,62 @@ function setupAccount() {
     ], async (f) => {
       const code = val(f, 'code');
       await api('POST', '/setup/check', { code });
-      setupAdmin(code);
+      setupChoice(code);
     }),
   ));
+}
+
+// setupChoice: a new DNServe, or another node for an existing one.
+function setupChoice(code) {
+  render(centered(
+    wizardSteps(1),
+    h('h1', {}, 'Is this your first DNServe?'),
+    h('div', { class: 'choices' },
+      h('button', { class: 'choice', type: 'button', autofocus: true, onclick: () => setupAdmin(code) },
+        h('b', {}, 'Yes, set up a new DNServe'), h('span', { class: 'muted small' }, 'Create an admin account and choose your settings.')),
+      h('button', { class: 'choice', type: 'button', onclick: () => setupJoin(code) },
+        h('b', {}, 'No, add this server to my DNServe'), h('span', { class: 'muted small' }, 'It copies the accounts, settings and blocklists from your other node and stays in sync with it.'))),
+    h('div', { class: 'actions' }, h('button', { class: 'link', type: 'button', onclick: setupAccount }, 'Back')),
+  ));
+}
+
+function setupJoin(code) {
+  render(centered(
+    h('h1', {}, 'Add this server to your DNServe'),
+    h('ol', { class: 'steps-list' },
+      h('li', {}, 'On your other DNServe, open ', h('b', {}, 'Cluster'), ' and choose ', h('b', {}, 'Add a node'), '.'),
+      h('li', {}, 'Copy the join code it shows and paste it here.')),
+    form({}, [
+      h('label', { for: 'join' }, 'Join code'),
+      h('textarea', { id: 'join', name: 'join', class: 'code', rows: 3, autocomplete: 'off', spellcheck: 'false', placeholder: 'DNSJ1-…', required: true, autofocus: true }),
+      h('p', { class: 'muted small' }, 'The two servers talk to each other on port 8081. If one is behind a firewall, open that port between them.'),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Join'), h('button', { class: 'link', type: 'button', onclick: () => setupChoice(code) }, 'Back')),
+    ], async (f) => {
+      await api('POST', '/setup/join', { code, join_code: val(f, 'join'), host: location.hostname });
+      joinWaiting();
+    }),
+  ));
+}
+
+// joinWaiting shows progress while the other node sends its settings.
+function joinWaiting() {
+  const note = h('p', { class: 'muted' }, 'Copying accounts and settings from your other node…');
+  render(centered(h('h1', {}, 'Joining your DNServe'), note, h('div', { class: 'spinner', 'aria-hidden': 'true' })));
+  const started = Date.now();
+  timer = setInterval(async () => {
+    let su;
+    try { su = await api('GET', '/setup'); } catch (_) { return; }
+    if (!su.needed) {
+      clearInterval(timer); timer = null;
+      render(centered(
+        h('h1', {}, 'This server is now part of your DNServe'),
+        msg('ok', 'It has the same accounts, settings and blocklists as your other node, and keeps in sync with it.'),
+        h('p', {}, 'Sign in with your usual DNServe account. To use it for DNS, add its address to your router as a second DNS server.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', autofocus: true, onclick: boot }, 'Sign in'))));
+    } else if (Date.now() - started > 30000) {
+      note.replaceChildren('Still waiting for the other node. Check that both servers can reach each other on port 8081. This page carries on as soon as the settings arrive.');
+    }
+  }, 1500);
 }
 
 function setupAdmin(code) {
@@ -311,7 +368,7 @@ function setupAdmin(code) {
       h('p', { class: 'muted small' }, 'At least 12 characters. A few random words works well.'),
       h('label', { for: 'confirm' }, 'Confirm password'),
       h('input', { id: 'confirm', name: 'confirm', type: 'password', autocomplete: 'new-password', required: true }),
-      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Create account'), h('button', { class: 'link', type: 'button', onclick: setupAccount }, 'Back')),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Create account'), h('button', { class: 'link', type: 'button', onclick: () => setupChoice(code) }, 'Back')),
     ], async (f) => {
       if (val(f, 'password') !== val(f, 'confirm')) throw new Error("The passwords don't match.");
       await api('POST', '/setup', { code, username: val(f, 'username').trim(), password: val(f, 'password') });
@@ -508,6 +565,7 @@ const ROUTES = [
   { path: 'queries', title: 'Recent queries', page: queries, show: () => can('querylog.view') },
   { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
+  { path: 'cluster', title: 'Cluster', page: clusterPage, show: () => can('cluster.manage') },
   { path: 'audit', title: 'Audit log', page: audit, show: () => can('audit.view') },
   { path: 'account', title: 'Your account', page: account, show: () => true },
 ];
@@ -562,6 +620,11 @@ async function dashboard(main) {
     if (s.unbound) health.push(h('p', {}, h('span', { class: 'dot ' + (s.unbound.ready ? 'ok' : 'bad') }), 'Unbound ', s.unbound.ready ? 'running' : 'not answering', s.unbound.restarts ? ' (restarted ' + s.unbound.restarts + '×)' : ''));
     if (s.tunnel) health.push(h('p', {}, h('span', { class: 'dot ' + (s.tunnel.up ? 'ok' : 'bad') }), 'VPN tunnel ', s.tunnel.up ? 'up' : 'down', s.tunnel.detail ? ' — ' + s.tunnel.detail : ''));
     if (s.filter && !s.filter.ready) health.push(msg('warn', 'Blocklists are still loading.'));
+    if (s.cluster && s.cluster.nodes > 1) {
+      health.push(h('p', {}, h('span', { class: 'dot ' + (s.cluster.healthy ? 'ok' : 'bad') }), 'Cluster: ', s.cluster.nodes + ' nodes, ',
+        s.cluster.healthy ? s.cluster.leader + ' leading' : 'no leader, changes paused', ' ',
+        can('cluster.manage') ? h('a', { href: '#/cluster' }, 'Details') : null));
+    }
     const upName = (u) => (/^udp:\/\/127\.0\.0\.1:/.test(u) ? 'Unbound (built in)' : u.replace(/^https:\/\/([^/]+).*/, '$1 (HTTPS)').replace(/^tls:\/\/([^:]+).*/, '$1 (TLS)'));
     fill(body,
       total === 0 ? h('div', { class: 'card highlight' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
@@ -1203,6 +1266,149 @@ async function users(main) {
       const d2 = dialog('New password for ' + u.username, [inviteBox('Password set.', u.username, pass),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: () => d2.close() }, 'Done'))]);
     }));
+  }
+}
+
+// ---------- cluster ----------
+
+const ROLES = {
+  leader: ['Leader', 'ok', 'Takes changes and sends them to the other nodes.'],
+  follower: ['Follower', 'ok', 'Has every change and can take over as leader.'],
+  joining: ['Catching up', '', 'Getting a copy of the settings. It starts voting once it has caught up.'],
+  standby: ['Never leads', '', 'Keeps a full copy and answers DNS, but never leads or votes.'],
+  adding: ['Adding', '', 'Being added to the cluster.'],
+};
+
+async function clusterPage(main) {
+  page(main, 'Cluster', h('p', { class: 'muted' }, 'Loading…'));
+  let data;
+  try { data = await api('GET', '/cluster'); } catch (e) { return page(main, 'Cluster', msg('err', e.message)); }
+  const c = data.cluster;
+  const nodes = c.nodes || [];
+  const self = nodes.find(n => n.self) || {};
+  const others = nodes.filter(n => !n.self);
+  const act = async (fn, note) => { try { await fn(); if (note) toast(note); } catch (e) { toast(e.message, 'err'); } route(); };
+
+  const status = [];
+  if (c.left_out) {
+    status.push(msg('err', 'This node is no longer part of its cluster (it was removed, or the cluster was recovered without it). It still answers DNS with the settings it last had. To bring it back, make a join code on a working node and use "Join another DNServe" below.'));
+  } else if (!c.healthy) {
+    status.push(msg('err', 'No leader: this node can’t reach enough of the cluster, so changes are paused. DNS keeps working everywhere with the current settings. Bring the missing node back, or if it’s gone for good, recover below.'));
+  } else if (nodes.length === 1) {
+    status.push(h('p', { class: 'muted' }, 'This DNServe runs on one server. Add a second so DNS keeps working if one goes down. Settings, accounts and blocklists stay the same on both.'));
+  } else {
+    status.push(msg('ok', 'All changes are shared between ' + nodes.length + ' nodes. ' + (nodes.find(n => n.leader) || {}).name + ' is leading.'));
+  }
+  if (c.healthy && c.voters === 2) {
+    status.push(h('p', { class: 'muted small' }, 'With two voting nodes, changes pause while either one is down (DNS keeps working on both). If one server is more reliable, set the other to ',
+      h('b', {}, 'Never lead'), ': then the reliable one keeps taking changes on its own. A small third "witness" node is coming in a later update.'));
+  }
+
+  const roleBadge = (n) => {
+    const r = ROLES[n.role] || [n.role, '', ''];
+    return h('span', { class: 'badge ' + r[1], title: r[2] }, r[0]);
+  };
+  const preferredSet = nodes.some(n => n.preferred);
+  const rows = nodes.map(n => h('tr', {},
+    h('td', {}, h('b', {}, n.name), n.self ? ' (this node)' : '', n.preferred ? h('span', { class: 'badge', title: 'Leads whenever it is up' }, '★ preferred') : null),
+    h('td', {}, roleBadge(n)),
+    h('td', {}, h('span', { class: 'dot ' + (n.reachable ? 'ok' : 'bad') }), n.reachable ? (n.behind > 20 ? n.behind + ' changes behind' : 'Up') : 'Unreachable'),
+    h('td', { class: 'small' }, h('code', {}, n.addr || '—')),
+    h('td', { class: 'small muted' }, n.version || ''),
+    h('td', {}, c.healthy && !c.left_out ? h('div', { class: 'row' },
+      h('button', { class: 'link', onclick: () => renameNode(n) }, 'Rename'),
+      !n.leader && !n.never_leader && n.voter && (!preferredSet || n.preferred) ? h('button', { class: 'link', onclick: () => act(() => api('POST', '/cluster/transfer', { to: n.id }), n.name + ' is leading now') }, 'Make leader') : null,
+      !n.never_leader ? h('button', { class: 'link', onclick: () => act(() => api('POST', '/cluster/preferred', { id: n.preferred ? '' : n.id }), n.preferred ? 'No preferred leader' : n.name + ' leads whenever it’s up') }, n.preferred ? 'Stop preferring' : 'Prefer as leader') : null,
+      h('button', { class: 'link', onclick: () => neverLead(n) }, n.never_leader ? 'Allow to lead' : 'Never lead'),
+      !n.self && !n.leader ? h('button', { class: 'link danger', onclick: async () => (await ask('Remove ' + n.name + ' from the cluster? It stops getting changes. To add it again it needs a new join code.', 'Remove node')) && act(() => api('DELETE', '/cluster/nodes/' + n.id), n.name + ' removed') }, 'Remove') : null) : null)));
+
+  const addCard = c.healthy && !c.left_out ? h('div', { class: 'card' }, h('h2', {}, 'Add a node'),
+    h('ol', { class: 'steps-list' },
+      h('li', {}, 'On the new server, start DNServe the same way as this one (the same ', h('code', {}, 'docker compose'), ' file works). Make sure port ', h('b', {}, '8081'), ' is published and open between the servers.'),
+      h('li', {}, 'Open its dashboard, enter its setup code, and choose ', h('b', {}, 'No, add this server to my DNServe'), '.'),
+      h('li', {}, 'Paste the join code from here. It works once, for an hour.')),
+    form({}, [
+      h('label', { for: 'host' }, 'Other nodes reach this one at'),
+      h('div', { class: 'row' }, h('input', { id: 'host', name: 'host', type: 'text', value: c.advertise_learned ? (c.advertise || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '') : location.hostname, required: true, spellcheck: 'false' }), h('span', { class: 'muted' }, ':' + ((c.advertise || '').match(/:(\d+)$/) || [, '8081'])[1])),
+      h('p', { class: 'muted small' }, 'This server’s address on your network. Usually the one in your browser’s address bar.'),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Make a join code')),
+    ], async (f) => {
+      const r = await api('POST', '/cluster/join-codes', { host: val(f, 'host').trim() });
+      const d = dialog('Join code', [
+        h('p', {}, 'Paste this into the new server’s setup page. It works once and expires at ' + fmtTime(r.expires_at) + '.'),
+        h('textarea', { class: 'tall code', readonly: true, 'aria-label': 'Join code' }, r.code),
+        h('div', { class: 'actions' },
+          h('button', { class: 'primary', type: 'button', onclick: (ev) => navigator.clipboard.writeText(r.code).then(() => { ev.target.textContent = 'Copied'; }) }, 'Copy'),
+          h('button', { type: 'button', onclick: () => d.close() }, 'Done'))]);
+      d.addEventListener('close', () => route());
+    })) : null;
+
+  const recoverCard = !c.healthy && !c.left_out && others.length ? h('div', { class: 'card' }, h('h2', {}, 'Recover with this node only'),
+    h('p', {}, 'If ', others.map(n => n.name).join(' and '), ' is gone for good (broken, wiped or replaced), make this node the whole cluster. It keeps its accounts and settings and starts taking changes again.'),
+    h('p', { class: 'muted small' }, 'DNServe checks first that no other node answers, so two clusters never run at once. The nodes left out are locked out; to use one again, wipe it and join it with a new code.'),
+    form({}, [
+      h('label', { for: 'rpw' }, 'Your password'),
+      h('input', { id: 'rpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
+      h('div', { class: 'actions' }, h('button', { class: 'primary danger-fill', type: 'submit' }, 'Recover with ' + self.name)),
+    ], async (f) => {
+      const password = val(f, 'password');
+      try {
+        await api('POST', '/cluster/recover', { password });
+      } catch (e) {
+        if (!/could still be running/.test(e.message)) throw e;
+        if (!(await ask(e.message + '. Recover anyway?', 'Recover anyway'))) return;
+        await api('POST', '/cluster/recover', { password, accept_risk: true });
+      }
+      toast(self.name + ' is now the whole cluster');
+      route();
+    })) : null;
+
+  const joinCard = data.can_join ? h('details', { class: 'card' }, h('summary', {}, 'Join another DNServe instead'),
+    msg('warn', 'This replaces everything on this node (accounts, settings, devices and groups) with the other DNServe’s. You’ll sign in again with an account from there.'),
+    form({}, [
+      h('label', { for: 'jc' }, 'Join code from the other DNServe'),
+      h('textarea', { id: 'jc', name: 'join', class: 'code', rows: 3, required: true, spellcheck: 'false', placeholder: 'DNSJ1-…' }),
+      h('label', { for: 'jpw' }, 'Your password'),
+      h('input', { id: 'jpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
+      h('div', { class: 'actions' }, h('button', { class: 'primary danger-fill', type: 'submit' }, 'Replace and join')),
+    ], async (f) => {
+      if (!(await ask('Replace this node’s accounts and settings with the other DNServe’s?', 'Replace and join'))) return;
+      await api('POST', '/cluster/join', { join_code: val(f, 'join'), password: val(f, 'password'), host: location.hostname });
+      csrf = ''; ME = null;
+      joinWaiting();
+    })) : null;
+
+  page(main, 'Cluster',
+    h('div', { class: 'card' }, status),
+    h('div', { class: 'card scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Node'), h('th', {}, 'Role'), h('th', {}, 'Status'), h('th', {}, 'Address'), h('th', {}, 'Version'), h('th', {}))),
+      h('tbody', {}, rows))),
+    addCard, recoverCard, joinCard);
+
+  timer = setInterval(async () => {
+    if (document.hidden || document.querySelector('dialog') || unsaved()) return;
+    try {
+      const fresh = await api('GET', '/cluster');
+      if (JSON.stringify(strip(fresh)) !== JSON.stringify(strip(data))) route();
+    } catch (_) { /* keep showing */ }
+  }, 5000);
+  function strip(d) { return (d.cluster.nodes || []).map(n => [n.id, n.role, n.reachable, n.leader, n.preferred, n.never_leader, n.name, n.behind > 20]).concat([d.cluster.healthy, d.cluster.left_out]); }
+
+  function renameNode(n) {
+    const d = dialog('Rename ' + n.name, form({}, [
+      h('input', { name: 'name', type: 'text', value: n.name, maxlength: 64, required: true, autofocus: true, 'aria-label': 'Node name' }),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+    ], async (f) => {
+      await api('PUT', '/cluster/nodes/' + n.id, { name: val(f, 'name').trim() });
+      d.close();
+      route();
+    }));
+  }
+
+  async function neverLead(n) {
+    if (!n.never_leader && !(await ask(n.name + ' will keep a full copy and answer DNS, but never lead or vote. ' +
+      (c.voters === 2 ? 'The other node can then take changes on its own, even while ' + n.name + ' is down.' : ''), 'Never lead', false))) return;
+    act(() => api('PUT', '/cluster/nodes/' + n.id, { never_leader: !n.never_leader }));
   }
 }
 

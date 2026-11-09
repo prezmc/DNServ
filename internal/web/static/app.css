@@ -166,3 +166,16 @@ button.danger-fill { background: var(--bad); border-color: var(--bad); color: #f
 .row.spread h2, .row.spread h3 { margin: 0; }
 button.small { font-size: .85rem; padding: .3rem .65rem; }
 .card > .row.spread { margin-bottom: .75rem; }
+
+/* cluster */
+textarea.code { min-height: 4.5rem; word-break: break-all; }
+.choices { display: grid; gap: .6rem; margin: 1rem 0; }
+button.choice { display: flex; flex-direction: column; align-items: flex-start; gap: .2rem; text-align: left; padding: .8rem 1rem; white-space: normal; }
+.steps-list { padding-left: 1.2rem; margin: .5rem 0 1rem; }
+.steps-list li { margin: .3rem 0; }
+details.card > summary { cursor: pointer; font-weight: 600; }
+details.card[open] > summary { margin-bottom: .75rem; }
+.spinner { width: 1.6rem; height: 1.6rem; margin: 1rem auto; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+td code { white-space: nowrap; }

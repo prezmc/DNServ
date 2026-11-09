@@ -1,13 +1,16 @@
 // Package store holds the node's managed state: users, API tokens,
 // settings changed in the UI, and the audit log.
 //
-// Every change is a Command applied by a deterministic function, the same
-// shape a Raft state machine needs. Step 2 puts Raft in front of Apply so
-// commands are replicated to every node; today they are applied locally
-// and the state is saved to disk after each change.
+// Every change is a Command applied by a deterministic function. In a
+// running node a Proposer (the cluster) sits in front of Apply: commands go
+// through the Raft log and come back through ApplyRaft on every node, in
+// the same order. Without a Proposer (tests, tools) commands are applied
+// locally. Either way the state is saved to disk after each change, with
+// the index of the last Raft entry it includes.
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,13 +26,18 @@ const MaxAudit = 10_000
 // State is the whole managed state. It is replaced, never mutated in
 // place, so readers can hold a snapshot without locks.
 type State struct {
-	Version  uint64             `json:"version"`
-	Users    map[string]*User   `json:"users"`
-	Tokens   map[string]*Token  `json:"tokens"`
-	Settings Settings           `json:"settings"`
-	Devices  map[string]*Device `json:"devices"`
-	Groups   map[string]*Group  `json:"groups"`
-	Audit    []AuditEntry       `json:"audit"`
+	Version uint64 `json:"version"`
+	// RaftIndex is the last Raft log entry applied to this state. A node
+	// restarting skips entries it already has, so it serves its full
+	// last-known state even before it reaches the rest of the cluster.
+	RaftIndex uint64             `json:"raft_index,omitempty"`
+	Users     map[string]*User   `json:"users"`
+	Tokens    map[string]*Token  `json:"tokens"`
+	Settings  Settings           `json:"settings"`
+	Devices   map[string]*Device `json:"devices"`
+	Groups    map[string]*Group  `json:"groups"`
+	Audit     []AuditEntry       `json:"audit"`
+	Cluster   ClusterState       `json:"cluster"`
 	// SetupDone is set when the first admin finishes MFA enrollment.
 	SetupDone bool `json:"setup_done"`
 }
@@ -128,37 +136,38 @@ type AuditEntry struct {
 	After   json.RawMessage `json:"after,omitempty"`
 }
 
+// Proposer replicates a command and returns its result once it has been
+// applied (through ApplyRaft) on the node that proposed it.
+type Proposer interface {
+	Propose(c Command) (any, error)
+}
+
+// ErrUnavailable means the cluster can't take changes right now (no
+// leader, or this node can't reach it).
+var ErrUnavailable = errors.New("changes are paused: this node can't reach the cluster leader")
+
 // Store applies commands and persists state.
 type Store struct {
-	path string
-	mu   sync.Mutex // serializes Apply
-	cur  *State
-	subs []func(old, new *State)
-	now  func() time.Time
+	path    string
+	mu      sync.Mutex // serializes changes
+	cur     *State
+	subs    []func(old, new *State)
+	now     func() time.Time
+	prop    Proposer
+	applied chan struct{} // closed and replaced after each change
 }
 
 // Open loads state from dir/state.json, or starts empty.
 func Open(dir string) (*Store, error) {
-	s := &Store{path: filepath.Join(dir, "state.json"), now: time.Now}
-	st := &State{Users: map[string]*User{}, Tokens: map[string]*Token{}, Devices: map[string]*Device{}, Groups: map[string]*Group{}}
+	s := &Store{path: filepath.Join(dir, "state.json"), now: time.Now, applied: make(chan struct{})}
+	st := NewState()
 	b, err := os.ReadFile(s.path)
 	switch {
 	case err == nil:
 		if err := json.Unmarshal(b, st); err != nil {
 			return nil, fmt.Errorf("read %s: %w", s.path, err)
 		}
-		if st.Users == nil {
-			st.Users = map[string]*User{}
-		}
-		if st.Tokens == nil {
-			st.Tokens = map[string]*Token{}
-		}
-		if st.Groups == nil {
-			st.Groups = map[string]*Group{}
-		}
-		if st.Devices == nil {
-			st.Devices = map[string]*Device{}
-		}
+		st.fillMaps()
 	case errors.Is(err, os.ErrNotExist):
 	default:
 		return nil, err
@@ -182,10 +191,45 @@ func (s *Store) Subscribe(fn func(old, new *State)) {
 	s.mu.Unlock()
 }
 
+// SetProposer routes Apply through p (the cluster). Set it before serving.
+func (s *Store) SetProposer(p Proposer) {
+	s.mu.Lock()
+	s.prop = p
+	s.mu.Unlock()
+}
+
 // Apply validates and applies a command, saves the new state and notifies
 // subscribers. It returns the command's result (for example a new ID).
+// With a Proposer the command is replicated first; the time is stamped
+// here so every node applies the same value.
 func (s *Store) Apply(c Command) (any, error) {
 	s.mu.Lock()
+	if c.Time.IsZero() {
+		c.Time = s.now().UTC()
+	}
+	p := s.prop
+	s.mu.Unlock()
+	if p != nil {
+		return p.Propose(c)
+	}
+	return s.applyAt(0, c)
+}
+
+// ApplyRaft applies the command in Raft log entry index. Entries already
+// in the state (replayed after a restart) are skipped.
+func (s *Store) ApplyRaft(index uint64, c Command) (any, error) {
+	return s.applyAt(index, c)
+}
+
+// ErrSkipped is returned by ApplyRaft for an entry the state already has.
+var ErrSkipped = errors.New("already applied")
+
+func (s *Store) applyAt(index uint64, c Command) (any, error) {
+	s.mu.Lock()
+	if index != 0 && index <= s.cur.RaftIndex {
+		s.mu.Unlock()
+		return nil, ErrSkipped
+	}
 	if c.Time.IsZero() {
 		c.Time = s.now().UTC()
 	}
@@ -196,6 +240,9 @@ func (s *Store) Apply(c Command) (any, error) {
 		return nil, err
 	}
 	next.Version++
+	if index != 0 {
+		next.RaftIndex = index
+	}
 	if entry != nil {
 		entry.Time, entry.Actor, entry.Op = c.Time, c.Actor, c.Op
 		next.Audit = append(next.Audit, *entry)
@@ -203,18 +250,55 @@ func (s *Store) Apply(c Command) (any, error) {
 			next.Audit = append([]AuditEntry(nil), next.Audit[over:]...)
 		}
 	}
+	if err := s.publish(next); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// Replace swaps in a whole state: a Raft snapshot from the leader, or an
+// empty state when this node joins another cluster.
+func (s *Store) Replace(st *State) error {
+	st = st.clone()
+	s.mu.Lock()
+	return s.publish(st)
+}
+
+// publish saves next, makes it current and notifies subscribers. It is
+// called with s.mu held and releases it.
+func (s *Store) publish(next *State) error {
 	if err := s.save(next); err != nil {
 		s.mu.Unlock()
-		return nil, err
+		return err
 	}
 	old := s.cur
 	s.cur = next
 	subs := append([]func(old, new *State){}, s.subs...)
+	close(s.applied)
+	s.applied = make(chan struct{})
 	s.mu.Unlock()
 	for _, fn := range subs {
 		fn(old, next)
 	}
-	return res, nil
+	return nil
+}
+
+// WaitIndex waits until the state includes Raft entry index, so a change
+// made through the leader is visible here before the API answers.
+func (s *Store) WaitIndex(ctx context.Context, index uint64) error {
+	for {
+		s.mu.Lock()
+		done, ch := s.cur.RaftIndex >= index, s.applied
+		s.mu.Unlock()
+		if done {
+			return nil
+		}
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 func (s *Store) save(st *State) error {
@@ -256,19 +340,39 @@ func (st *State) clone() *State {
 	if err := json.Unmarshal(b, out); err != nil {
 		panic(err)
 	}
-	if out.Users == nil {
-		out.Users = map[string]*User{}
-	}
-	if out.Tokens == nil {
-		out.Tokens = map[string]*Token{}
-	}
-	if out.Devices == nil {
-		out.Devices = map[string]*Device{}
-	}
-	if out.Groups == nil {
-		out.Groups = map[string]*Group{}
-	}
+	out.fillMaps()
 	return out
+}
+
+// NewState returns an empty state.
+func NewState() *State {
+	st := &State{}
+	st.fillMaps()
+	return st
+}
+
+// Clone returns a deep copy.
+func (st *State) Clone() *State { return st.clone() }
+
+func (st *State) fillMaps() {
+	if st.Users == nil {
+		st.Users = map[string]*User{}
+	}
+	if st.Tokens == nil {
+		st.Tokens = map[string]*Token{}
+	}
+	if st.Devices == nil {
+		st.Devices = map[string]*Device{}
+	}
+	if st.Groups == nil {
+		st.Groups = map[string]*Group{}
+	}
+	if st.Cluster.Nodes == nil {
+		st.Cluster.Nodes = map[string]*Node{}
+	}
+	if st.Cluster.JoinCodes == nil {
+		st.Cluster.JoinCodes = map[string]*JoinCode{}
+	}
 }
 
 // UserByName finds a user by username (case-insensitive).
