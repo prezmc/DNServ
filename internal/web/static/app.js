@@ -565,6 +565,7 @@ const ROUTES = [
   { path: '', title: 'Dashboard', page: dashboard, show: () => true },
   { path: 'devices', title: 'Devices', page: devices, show: () => true },
   { path: 'queries', title: 'Recent queries', page: queries, show: () => can('querylog.view') },
+  { path: 'names', title: 'Local names', page: localNames, show: () => can('network.manage') },
   { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
   { path: 'cluster', title: 'Cluster', page: clusterPage, show: () => can('cluster.manage') },
@@ -1429,6 +1430,85 @@ async function clusterPage(main) {
       (c.voters === 2 ? 'The other node can then take changes on its own, even while ' + n.name + ' is down.' : ''), 'Never lead', false))) return;
     act(() => api('PUT', '/cluster/nodes/' + n.id, { never_leader: !n.never_leader }));
   }
+}
+
+// ---------- local names ----------
+
+const isIP = (v) => /^[0-9.]+$/.test(v) || v.includes(':');
+
+async function localNames(main) {
+  const title = 'Local names';
+  page(main, title, h('p', { class: 'muted' }, 'Loading…'));
+  let s;
+  try { s = await api('GET', '/settings'); } catch (e) { return page(main, title, msg('err', e.message)); }
+  const recs = (s.effective.DNS.Records || []).slice();
+  const router = s.effective.DNS.LocalDNS;
+
+  const saveAll = async (next, note) => {
+    await api('PATCH', '/settings', { records: next });
+    toast(note);
+    route();
+  };
+  const kind = (r) => isIP(r.value) ? (r.value.includes(':') ? 'IPv6 address' : 'Address') : 'Alias for';
+
+  const fields = (r) => [
+    h('label', { for: 'rn' }, 'Name'),
+    h('input', { id: 'rn', name: 'name', type: 'text', value: r.name || '', placeholder: 'nas.home', required: true, spellcheck: 'false', autocapitalize: 'off', autofocus: true }),
+    h('p', { class: 'muted small' }, 'Start with *. to cover every name below it, like *.lab.home.'),
+    h('label', { for: 'rv' }, 'Points to'),
+    h('input', { id: 'rv', name: 'value', type: 'text', value: r.value || '', placeholder: '192.168.1.20', required: true, spellcheck: 'false', autocapitalize: 'off' }),
+    h('p', { class: 'muted small' }, 'An IP address, or another name to make this one an alias (like files.home → nas.home).'),
+    h('label', { for: 'rnote' }, 'Note (optional)'),
+    h('input', { id: 'rnote', name: 'note', type: 'text', value: r.note || '', maxlength: 200 }),
+  ];
+  const read = (f) => ({ name: val(f, 'name').trim(), value: val(f, 'value').trim(), note: val(f, 'note').trim() || undefined });
+
+  const edit = (i) => {
+    const d = dialog('Edit ' + recs[i].name, form({}, [fields(recs[i]),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel'))],
+    async (f) => {
+      const next = recs.slice();
+      next[i] = read(f);
+      await api('PATCH', '/settings', { records: next });
+      d.close();
+      toast('Saved ' + next[i].name);
+      route();
+    }));
+  };
+  const remove = async (i) => {
+    if (!(await ask('Remove ' + recs[i].name + ' → ' + recs[i].value + '?', 'Remove'))) return;
+    const next = recs.slice();
+    next.splice(i, 1);
+    try { await saveAll(next, 'Removed ' + recs[i].name); } catch (e) { toast(e.message, 'err'); }
+  };
+
+  const order = recs.map((r, i) => i).sort((a, b) => recs[a].name.localeCompare(recs[b].name) || recs[a].value.localeCompare(recs[b].value));
+  const list = recs.length ? h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Points to'), h('th', {}, 'Note'), h('th', {}))),
+    h('tbody', {}, order.map(i => { const r = recs[i]; return h('tr', {},
+      h('td', {}, h('b', {}, r.name)),
+      h('td', {}, h('span', { class: 'muted small' }, kind(r) + ' '), h('code', {}, r.value)),
+      h('td', { class: 'small muted' }, r.note || ''),
+      h('td', {}, h('div', { class: 'row' },
+        h('button', { class: 'link', onclick: () => edit(i) }, 'Edit'),
+        h('button', { class: 'link danger', onclick: () => remove(i) }, 'Remove')))); }))))
+    : h('p', { class: 'muted' }, 'No local names yet.');
+
+  const add = h('div', { class: 'card' }, h('h2', {}, 'Add a name'),
+    form({}, [fields({}), h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Add'))], async (f) => {
+      const r = read(f);
+      await saveAll(recs.concat([r]), r.name + ' now points to ' + r.value);
+    }));
+
+  page(main, title,
+    h('p', { class: 'muted' }, 'Give names to things on your network, like nas.home or printer.office. Every DNServe node answers them, before blocklists and before asking the internet. They’re part of settings history and backups.'),
+    h('div', { class: 'card' }, h('h2', {}, 'Your names'), list,
+      h('p', { class: 'muted small' }, 'Pick names under a domain you control, or under .home.arpa, .home, .lan or .internal. A name here overrides the real one on the internet for your devices.')),
+    add,
+    h('div', { class: 'card' }, h('h2', {}, 'Names from your router'),
+      router
+        ? h('p', {}, 'Other local names (like a device’s own name) are looked up at your router, ', h('code', {}, router), '. Names on this page win over the router’s.')
+        : h('p', {}, 'DNServe can also answer the names your router knows for each device. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), '.')));
 }
 
 // ---------- backups & history ----------

@@ -72,6 +72,13 @@ setup wizard and dashboard handle the rest from your browser.
   which rule and list. Give DNServe your router's address (`local_dns`) and
   it shows the names your router knows and answers local names such as
   `printer.lan` through it.
+- **Local names.** Give names to things on your network under **Local
+  names**: `nas.home → 192.168.1.20`, an alias like `files.home → nas.home`
+  (or to an outside name), or a wildcard like `*.lab.home`. Every node
+  answers them, ahead of blocklists, the router and the internet, and
+  reverse lookups of their addresses return the name. They're kept with the
+  settings, so they're in settings history and backups. In a config file
+  they're `dns.records: [{name, value, note}]`.
 - **Groups with schedules.** Put devices in a group (say, Kids) to give
   them extra rules, let them skip the household blocklists, or add
   schedules: pause the internet at bedtime, or block a few sites during
@@ -282,6 +289,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Users | `GET`/`POST /users`, `PATCH`/`DELETE /users/{id}`, `POST /users/{id}/password`, `POST /users/{id}/reset-mfa` |
 | Tokens | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}` |
+| Local names | `PATCH /settings` `{records: [{name, value, note}]}` (the whole list; `value` is an IP address or another name) |
 | Lists | `POST /lists/update` (download every list again now) |
 | Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}`, `GET /domains/check?name=` |
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |

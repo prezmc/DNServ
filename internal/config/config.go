@@ -53,6 +53,9 @@ type DNSConfig struct {
 	// lookups of private addresses are forwarded to it, so device names
 	// work. Empty answers them as not found.
 	LocalDNS string `yaml:"local_dns"`
+	// Records are local DNS records, answered before filtering and
+	// before the router or upstream.
+	Records []Record `yaml:"records"`
 }
 
 // TLSConfig serves DNS over TLS (RFC 7858) and DNS over HTTPS (RFC 8484)
@@ -383,6 +386,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := c.Location(); err != nil {
 		errs = append(errs, fmt.Errorf("time_zone: %q is not a known time zone (use a name like Europe/London)", c.TimeZone))
+	}
+	if _, err := NormalizeRecords(c.DNS.Records); err != nil {
+		errs = append(errs, fmt.Errorf("dns.records: %w", err))
 	}
 	if c.DNS.LocalDNS != "" {
 		if _, err := LocalDNSAddr(c.DNS.LocalDNS); err != nil {

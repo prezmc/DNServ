@@ -178,6 +178,7 @@ func run() error {
 	if err := setLocalDNS(srv, cfg, log); err != nil {
 		log.Error("local dns", "err", err)
 	}
+	srv.SetRecords(server.NewRecords(cfg.DNS.Records))
 	if err := srv.Start(); err != nil {
 		return err
 	}
@@ -455,6 +456,10 @@ func applySettings(ctx context.Context, cfg, next config.Config, srv *server.Ser
 	}
 	if loc, err := next.Location(); err == nil {
 		srv.SetTimeZone(loc)
+	}
+	if !reflect.DeepEqual(cfg.DNS.Records, next.DNS.Records) {
+		srv.SetRecords(server.NewRecords(next.DNS.Records))
+		log.Info("local records changed", "records", len(next.DNS.Records))
 	}
 	if cfg.DNS.LocalDNS != next.DNS.LocalDNS {
 		if err := setLocalDNS(srv, next, log); err != nil {

@@ -185,3 +185,14 @@ func TestGroups(t *testing.T) {
 		t.Fatalf("time zone = %q", list.TimeZone)
 	}
 }
+
+func TestLocalRecordsSetting(t *testing.T) {
+	e := newEnv(t)
+	admin, _ := e.setupAdmin()
+	admin.want(400, "PATCH", "/api/v1/settings", map[string]any{"records": []map[string]string{{"name": "nas.home", "value": "nope!"}}}, nil)
+	admin.want(200, "PATCH", "/api/v1/settings", map[string]any{"records": []map[string]string{{"name": "NAS.Home.", "value": "192.168.1.20"}}}, nil)
+	recs := e.api.Store.State().Settings.Records
+	if recs == nil || len(*recs) != 1 || (*recs)[0].Name != "nas.home" {
+		t.Fatalf("records: %+v", recs)
+	}
+}
