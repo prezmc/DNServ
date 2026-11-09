@@ -212,3 +212,6 @@ table.top td.num { text-align: right; font-variant-numeric: tabular-nums; white-
 table.top .link.mono { text-align: left; word-break: break-all; padding: 0; }
 .meter { height: 4px; background: var(--code); border-radius: 2px; margin-top: .3rem; overflow: hidden; }
 .meter span { display: block; height: 100%; background: var(--s-allowed); border-radius: 2px; }
+.badge.risk-high { background: var(--bad); color: var(--panel); }
+.badge.risk-medium { background: var(--warn); color: var(--panel); }
+.risky .card { border-color: var(--warn); }

@@ -29,6 +29,7 @@ type Config struct {
 	HTTP      HTTPConfig      `yaml:"http"`
 	Cluster   ClusterConfig   `yaml:"cluster"`
 	History   HistoryConfig   `yaml:"history"`
+	Analytics AnalyticsConfig `yaml:"analytics"`
 	DataDir   string          `yaml:"data_dir"`
 	// TimeZone is an IANA name such as "Europe/London" used for group
 	// schedules. Empty means the container's TZ, or UTC.
@@ -198,6 +199,15 @@ type HistoryConfig struct {
 	StatsDays int `yaml:"stats_days"`
 }
 
+// AnalyticsConfig controls risk scoring in the dashboard.
+type AnalyticsConfig struct {
+	// ThreatFeeds downloads malware and phishing feeds to score the
+	// domains devices look up (they don't block anything).
+	ThreatFeeds bool `yaml:"threat_feeds"`
+	// TrustedDomains (and their subdomains) are never flagged as risky.
+	TrustedDomains []string `yaml:"trusted_domains"`
+}
+
 // History limits.
 const (
 	MaxHistoryDays = 365
@@ -252,10 +262,11 @@ func Default() Config {
 			BlockTTL:        10 * time.Second,
 			RefreshInterval: 24 * time.Hour,
 		},
-		HTTP:    HTTPConfig{Listen: ":8080"},
-		Cluster: ClusterConfig{Listen: ":8081"},
-		History: HistoryConfig{Days: 30, StatsDays: 90},
-		DataDir: "/data",
+		HTTP:      HTTPConfig{Listen: ":8080"},
+		Cluster:   ClusterConfig{Listen: ":8081"},
+		History:   HistoryConfig{Days: 30, StatsDays: 90},
+		Analytics: AnalyticsConfig{ThreatFeeds: true},
+		DataDir:   "/data",
 	}
 }
 
@@ -318,6 +329,7 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	set("DNSERVE_CLUSTER_LISTEN", func(v string) error { c.Cluster.Listen = v; return nil })
 	set("DNSERVE_CLUSTER_ADVERTISE", func(v string) error { c.Cluster.Advertise = v; return nil })
 	set("DNSERVE_BLOCK_MODE", func(v string) error { c.Filtering.BlockMode = v; return nil })
+	set("DNSERVE_THREAT_FEEDS", func(v string) (err error) { c.Analytics.ThreatFeeds, err = strconv.ParseBool(v); return })
 	set("DNSERVE_HISTORY_DAYS", func(v string) (err error) { c.History.Days, err = strconv.Atoi(v); return })
 	set("DNSERVE_STATS_DAYS", func(v string) (err error) { c.History.StatsDays, err = strconv.Atoi(v); return })
 	return errors.Join(errs...)

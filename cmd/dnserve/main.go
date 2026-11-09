@@ -35,6 +35,7 @@ import (
 	"github.com/prezmc/dnserve/internal/recursive"
 	"github.com/prezmc/dnserve/internal/server"
 	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserve/internal/threat"
 	"github.com/prezmc/dnserve/internal/upstream"
 	"github.com/prezmc/dnserve/internal/web"
 )
@@ -236,6 +237,12 @@ func run() error {
 	if hist != nil {
 		adm.Analytics = hist
 	}
+	// Risk scores and domain types for analytics (never used to block).
+	intel := threat.New(filepath.Join(cfg.DataDir, "threat"), nil, log.With("component", "threat"))
+	intel.SetEnabled(cfg.Analytics.ThreatFeeds)
+	intel.SetTrusted(cfg.Analytics.TrustedDomains)
+	go intel.Run(ctx)
+	adm.Intel = intel
 	cl.Handle(api.PeerAnalytics, adm.PeerHandler)
 	adm.CheckDomain = engine.Lookup
 	adm.LookupName = srv.LookupName
@@ -307,6 +314,11 @@ func run() error {
 		if hist != nil && (!reflect.DeepEqual(old.Settings.HistoryDays, new.Settings.HistoryDays) || !reflect.DeepEqual(old.Settings.StatsDays, new.Settings.StatsDays)) {
 			h := new.Settings.Overlay(base).History
 			hist.SetRetention(h.Days, h.StatsDays)
+		}
+		if !reflect.DeepEqual(old.Settings.ThreatFeeds, new.Settings.ThreatFeeds) || !reflect.DeepEqual(old.Settings.TrustedDomains, new.Settings.TrustedDomains) {
+			ac := new.Settings.Overlay(base).Analytics
+			intel.SetTrusted(ac.TrustedDomains)
+			intel.SetEnabled(ac.ThreatFeeds)
 		}
 		if !reflect.DeepEqual(old.Settings, new.Settings) {
 			select {

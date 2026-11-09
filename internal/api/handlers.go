@@ -568,6 +568,21 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 			}
 		}
 	}
+	if patch.TrustedDomains != nil {
+		out := []string{}
+		for _, d := range *patch.TrustedDomains {
+			d = filter.Normalize(strings.TrimSpace(d))
+			if d == "" {
+				continue
+			}
+			if rules, ok, _ := filter.ParseLine(d); !ok || len(rules) != 1 || rules[0].Domain != d {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("trusted domain %q isn't a domain", d))
+				return
+			}
+			out = append(out, d)
+		}
+		patch.TrustedDomains = &out
+	}
 	if patch.Records != nil {
 		recs, err := config.NormalizeRecords(*patch.Records)
 		if err != nil {

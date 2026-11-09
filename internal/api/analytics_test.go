@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"github.com/prezmc/dnserve/internal/analytics"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/querylog"
+	"github.com/prezmc/dnserve/internal/threat"
 )
 
 func TestAnalytics(t *testing.T) {
@@ -148,5 +150,76 @@ func TestAnalytics(t *testing.T) {
 	}
 	if !strings.Contains(e.api.Store.State().Audit[len(e.api.Store.State().Audit)-1].Summary, "history_days") {
 		t.Fatal("history change not audited")
+	}
+}
+
+func TestRiskyDomainsAndTypes(t *testing.T) {
+	e := newEnv(t)
+	e.now = time.Now()
+	hs, err := analytics.Open(filepath.Join(t.TempDir(), "h.db"), func() string { return "alpha" }, 30, 90, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { hs.Close() })
+	e.api.Analytics = hs
+	dir := t.TempDir()
+	for n, c := range map[string]string{
+		"urlhaus.txt": "127.0.0.1 malware.example\n", "threatfox.txt": "", "phishingarmy.txt": "login-bank.example\n", "hagezi-tif.txt": "",
+		"trackers.json":  `{"categories":{"4":"advertising"},"trackers":{"dc":{"name":"DoubleClick","categoryId":4,"companyId":"google"}},"trackerDomains":{"doubleclick.net":"dc"}}`,
+		"companies.json": `{"companies":{"google":{"name":"Google"}}}`,
+	} {
+		os.WriteFile(filepath.Join(dir, n), []byte(c), 0o600)
+	}
+	in := threat.New(dir, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	in.SetEnabled(true)
+	in.Refresh(context.Background(), false)
+	e.api.Intel = in
+	admin, _ := e.setupAdmin()
+
+	ip := netip.MustParseAddr("192.168.1.10")
+	for i, n := range []string{"malware.example", "malware.example", "login-bank.example", "doubleclick.net", "example.com"} {
+		hs.Record(querylog.Entry{Time: e.now.Add(-time.Duration(i+1) * time.Minute), Client: ip, Name: n, Type: "A", Result: querylog.Answered})
+	}
+	hs.Flush()
+
+	var risky struct {
+		Rows    []topRow
+		Domains int
+		Queries int64
+		Feeds   bool
+	}
+	admin.want(200, "GET", "/api/v1/analytics/risky?range=24h", nil, &risky)
+	if risky.Domains != 2 || risky.Queries != 3 || !risky.Feeds || risky.Rows[0].Key != "malware.example" || risky.Rows[0].Risk.Level != "high" {
+		t.Fatalf("risky = %+v", risky)
+	}
+	var top struct{ Rows []topRow }
+	admin.want(200, "GET", "/api/v1/analytics/top?by=domains", nil, &top)
+	for _, r := range top.Rows {
+		if r.Key == "doubleclick.net" && (r.Type == nil || r.Type.Company != "Google" || r.Type.Category != "Advertising") {
+			t.Fatalf("type = %+v", r.Type)
+		}
+		if r.Key == "example.com" && (r.Risk != nil || r.Type != nil) {
+			t.Fatalf("example.com = %+v", r)
+		}
+	}
+	var q struct{ Risk map[string]threat.Risk }
+	admin.want(200, "GET", "/api/v1/analytics/queries", nil, &q)
+	if len(q.Risk) != 2 || q.Risk["login-bank.example"].Level != "high" {
+		t.Fatalf("query log risk = %+v", q.Risk)
+	}
+
+	// Trusting a domain clears its score; it's a lists setting.
+	admin.want(400, "PATCH", "/api/v1/settings", map[string]any{"trusted_domains": []string{"not a domain"}}, nil)
+	admin.want(200, "PATCH", "/api/v1/settings", map[string]any{"trusted_domains": []string{"Malware.Example"}}, nil)
+	if got := e.api.Effective().Analytics.TrustedDomains; len(got) != 1 || got[0] != "malware.example" {
+		t.Fatalf("trusted = %v", got)
+	}
+	var st struct {
+		Enabled bool
+		Sources []threat.SourceStatus
+	}
+	admin.want(200, "GET", "/api/v1/analytics/intel", nil, &st)
+	if !st.Enabled || len(st.Sources) != 5 {
+		t.Fatalf("intel = %+v", st)
 	}
 }

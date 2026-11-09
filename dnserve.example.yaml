@@ -91,6 +91,11 @@ history:
                            # kept for every 100,000 queries a day)
   stats_days: 90           # hourly totals per device and domain, for charts
 
+# Risk scores in Analytics (never used to block).
+analytics:
+  threat_feeds: true       # download malware and phishing feeds
+  trusted_domains: []      # never marked risky (covers subdomains)
+
 # Time zone for group schedules, e.g. Europe/London (default: TZ or UTC).
 time_zone: ""
 data_dir: /data

@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -16,6 +17,7 @@ import (
 	"github.com/prezmc/dnserve/internal/analytics"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserve/internal/threat"
 )
 
 // PeerAnalytics is the cluster RPC name for analytics queries.
@@ -27,6 +29,8 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/analytics/domain", a.authed(store.PermDashboard, a.analyticsDomain))
 	m.HandleFunc("GET /api/v1/analytics/queries", a.authed(store.PermQueryLog, a.analyticsQueries))
 	m.HandleFunc("GET /api/v1/analytics/export", a.authed(store.PermExport, a.analyticsExport))
+	m.HandleFunc("GET /api/v1/analytics/risky", a.authed(store.PermDashboard, a.analyticsRisky))
+	m.HandleFunc("GET /api/v1/analytics/intel", a.authed(store.PermDashboard, a.intelStatus))
 }
 
 // PeerHandler answers another node's analytics query from this node's
@@ -149,7 +153,7 @@ func (a *API) ask(ctx context.Context, q analytics.Query, timeout time.Duration)
 		// Ask peers for more than we show, so merged top lists are right
 		// when a domain is near the cut-off on one node.
 		pq := q
-		if q.Kind == analytics.KindTop {
+		if q.Kind == analytics.KindTop && q.Limit < 500 {
 			pq.Limit = min(q.Limit*3, 500)
 		}
 		for _, rep := range a.Cluster.AskPeers(ctx, PeerAnalytics, pq) {
@@ -304,6 +308,19 @@ type topRow struct {
 	DeviceID string        `json:"device,omitempty"` // clients: named device
 	Addrs    []string      `json:"addrs,omitempty"`  // clients
 	Now      *domainStatus `json:"now,omitempty"`    // domains: how it's treated now
+	Risk     *threat.Risk  `json:"risk,omitempty"`   // domains: when there is any
+	Type     *threat.Type  `json:"type,omitempty"`   // domains: when known
+}
+
+// describe adds risk and type to a domain row.
+func (a *API) describe(t *topRow) {
+	if a.Intel == nil {
+		return
+	}
+	if r := a.Intel.Score(t.Key); r.Score > 0 {
+		t.Risk = &r
+	}
+	t.Type = a.Intel.TypeOf(t.Key)
 }
 
 func (a *API) analyticsTop(w http.ResponseWriter, r *http.Request, p *Principal) {
@@ -348,7 +365,9 @@ func (a *API) analyticsTop(w http.ResponseWriter, r *http.Request, p *Principal)
 	} else {
 		for _, row := range res.Rows {
 			s := a.statusOf(row.Key)
-			out = append(out, &topRow{Row: row, Now: &s})
+			t := &topRow{Row: row, Now: &s}
+			a.describe(t)
+			out = append(out, t)
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"rows": out, "detail": res.Detail, "stats": res.Stats, "nodes": nodes})
@@ -373,6 +392,9 @@ func (a *API) analyticsDomain(w http.ResponseWriter, r *http.Request, p *Princip
 		"name": q.Name, "from": q.From.UTC(), "to": q.To.UTC(), "step": q.Step,
 		"counts": res.Counts, "series": orEmpty(res.Series), "now": a.statusOf(q.Name),
 		"detail": res.Detail, "stats": res.Stats, "nodes": nodes,
+	}
+	if a.Intel != nil {
+		out["risk"], out["type"] = a.Intel.Score(q.Name), a.Intel.TypeOf(q.Name)
 	}
 	if res.Rule != "" || res.List != "" {
 		out["caught_by"] = map[string]string{"rule": res.Rule, "list": res.List}
@@ -425,8 +447,18 @@ func (a *API) analyticsQueries(w http.ResponseWriter, r *http.Request, p *Princi
 		addrs[i] = e.Client
 	}
 	l := a.newLabeler(r.Context(), addrs)
+	// Flag risky domains so the log can mark them.
+	risk := map[string]threat.Risk{}
+	if a.Intel != nil {
+		for _, e := range res.Entries {
+			if _, done := risk[e.Name]; !done {
+				risk[e.Name] = a.Intel.Score(e.Name)
+			}
+		}
+		maps.DeleteFunc(risk, func(_ string, r threat.Risk) bool { return r.Score < threat.Medium })
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"queries": orEmpty(res.Entries), "device_names": l.names,
+		"queries": orEmpty(res.Entries), "device_names": l.names, "risk": risk,
 		"detail": res.Detail, "nodes": nodes,
 	})
 }
@@ -460,10 +492,16 @@ func (a *API) analyticsExport(w http.ResponseWriter, r *http.Request, p *Princip
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="dnserve-queries-`+a.now().Format("2006-01-02-1504")+`.csv"`)
 	cw := csv.NewWriter(w)
-	cw.Write([]string{"time", "server", "client", "device", "domain", "type", "result", "allowed_by_rule", "rcode", "answers", "ms", "rule", "list"})
+	cw.Write([]string{"time", "server", "client", "device", "domain", "type", "result", "allowed_by_rule", "rcode", "answers", "ms", "rule", "list", "risk"})
+	scores := map[string]string{}
 	for _, e := range res.Entries {
+		sc, ok := scores[e.Name]
+		if !ok && a.Intel != nil {
+			sc = strconv.Itoa(a.Intel.Score(e.Name).Score)
+			scores[e.Name] = sc
+		}
 		cw.Write([]string{e.Time, e.Node, e.Client, csvSafe(l.names[e.Client]), e.Name, e.Type, e.Result, strconv.FormatBool(e.Allowed),
-			e.Rcode, strconv.Itoa(e.Answers), strconv.FormatFloat(e.Ms, 'f', 2, 64), csvSafe(e.Rule), csvSafe(e.List)})
+			e.Rcode, strconv.Itoa(e.Answers), strconv.FormatFloat(e.Ms, 'f', 2, 64), csvSafe(e.Rule), csvSafe(e.List), sc})
 	}
 	cw.Flush()
 }
@@ -474,4 +512,58 @@ func csvSafe(s string) string {
 		return "'" + s
 	}
 	return s
+}
+
+// analyticsRisky lists the riskiest domains devices looked up in the
+// period, across every node.
+func (a *API) analyticsRisky(w http.ResponseWriter, r *http.Request, p *Principal) {
+	q, ok := a.parseQuery(w, r, p, analytics.KindTop)
+	if !ok {
+		return
+	}
+	limit := q.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	// Every domain seen (up to a generous cap), scored here.
+	q.By, q.Limit = analytics.TopDomains, 20000
+	res, nodes, ok := a.askOrFail(w, r, q)
+	if !ok {
+		return
+	}
+	out := []*topRow{}
+	var queries int64
+	if a.Intel != nil {
+		for _, row := range res.Rows {
+			risk := a.Intel.Score(row.Key)
+			if risk.Score < threat.Medium {
+				continue
+			}
+			queries += row.Total
+			s := a.statusOf(row.Key)
+			out = append(out, &topRow{Row: row, Now: &s, Risk: &risk, Type: a.Intel.TypeOf(row.Key)})
+		}
+	}
+	slices.SortStableFunc(out, func(x, y *topRow) int {
+		if x.Risk.Score != y.Risk.Score {
+			return y.Risk.Score - x.Risk.Score
+		}
+		return int(y.Total - x.Total)
+	})
+	domains := len(out)
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows": out, "domains": domains, "queries": queries,
+		"feeds": a.Intel != nil && a.Intel.Enabled(), "nodes": nodes,
+	})
+}
+
+func (a *API) intelStatus(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if a.Intel == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "sources": []any{}})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": a.Intel.Enabled(), "sources": a.Intel.Status()})
 }

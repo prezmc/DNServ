@@ -913,7 +913,7 @@ async function queries(main) {
   };
   // useHistory: search each server's saved history (merged), or, when
   // history is off, the recent queries this server holds in memory.
-  let oldest = 0, live = true, useHistory = true, multi = false;
+  let oldest = 0, live = true, useHistory = true, multi = false, risk = {};
   const row = (e) => {
     const [label, kind] = RESULTS[e.result] || [e.result, ''];
     const why = e.rule ? e.rule + (e.list ? ' (' + e.list + ')' : '') : '';
@@ -922,7 +922,7 @@ async function queries(main) {
       h('td', { class: 'nowrap small', title: fmtTime(e.time) }, new Date(e.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })),
       h('td', { class: 'small' }, names[e.client] || e.client, multi && e.node ? h('div', { class: 'muted' }, 'via ', e.node) : null),
       h('td', {}, can('dashboard.view') && useHistory ? h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(e.name, filter.range === '1h' ? '24h' : filter.range) }, e.name) : h('span', { class: 'mono' }, e.name),
-        ' ', h('span', { class: 'muted small' }, e.type)),
+        ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name])),
       h('td', {}, h('span', { class: 'badge ' + kind, title: why || null }, label, e.allowed ? ' · allowed' : ''),
         why ? h('div', { class: 'muted small' }, why) : null),
       can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
@@ -944,6 +944,7 @@ async function queries(main) {
         multi = (r.nodes || []).length > 1;
         r.device_names && Object.entries(r.device_names).forEach(([k, v]) => { if (v && !names[k]) names[k] = v; });
         fill(nodesNote, coverage(r.nodes));
+        Object.assign(risk, r.risk || {});
         return r;
       }
       useHistory = false;
@@ -1112,6 +1113,18 @@ function caughtBy(r) {
 }
 
 // bar is a thin meter under a top-list row, scaled to the list's first row.
+// riskBadge marks a medium or high risk domain; its title says why.
+function riskBadge(r) {
+  if (!r || r.score < 40) return null;
+  return h('span', { class: 'badge risk-' + r.level, title: (r.reasons || []).join('; ') }, r.level === 'high' ? 'High risk' : 'Risky', ' ', r.score);
+}
+
+function typeLine(t) {
+  if (!t) return null;
+  const other = t.category === 'Other';
+  return h('div', { class: 'muted small' }, other && t.company ? t.company : [t.category, t.company ? ' \u00b7 ' + t.company : '']);
+}
+
 function bar(part, top) {
   const s = h('span');
   s.style.width = (top ? Math.max(1, 100 * part / top) : 0) + '%';
@@ -1129,6 +1142,16 @@ async function domainDialog(name, range) {
   fill(body,
     h('p', {}, now.allowed ? ['Allowed now', now.rule ? [' by ', h('code', {}, now.rule)] : null, now.list ? [' (', now.custom ? 'your custom rules' : now.list, ')'] : null]
       : now.blocked ? ['Blocked now by ', h('code', {}, now.rule), ' on ', now.custom ? 'your custom rules' : now.list] : 'Not blocked now.', ' ', domainButton(name, now)),
+    r.type ? h('p', {}, r.type.category !== 'Other' ? h('span', { class: 'badge' }, r.type.category) : 'Run by', r.type.company ? [r.type.category !== 'Other' ? ' run by ' : ' ', r.type.url ? h('a', { href: r.type.url, target: '_blank', rel: 'noopener noreferrer' }, r.type.company) : r.type.company] : null) : null,
+    r.risk && r.risk.score > 0 ? h('div', { class: 'msg ' + (r.risk.score >= 70 ? 'err' : r.risk.score >= 40 ? 'warn' : 'ok') },
+      h('b', {}, 'Risk ' + r.risk.score + ' of 100. '), (r.risk.reasons || []).join(' \u00b7 '), ' ',
+      can('lists.manage') ? h('button', { class: 'link', type: 'button', onclick: async (ev) => {
+        try {
+          const cur = (await api('GET', '/settings')).effective.Analytics.TrustedDomains || [];
+          await api('PATCH', '/settings', { trusted_domains: cur.concat([name]) });
+          ev.target.replaceWith(h('span', { class: 'small' }, 'Trusted. It won\u2019t be marked risky again.'));
+        } catch (e) { toast(e.message, 'err'); }
+      } }, 'I trust this domain') : null) : null,
     r.caught_by && !now.blocked ? h('p', { class: 'muted small' }, 'Was last blocked by ', h('code', {}, r.caught_by.rule), ' on ', r.caught_by.list, '.') : null,
     h('div', { class: 'grid' },
       h('div', { class: 'tile' }, h('div', { class: 'label' }, RANGES[range]), h('div', { class: 'value' }, fmtNum(c.total))),
@@ -1179,17 +1202,18 @@ async function analyticsPage(main) {
         h('td', { class: 'num' }, fmtNum(r.total), r.blocked ? h('div', { class: 'muted small' }, fmtNum(r.blocked), ' blocked') : null));
       }
       return h('tr', {},
-        h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(r.key, st.range) }, r.key),
-          kind === 'blocked' ? caughtBy(r) : null, bar(r.total, total)),
+        h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(r.key, st.range) }, r.key), ' ', riskBadge(r.risk),
+          kind === 'risky' ? h('div', { class: 'small' }, (r.risk.reasons || []).join(' \u00b7 ')) : null,
+          kind === 'blocked' ? caughtBy(r) : typeLine(r.type), bar(r.total, total)),
         h('td', { class: 'num' }, fmtNum(r.total)),
         h('td', { class: 'nowrap' }, domainButton(r.key, r.now)));
     })))); };
 
   const load = async () => {
-    let sum, dom, blk, cli;
+    let sum, dom, blk, cli, risky;
     try {
-      [sum, dom, blk, cli] = await Promise.all([q('summary'), q('top', { by: 'domains', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
-        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null)]);
+      [sum, dom, blk, cli, risky] = await Promise.all([q('summary'), q('top', { by: 'domains', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
+        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '10' })]);
     } catch (e) { fill(body, msg('err', e.message)); return; }
     const c = sum.counts;
     const pct = (n) => (c.total ? (100 * n / c.total).toFixed(1) + '%' : '—');
@@ -1202,7 +1226,11 @@ async function analyticsPage(main) {
         tile('Blocked', fmtNum(c.blocked), pct(c.blocked)),
         tile('Answered from cache', pct(c.cached)),
         tile('Average response', c.total ? (c.ms_sum / c.total).toFixed(1) + ' ms' : '—'),
-        st.client ? null : tile('Devices', fmtNum(sum.devices))),
+        st.client ? null : tile('Devices', fmtNum(sum.devices)),
+        risky.feeds || risky.domains ? tile('Risky domains', fmtNum(risky.domains), risky.domains ? fmtNum(risky.queries) + ' queries' : 'none seen') : null),
+      risky.rows.length ? h('div', { class: 'risky' }, topList('Risky domains', risky.rows, 'risky'),
+        h('p', { class: 'muted small' }, 'Scored from malware and phishing feeds and how the name looks. Scores never block anything; use Block, or add the feeds as blocklists. ',
+          risky.domains > risky.rows.length ? 'Showing the ' + risky.rows.length + ' riskiest of ' + fmtNum(risky.domains) + '.' : '')) : null,
       h('div', { class: 'card' }, h('h2', {}, 'Queries over time'), c.total ? queryChart(sum) : h('p', { class: 'muted' }, 'No queries in this period.')),
       h('div', { class: 'cols' }, topList('Top domains', dom.rows, 'domains'), topList('Top blocked', blk.rows, 'blocked')),
       cli ? topList('Busiest devices', cli.rows, 'clients') : null,
@@ -1395,6 +1423,25 @@ async function settings(main) {
         h('textarea', { name: 'nets', spellcheck: 'false', 'aria-label': 'Allowed networks', class: 'short', placeholder: 'Private networks (default):\n192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12 and others' }, (eff.DNS.AllowedNets || []).join('\n')),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ allowed_nets: lines(val(f, 'nets')) }, { allowed_nets: norm(eff.DNS.AllowedNets) }))));
+  }
+
+  if (can('lists.manage')) {
+    const ac = eff.Analytics;
+    let intel = { sources: [] };
+    try { intel = await api('GET', '/analytics/intel'); } catch (_) { /* status unknown */ }
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'Risk scoring ', origin('threat_feeds', 'trusted_domains')),
+      form({ 'data-track': true }, [
+        h('p', { class: 'muted' }, 'Analytics marks risky domains using public malware and phishing feeds and how a name looks. It never blocks on its own.'),
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'feeds', checked: ac.ThreatFeeds }), 'Download threat feeds (about 30 MB of memory)'),
+        h('label', { for: 'trusted' }, 'Trusted domains, never marked risky (one per line, covers subdomains)'),
+        h('textarea', { id: 'trusted', name: 'trusted', spellcheck: 'false', class: 'short' }, (ac.TrustedDomains || []).join('\n')),
+        intel.sources.length ? h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Source'), h('th', {}, 'Entries'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
+          h('tbody', {}, intel.sources.map(x => h('tr', {}, h('td', {}, x.name), h('td', {}, fmtNum(x.entries)), h('td', {}, x.updated ? ago(x.updated) : '\u2014'),
+            h('td', {}, x.error ? h('span', { class: 'badge bad', title: x.error }, x.entries ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok'))))))) : null,
+        h('p', { class: 'muted small' }, 'Domain types and owners come from AdGuard\u2019s companies database (CC BY-SA 4.0).'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], (f) => save({ threat_feeds: f.elements.feeds.checked, trusted_domains: lines(val(f, 'trusted')) }, { threat_feeds: ac.ThreatFeeds, trusted_domains: norm(ac.TrustedDomains) }))));
   }
 
   if (isAdmin()) {
