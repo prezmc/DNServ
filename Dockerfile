@@ -5,7 +5,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/dnserve ./cmd/dnserve
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/dnserve ./cmd/dnserve \
+ && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/dnsbench ./cmd/dnsbench
 
 # Alpine with Unbound for recursive and tunnel modes. Unbound runs as a
 # child of dnserve, as the same unprivileged user, on loopback only.
@@ -14,7 +15,7 @@ RUN apk upgrade --no-cache \
  && apk add --no-cache unbound dnssec-root ca-certificates tzdata \
  && addgroup -S -g 65532 dnserve && adduser -S -u 65532 -G dnserve -h /data dnserve \
  && mkdir -p /data /etc/dnserve && chown dnserve:dnserve /data
-COPY --from=build /out/dnserve /usr/local/bin/dnserve
+COPY --from=build /out/dnserve /out/dnsbench /usr/local/bin/
 COPY dnserve.example.yaml /etc/dnserve/dnserve.example.yaml
 ENV DNSERVE_CONFIG=/data/dnserve.yaml
 VOLUME /data
