@@ -21,6 +21,7 @@ import (
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/policy"
 	"github.com/prezmc/dnserve/internal/querylog"
 )
 
@@ -49,6 +50,9 @@ type Server struct {
 	Metrics *Metrics
 	// qlog, when set, records every answered query.
 	qlog atomic.Pointer[querylog.Log]
+	// policy holds device groups (nil: everyone gets the shared filter).
+	policy atomic.Pointer[policy.Set]
+	loc    atomic.Pointer[time.Location] // for schedules; nil = time.Local
 
 	mu       sync.Mutex
 	servers  []*dns.Server
@@ -222,7 +226,7 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 	if req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 || req.Response {
 		return s.finalize(req, rcodeMsg(req, dns.RcodeFormatError), udp)
 	}
-	resp, outcome, match := s.resolve(req)
+	resp, outcome, match := s.resolve(req, client)
 	took := time.Since(start)
 	s.Metrics.observe(outcome, resp, took)
 	if ql := s.qlog.Load(); ql != nil {
@@ -233,7 +237,10 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 			Duration: float64(took.Microseconds()) / 1000, Allowed: match.Allowed,
 		}
 		if match.Blocked || match.Allowed {
-			e.Rule, e.List = match.Rule.Text(), match.Source
+			e.List = match.Source
+			if match.Rule.Domain != "" {
+				e.Rule = match.Rule.Text()
+			}
 		}
 		ql.Add(e)
 	}
@@ -257,7 +264,7 @@ var outcomeResults = [...]string{
 	OutBlocked: querylog.Blocked, OutLocal: querylog.Local, OutError: querylog.Failed,
 }
 
-func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome, filter.Match) {
+func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, filter.Match) {
 	q := req.Question[0]
 	name := filter.Normalize(q.Name)
 
@@ -275,7 +282,23 @@ func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome, filter.Match) {
 	}
 
 	var match filter.Match
-	if f := s.filter; f != nil {
+	shared := true
+	if g := s.policy.Load().For(client); g != nil {
+		now := time.Now()
+		if loc := s.loc.Load(); loc != nil {
+			now = now.In(loc)
+		}
+		m, decided := g.Check(name, now)
+		if decided {
+			if m.Blocked {
+				return s.blocked(req), OutBlocked, m
+			}
+			match, shared = m, false
+		} else if g.SkipShared {
+			shared = false
+		}
+	}
+	if f := s.filter; f != nil && shared {
 		if match = f.Lookup(name); match.Blocked {
 			return s.blocked(req), OutBlocked, match
 		}
@@ -521,6 +544,12 @@ func (s *Server) localAnswer(req *dns.Msg, name string) (*dns.Msg, bool) {
 	}
 	return nil, false
 }
+
+// SetPolicy replaces the device groups.
+func (s *Server) SetPolicy(p *policy.Set) { s.policy.Store(p) }
+
+// SetTimeZone sets the time zone schedules run in.
+func (s *Server) SetTimeZone(l *time.Location) { s.loc.Store(l) }
 
 // SetQueryLog starts recording queries into l (nil stops).
 func (s *Server) SetQueryLog(l *querylog.Log) { s.qlog.Store(l) }

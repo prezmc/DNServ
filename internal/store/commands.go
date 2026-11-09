@@ -94,6 +94,8 @@ const (
 	OpSettingsReset  = "settings.reset"     // SettingsReset
 	OpDeviceSave     = "device.save"        // Device (creates or replaces)
 	OpDeviceDelete   = "device.delete"      // IDOnly
+	OpGroupSave      = "group.save"         // Group (creates or replaces)
+	OpGroupDelete    = "group.delete"       // IDOnly
 )
 
 type UserCreate struct {
@@ -363,6 +365,9 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 				return nil, nil, fmt.Errorf("%s already belongs to %q", d.Addrs[i], other.Name)
 			}
 		}
+		if d.Group != "" && st.Groups[d.Group] == nil {
+			return nil, nil, errors.New("that group doesn't exist")
+		}
 		old, existed := st.Devices[d.ID]
 		if existed {
 			d.CreatedAt = old.CreatedAt
@@ -388,6 +393,53 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		}
 		delete(st.Devices, d.ID)
 		return nil, audit(fmt.Sprintf("removed device %q", old.Name), old, nil), nil
+
+	case OpGroupSave:
+		var g Group
+		if err := dec(&g); err != nil {
+			return nil, nil, err
+		}
+		if err := g.normalize(); err != nil {
+			return nil, nil, err
+		}
+		if g.ID == "" {
+			return nil, nil, errors.New("missing group id")
+		}
+		for _, o := range st.Groups {
+			if o.ID != g.ID && strings.EqualFold(o.Name, g.Name) {
+				return nil, nil, fmt.Errorf("there is already a group called %q", o.Name)
+			}
+		}
+		old, existed := st.Groups[g.ID]
+		if existed {
+			g.CreatedAt = old.CreatedAt
+		} else {
+			g.CreatedAt = c.Time
+		}
+		st.Groups[g.ID] = &g
+		var before any
+		verb := "added"
+		if existed {
+			before, verb = old, "updated"
+		}
+		return g.ID, audit(fmt.Sprintf("%s group %q", verb, g.Name), before, g), nil
+
+	case OpGroupDelete:
+		var d IDOnly
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		old, ok := st.Groups[d.ID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		delete(st.Groups, d.ID)
+		for _, dev := range st.Devices {
+			if dev.Group == d.ID {
+				dev.Group = ""
+			}
+		}
+		return nil, audit(fmt.Sprintf("removed group %q", old.Name), old, nil), nil
 
 	case OpSettingsReset:
 		var d SettingsReset
@@ -508,6 +560,8 @@ func clearField(s *Settings, f string) error {
 		s.AllowedNets = nil
 	case "local_dns":
 		s.LocalDNS = nil
+	case "time_zone":
+		s.TimeZone = nil
 	case "filtering_enabled":
 		s.FilteringEnabled = nil
 	case "block_mode":

@@ -72,6 +72,12 @@ setup wizard and dashboard handle the rest from your browser.
   which rule and list. Give DNServe your router's address (`local_dns`) and
   it shows the names your router knows and answers local names such as
   `printer.lan` through it.
+- **Groups with schedules.** Put devices in a group (say, Kids) to give
+  them extra rules, let them skip the household blocklists, or add
+  schedules: pause the internet at bedtime, or block a few sites during
+  homework time. Windows that end before they start run overnight. Allow
+  rules in a group beat everything, so a school site keeps working at
+  bedtime. Schedules follow the time zone set in Settings.
 
 ## Run it
 
@@ -141,6 +147,7 @@ Notes:
 | `DNSERVE_TUNNEL_ON_DOWN` | `block` | `forward` (encrypted fallback) or `block` |
 | `DNSERVE_ALLOWED_NETS` | `192.168.1.0/24,10.0.0.0/8` | client networks allowed to query |
 | `DNSERVE_LOCAL_DNS` | `192.168.1.1` | your router, for device names and local names |
+| `DNSERVE_TIME_ZONE` | `Europe/London` | time zone for group schedules (default: the container's `TZ`, else UTC) |
 | `DNSERVE_BLOCK_BYPASS` | `true` | block public DoH resolvers and Private Relay |
 | `DNSERVE_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
 | `DNSERVE_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
@@ -164,7 +171,8 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Tokens | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}` |
 | Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}`, `GET /domains/check?name=` |
-| Devices | `GET`/`POST /devices` `{name, addrs}`, `PUT`/`DELETE /devices/{id}` |
+| Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
+| Groups | `GET`/`POST /groups` `{name, rules, skip_blocklists, schedules: [{name, days, start, end, block_all, rules}], devices}`, `PUT`/`DELETE /groups/{id}` |
 | Recent queries | `GET /queries?client=&search=&result=&before=&limit=` (`client` is an IP or device id; `result` is `blocked`, `allowed`, `failed`, …) |
 | Status and audit | `GET /status`, `GET /audit` |
 
@@ -265,8 +273,8 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
 1. **DNS node.** 1a core node. 1b Unbound recursive mode, WireGuard
    tunnel mode, DoH/DoT for clients. 1c admin API with users, roles and
    mandatory MFA, and the web UI with a setup wizard. 1d devices, recent
-   queries and router names (this), then per-device and per-group policies
-   with schedules, and a load-test harness.
+   queries, router names, and groups with schedules (this), then a
+   load-test harness.
 2. **Clustering and backups.** Embedded Raft so any node can lead, owner
    overrides, witness mode, audit log, versioned config, scheduled encrypted
    backups.

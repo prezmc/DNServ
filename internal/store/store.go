@@ -28,6 +28,7 @@ type State struct {
 	Tokens   map[string]*Token  `json:"tokens"`
 	Settings Settings           `json:"settings"`
 	Devices  map[string]*Device `json:"devices"`
+	Groups   map[string]*Group  `json:"groups"`
 	Audit    []AuditEntry       `json:"audit"`
 	// SetupDone is set when the first admin finishes MFA enrollment.
 	SetupDone bool `json:"setup_done"`
@@ -39,7 +40,35 @@ type Device struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
 	Addrs     []string  `json:"addrs"`
+	Group     string    `json:"group,omitempty"` // group id; empty = household defaults
 	CreatedAt time.Time `json:"created_at"`
+}
+
+// Group gives a set of devices their own filtering policy.
+type Group struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// SkipBlocklists lets the group's devices bypass the shared blocklists
+	// (custom rules and the group's own rules still apply).
+	SkipBlocklists bool `json:"skip_blocklists"`
+	// Rules are extra rules for this group, in the custom rule syntax.
+	Rules     []string   `json:"rules"`
+	Schedules []Schedule `json:"schedules"`
+	CreatedAt time.Time  `json:"created_at"`
+}
+
+// Schedule tightens a group's filtering at set times, in the node's time
+// zone (TZ). A window whose end is before its start runs past midnight;
+// Days are the days it starts on (0 = Sunday).
+type Schedule struct {
+	Name  string `json:"name"`
+	Days  []int  `json:"days"`
+	Start string `json:"start"` // "HH:MM"
+	End   string `json:"end"`
+	// BlockAll pauses the internet for the group (allow rules still
+	// work); otherwise Rules are blocked during the window.
+	BlockAll bool     `json:"block_all"`
+	Rules    []string `json:"rules"`
 }
 
 // DeviceByAddr returns the device that owns addr, if any.
@@ -111,7 +140,7 @@ type Store struct {
 // Open loads state from dir/state.json, or starts empty.
 func Open(dir string) (*Store, error) {
 	s := &Store{path: filepath.Join(dir, "state.json"), now: time.Now}
-	st := &State{Users: map[string]*User{}, Tokens: map[string]*Token{}, Devices: map[string]*Device{}}
+	st := &State{Users: map[string]*User{}, Tokens: map[string]*Token{}, Devices: map[string]*Device{}, Groups: map[string]*Group{}}
 	b, err := os.ReadFile(s.path)
 	switch {
 	case err == nil:
@@ -123,6 +152,9 @@ func Open(dir string) (*Store, error) {
 		}
 		if st.Tokens == nil {
 			st.Tokens = map[string]*Token{}
+		}
+		if st.Groups == nil {
+			st.Groups = map[string]*Group{}
 		}
 		if st.Devices == nil {
 			st.Devices = map[string]*Device{}
@@ -229,6 +261,12 @@ func (st *State) clone() *State {
 	}
 	if out.Tokens == nil {
 		out.Tokens = map[string]*Token{}
+	}
+	if out.Devices == nil {
+		out.Devices = map[string]*Device{}
+	}
+	if out.Groups == nil {
+		out.Groups = map[string]*Group{}
 	}
 	return out
 }

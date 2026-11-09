@@ -577,33 +577,38 @@ function deviceTable(list, opts) {
   opts = opts || {};
   const manage = !opts.compact && can('devices.manage');
   return h('div', { class: 'scroll' }, h('table', {},
-    h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Last seen'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'), opts.compact ? null : h('th', {}))),
+    h('thead', {}, h('tr', {}, h('th', {}, 'Device'), opts.groups ? h('th', {}, 'Group') : null, h('th', {}, 'Last seen'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'), opts.compact ? null : h('th', {}))),
     h('tbody', {}, list.map(d => h('tr', {},
       h('td', {}, h('div', {}, can('querylog.view') ? h('a', { href: '#/queries?client=' + encodeURIComponent(d.id || d.addrs[0]) }, deviceLabel(d)) : deviceLabel(d)),
         deviceLabel(d) !== d.addrs.join(', ') ? h('div', { class: 'muted small' }, d.name && d.hostname ? d.hostname + ' · ' : '', d.addrs.join(', ')) : null),
+      opts.groups ? h('td', {}, d.group && opts.groups[d.group] ? opts.groups[d.group] : h('span', { class: 'muted' }, 'Everyone')) : null,
       h('td', { class: 'nowrap' }, d.last_seen ? ago(d.last_seen) : 'not yet'),
       h('td', {}, fmtNum(d.queries)),
       h('td', {}, d.queries ? fmtNum(d.blocked) + ' (' + (100 * d.blocked / d.queries).toFixed(0) + '%)' : '—'),
       opts.compact ? null : h('td', { class: 'nowrap' },
-        manage ? h('button', { class: 'link', onclick: () => editDevice(d) }, d.id ? 'Rename' : 'Name it') : null,
+        manage ? h('button', { class: 'link', onclick: () => editDevice(d, opts.groupList || []) }, d.id ? 'Rename' : 'Name it') : null,
         manage && d.id ? h('button', { class: 'link danger', onclick: async () => {
           if (!confirm('Forget the name "' + d.name + '"? The device keeps working.')) return;
           try { await api('DELETE', '/devices/' + d.id); route(); } catch (e) { alert(e.message); }
         } }, 'Forget name') : null))))));
 }
 
-function editDevice(d) {
-  const dlg = dialog(d.id ? 'Rename device' : 'Name this device', form({}, [
+function editDevice(d, groups) {
+  const dlg = dialog(d.id ? 'Edit device' : 'Name this device', form({}, [
     h('label', { for: 'dname' }, 'Name'),
     h('input', { id: 'dname', name: 'name', type: 'text', value: d.name || d.hostname || '', required: true, maxlength: 64, autofocus: true }),
     h('label', { for: 'daddrs' }, 'Addresses (one per line)'),
     h('textarea', { id: 'daddrs', name: 'addrs', spellcheck: 'false', class: 'short' }, d.addrs.join('\n')),
     h('p', { class: 'muted small' }, 'Give the device a fixed address in your router (a DHCP reservation) so the name stays right.'),
+    groups.length ? [h('label', { for: 'dgroup' }, 'Group'),
+      h('select', { id: 'dgroup', name: 'group' }, h('option', { value: '' }, 'Everyone (household settings)'),
+        groups.map(g => h('option', { value: g.id, selected: d.group === g.id }, g.name)))] : null,
     h('div', { class: 'actions' },
       h('button', { class: 'primary', type: 'submit' }, 'Save'),
       h('button', { type: 'button', onclick: () => dlg.close() }, 'Cancel')),
   ], async (f) => {
     const body = { name: val(f, 'name').trim(), addrs: lines(val(f, 'addrs')) };
+    if (f.elements.group) body.group = val(f, 'group');
     if (d.id) await api('PUT', '/devices/' + d.id, body);
     else await api('POST', '/devices', body);
     dlg.close();
@@ -615,19 +620,123 @@ function editDevice(d) {
 
 async function devices(main) {
   page(main, 'Devices', h('p', { class: 'muted' }, 'Loading…'));
-  let list, settingsHint = null;
-  try { list = await api('GET', '/devices'); } catch (e) { return page(main, 'Devices', msg('err', e.message)); }
-  if (!list.length) {
+  let list, gs, settingsHint = null;
+  try { [list, gs] = await Promise.all([api('GET', '/devices'), api('GET', '/groups')]); } catch (e) { return page(main, 'Devices', msg('err', e.message)); }
+  const groups = gs.groups;
+  if (!list.length && !groups.length) {
     return page(main, 'Devices', h('div', { class: 'card highlight' }, h('h2', {}, 'No devices yet'), routerHelp()));
   }
-  if (!list.some(d => d.hostname) && can('network.manage')) {
+  if (list.length && !list.some(d => d.hostname) && can('network.manage')) {
     settingsHint = msg('warn', '');
-    fill(settingsHint, 'Devices show as numbers because DNServe doesn\u2019t know your router. Add your router\u2019s address under ', h('a', { href: '#/settings' }, 'Settings \u2192 Device names'), ' to see their names.');
+    fill(settingsHint, 'Devices show as numbers because DNServe doesn’t know your router. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), ' to see their names.');
   }
+  const gnames = {};
+  groups.forEach(g => { gnames[g.id] = g.name; });
   page(main, 'Devices',
     h('p', { class: 'muted' }, 'Every device that has used DNServe since it started, most recent first.'),
     settingsHint,
-    h('div', { class: 'card' }, deviceTable(list)));
+    h('div', { class: 'card' }, deviceTable(list, { groups: groups.length ? gnames : null, groupList: groups })),
+    groupsCard(groups, list, gs));
+}
+
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function daysText(days) {
+  const k = days.join(',');
+  if (k === '0,1,2,3,4,5,6') return 'every day';
+  if (k === '1,2,3,4,5') return 'weekdays';
+  if (k === '0,6') return 'weekends';
+  if (k === '0,1,2,3,4') return 'school nights (Sun–Thu)';
+  return days.map(d => DAYS[d]).join(', ');
+}
+
+function groupsCard(groups, devs, gs) {
+  const manage = can('devices.manage');
+  const named = devs.filter(d => d.id);
+  return h('div', { class: 'card' },
+    h('h2', {}, 'Groups'),
+    h('p', { class: 'muted' }, 'Give some devices their own rules, such as a bedtime for the kids’ tablets. Devices not in a group use the household settings.'),
+    groups.length ? h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Group'), h('th', {}, 'Devices'), h('th', {}, 'Rules'), h('th', {}, 'Schedules'), manage ? h('th', {}) : null)),
+      h('tbody', {}, groups.map(g => h('tr', {},
+        h('td', {}, h('b', {}, g.name), g.active.length ? h('div', {}, h('span', { class: 'badge bad nowrap' }, g.active.join(', ') + ' on now')) : null),
+        h('td', { class: 'small' }, g.devices.length ? g.devices.map(id => (named.find(d => d.id === id) || { name: id }).name).join(', ') : h('span', { class: 'muted' }, 'none yet')),
+        h('td', { class: 'small' }, g.skip_blocklists ? 'Skips the household blocklists' : 'Household blocklists', g.rules.length ? ', plus ' + g.rules.length + ' rule' + (g.rules.length > 1 ? 's' : '') : ''),
+        h('td', { class: 'small' }, g.schedules.length ? g.schedules.map(sc => h('div', {}, sc.name, ': ', sc.block_all ? 'no internet' : 'blocks ' + sc.rules.length + ' domain' + (sc.rules.length > 1 ? 's' : ''), ', ', sc.start, '–', sc.end, ' ', daysText(sc.days))) : h('span', { class: 'muted' }, 'none')),
+        manage ? h('td', { class: 'nowrap' },
+          h('button', { class: 'link', onclick: () => editGroup(g, named, gs) }, 'Edit'),
+          h('button', { class: 'link danger', onclick: async () => {
+            if (!confirm('Delete the group "' + g.name + '"? Its devices go back to the household settings.')) return;
+            try { await api('DELETE', '/groups/' + g.id); route(); } catch (e) { alert(e.message); }
+          } }, 'Delete')) : null))))) : null,
+    h('p', { class: 'muted small' }, 'Schedules follow ', h('b', {}, gs.time_zone), ' time (now ', gs.now, ').', can('network.manage') ? [' ', h('a', { href: '#/settings' }, 'Change')] : null),
+    manage ? h('div', { class: 'actions' },
+      named.length ? h('button', { onclick: () => editGroup(null, named, gs) }, 'Add a group')
+        : h('p', { class: 'muted small' }, 'Name a device first (Name it, above), then you can put it in a group.')) : null);
+}
+
+function scheduleEditor(sc) {
+  const rules = h('textarea', { 'data-f': 'rules', spellcheck: 'false', class: 'short', placeholder: 'youtube.com\ntiktok.com', 'aria-label': 'Domains to block' }, (sc.rules || []).join('\n'));
+  const rulesBox = h('div', { hidden: sc.block_all }, h('p', { class: 'muted small' }, 'Domains to block during this time (subdomains included):'), rules);
+  const box = h('fieldset', { class: 'sched' },
+    h('div', { class: 'row' },
+      h('input', { type: 'text', 'data-f': 'name', value: sc.name || '', placeholder: 'Name', 'aria-label': 'Schedule name', maxlength: 64 }),
+      h('button', { type: 'button', class: 'link danger', onclick: () => box.remove() }, 'Remove')),
+    h('div', { class: 'row mt-s days' }, DAYS.map((d, i) => h('label', { class: 'inline' }, h('input', { type: 'checkbox', 'data-day': i, checked: (sc.days || []).includes(i) }), d))),
+    h('div', { class: 'row mt-s' },
+      h('label', { class: 'inline' }, 'From ', h('input', { type: 'time', 'data-f': 'start', value: sc.start || '21:00', required: true })),
+      h('label', { class: 'inline' }, 'until ', h('input', { type: 'time', 'data-f': 'end', value: sc.end || '07:00', required: true }))),
+    h('div', { class: 'row mt-s' },
+      h('label', { class: 'inline' }, h('input', { type: 'radio', name: 'mode-' + Math.random().toString(36).slice(2), value: 'all', checked: !!sc.block_all, onchange: () => { rulesBox.hidden = true; } }), 'Pause the internet'),
+      h('label', { class: 'inline' }, h('input', { type: 'radio', name: '', value: 'some', checked: !sc.block_all, onchange: () => { rulesBox.hidden = false; } }), 'Block some domains')),
+    rulesBox);
+  // Both radios share one random name so each schedule is its own choice.
+  const radios = box.querySelectorAll('input[type=radio]');
+  radios[1].name = radios[0].name;
+  box.read = () => ({
+    name: box.querySelector('[data-f=name]').value.trim(),
+    days: [...box.querySelectorAll('[data-day]')].filter(c => c.checked).map(c => +c.dataset.day),
+    start: box.querySelector('[data-f=start]').value, end: box.querySelector('[data-f=end]').value,
+    block_all: radios[0].checked, rules: radios[0].checked ? [] : lines(rules.value),
+  });
+  return box;
+}
+
+function editGroup(g, named, gs) {
+  g = g || { name: '', devices: [], rules: [], schedules: [], skip_blocklists: false };
+  const scheds = h('div', {}, g.schedules.map(scheduleEditor));
+  const preset = (sc) => scheds.append(scheduleEditor(sc));
+  const dlg = dialog(g.id ? 'Edit group' : 'Add a group', form({}, [
+    h('label', { for: 'gname' }, 'Name'),
+    h('input', { id: 'gname', name: 'name', type: 'text', value: g.name, required: true, maxlength: 64, placeholder: 'Kids', autofocus: true }),
+    h('label', {}, 'Devices'),
+    h('div', { class: 'perms' }, named.map(d => h('label', { class: 'inline' },
+      h('input', { type: 'checkbox', name: 'dev', value: d.id, checked: g.devices.includes(d.id) }), d.name))),
+    h('label', { class: 'inline mt' }, h('input', { type: 'checkbox', name: 'skip', checked: g.skip_blocklists }), 'Skip the household blocklists and custom rules (for example a work laptop)'),
+    h('label', { for: 'grules' }, 'Extra rules for this group'),
+    h('textarea', { id: 'grules', name: 'rules', spellcheck: 'false', class: 'short', placeholder: '||games.example^\n@@||school.example^' }, g.rules.join('\n')),
+    h('p', { class: 'muted small' }, 'Same syntax as custom rules. Allow rules here (', h('code', {}, '@@||site^'), ') beat everything, even schedules.'),
+    h('h3', {}, 'Schedules'),
+    h('p', { class: 'muted small' }, 'In ', gs.time_zone, ' time. A schedule that ends before it starts runs overnight.'),
+    scheds,
+    h('div', { class: 'row mt-s' },
+      h('button', { type: 'button', onclick: () => preset({ name: 'Bedtime', days: [0, 1, 2, 3, 4], start: '21:00', end: '07:00', block_all: true }) }, 'Add bedtime'),
+      h('button', { type: 'button', onclick: () => preset({ name: 'Homework', days: [1, 2, 3, 4, 5], start: '16:00', end: '18:00', block_all: false, rules: [] }) }, 'Add homework time'),
+      h('button', { type: 'button', onclick: () => preset({ name: '', days: [0, 1, 2, 3, 4, 5, 6], start: '12:00', end: '13:00', block_all: true }) }, 'Add other')),
+    h('div', { class: 'actions' },
+      h('button', { class: 'primary', type: 'submit' }, 'Save'),
+      h('button', { type: 'button', onclick: () => dlg.close() }, 'Cancel')),
+  ], async (f) => {
+    const body = {
+      name: val(f, 'name').trim(), skip_blocklists: f.elements.skip.checked, rules: lines(val(f, 'rules')),
+      schedules: [...scheds.children].map(x => x.read()),
+      devices: [...f.querySelectorAll('input[name=dev]:checked')].map(i => i.value),
+    };
+    if (g.id) await api('PUT', '/groups/' + g.id, body);
+    else await api('POST', '/groups', body);
+    dlg.close();
+    route();
+  }));
+  dlg.classList.add('wide');
 }
 
 // ---------- recent queries ----------
@@ -874,6 +983,20 @@ async function settings(main) {
         h('p', { class: 'muted small' }, 'Usually the address you type to open your router\u2019s settings. Leave empty to turn this off.'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ local_dns: val(f, 'localdns').trim() }, { local_dns: eff.DNS.LocalDNS || '' }))));
+    let browserTZ = '';
+    try { browserTZ = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) { /* old browser */ }
+    let zones = [];
+    try { zones = Intl.supportedValuesOf('timeZone'); } catch (_) { /* old browser */ }
+    const tz = h('input', { id: 'tz', name: 'tz', type: 'text', value: eff.TimeZone || '', placeholder: 'Container time zone (UTC unless TZ is set)', list: 'tzlist', spellcheck: 'false' });
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'Time zone ', origin('time_zone')),
+      form({}, [
+        h('p', { class: 'muted' }, 'Group schedules, such as bedtimes, follow this time zone.'),
+        h('label', { for: 'tz' }, 'Time zone'), tz,
+        h('datalist', { id: 'tzlist' }, zones.map(z => h('option', { value: z }))),
+        browserTZ && browserTZ !== eff.TimeZone ? h('p', { class: 'small' }, h('button', { type: 'button', class: 'link', onclick: () => { tz.value = browserTZ; } }, 'Use ' + browserTZ + ' (this browser’s)')) : null,
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], (f) => save({ time_zone: val(f, 'tz').trim() }, { time_zone: eff.TimeZone || '' }))));
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Allowed networks ', origin('allowed_nets')),
       form({}, [

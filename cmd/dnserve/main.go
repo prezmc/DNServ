@@ -19,12 +19,14 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	_ "time/tzdata" // schedules need zone data; the image has none
 
 	"github.com/prezmc/dnserve/internal/api"
 	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/cache"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserve/internal/policy"
 	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/recursive"
 	"github.com/prezmc/dnserve/internal/server"
@@ -147,6 +149,10 @@ func run() error {
 	}
 	qlog := querylog.New(20000)
 	srv.SetQueryLog(qlog)
+	srv.SetPolicy(policy.Build(st.State()))
+	if loc, err := cfg.Location(); err == nil {
+		srv.SetTimeZone(loc)
+	}
 	if err := setLocalDNS(srv, cfg, log); err != nil {
 		log.Error("local dns", "err", err)
 	}
@@ -219,6 +225,10 @@ func run() error {
 	// time off the request path (starting Unbound can take seconds).
 	reload := make(chan struct{}, 1)
 	st.Subscribe(func(old, new *store.State) {
+		// Groups are cheap to compile, so apply them right here.
+		if !reflect.DeepEqual(old.Groups, new.Groups) || !reflect.DeepEqual(old.Devices, new.Devices) {
+			srv.SetPolicy(policy.Build(new))
+		}
 		if !reflect.DeepEqual(old.Settings, new.Settings) {
 			select {
 			case reload <- struct{}{}:
@@ -302,6 +312,9 @@ func applySettings(ctx context.Context, cfg, next config.Config, srv *server.Ser
 		old := up.Swap(newSet)
 		old.close(newSet.unbound)
 		log.Info("upstream changed", "mode", next.Upstream.Mode)
+	}
+	if loc, err := next.Location(); err == nil {
+		srv.SetTimeZone(loc)
 	}
 	if cfg.DNS.LocalDNS != next.DNS.LocalDNS {
 		if err := setLocalDNS(srv, next, log); err != nil {

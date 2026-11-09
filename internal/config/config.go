@@ -27,6 +27,9 @@ type Config struct {
 	Filtering FilteringConfig `yaml:"filtering"`
 	HTTP      HTTPConfig      `yaml:"http"`
 	DataDir   string          `yaml:"data_dir"`
+	// TimeZone is an IANA name such as "Europe/London" used for group
+	// schedules. Empty means the container's TZ, or UTC.
+	TimeZone string `yaml:"time_zone"`
 }
 
 // DNSConfig controls the listeners that serve clients.
@@ -272,6 +275,7 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	set("DNSERVE_TUNNEL_ON_DOWN", func(v string) error { c.Upstream.Tunnel.OnDown = v; return nil })
 	set("DNSERVE_ALLOWED_NETS", func(v string) error { c.DNS.AllowedNets = list(v); return nil })
 	set("DNSERVE_LOCAL_DNS", func(v string) error { c.DNS.LocalDNS = v; return nil })
+	set("DNSERVE_TIME_ZONE", func(v string) error { c.TimeZone = v; return nil })
 	set("DNSERVE_BLOCK_BYPASS", func(v string) error {
 		b, err := strconv.ParseBool(v)
 		c.Filtering.BlockBypass = b
@@ -354,6 +358,9 @@ func (c Config) Validate() error {
 			}
 		}
 	}
+	if _, err := c.Location(); err != nil {
+		errs = append(errs, fmt.Errorf("time_zone: %q is not a known time zone (use a name like Europe/London)", c.TimeZone))
+	}
 	if c.DNS.LocalDNS != "" {
 		if _, err := LocalDNSAddr(c.DNS.LocalDNS); err != nil {
 			errs = append(errs, fmt.Errorf("dns.local_dns: %w", err))
@@ -397,4 +404,12 @@ func validateUpstream(s string) error {
 		return errors.New("missing host")
 	}
 	return nil
+}
+
+// Location is the time zone for schedules.
+func (c Config) Location() (*time.Location, error) {
+	if c.TimeZone == "" {
+		return time.Local, nil
+	}
+	return time.LoadLocation(c.TimeZone)
 }

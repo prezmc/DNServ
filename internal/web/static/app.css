@@ -84,7 +84,7 @@ main { flex: 1; padding: 1.5rem; max-width: 1100px; min-width: 0; }
 /* forms */
 label { display: block; margin: .6rem 0 .25rem; font-weight: 550; font-size: .92rem; }
 label.inline { display: flex; align-items: center; gap: .5rem; font-weight: 400; margin: .35rem 0; }
-input[type=text], input[type=password], input[type=number], select, textarea {
+input[type=text], input[type=password], input[type=number], input[type=time], select, textarea {
   width: 100%; padding: .5rem .6rem; border: 1px solid var(--line); border-radius: 6px;
   background: var(--bg); color: var(--text); font: inherit;
 }
@@ -149,3 +149,7 @@ textarea.tall { min-height: 10rem; }
 .card.highlight { border-color: var(--accent); }
 code.big { font-size: 1.15rem; padding: .25rem .6rem; }
 [hidden] { display: none !important; }
+dialog.wide { width: min(680px, calc(100% - 2rem)); }
+fieldset.sched { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .75rem; margin: 0 0 .6rem; }
+fieldset.sched .days label.inline { margin: 0 .4rem 0 0; }
+fieldset.sched input[type=time] { width: auto; }
