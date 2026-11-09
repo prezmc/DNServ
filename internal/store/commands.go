@@ -475,6 +475,9 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		}
 		return nil, audit("reset settings to defaults: "+strings.Join(d.Fields, ", "), before, st.Settings), nil
 	}
+	if strings.HasPrefix(c.Op, opClusterPrefix) {
+		return applyCluster(st, c, dec)
+	}
 	return nil, nil, fmt.Errorf("unknown command %q", c.Op)
 }
 

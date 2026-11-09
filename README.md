@@ -83,7 +83,7 @@ setup wizard and dashboard handle the rest from your browser.
 
 ```bash
 docker run -d --name dnserve --restart unless-stopped \
-  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 \
+  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 -p 8081:8081 \
   -v dnserve-data:/data ghcr.io/prezmc/dnserve:latest
 ```
 
@@ -136,6 +136,56 @@ Notes:
 - The image's health check probes `127.0.0.1:8080`; keep `http.listen` on
   port 8080 or override the health check.
 
+## Two or more nodes
+
+Run the same image on a second server (same command or compose file, port
+8081 published and open between the servers). Then:
+
+1. On your first node, open **Cluster** and choose **Make a join code**.
+2. Open the new node's dashboard, enter its setup code, choose **No, add
+   this server to my DNServe**, and paste the join code.
+
+The new node copies the accounts, settings, devices, groups and rules, and
+from then on every change made on either node reaches both. Add the second
+node's address to your router as a second DNS server.
+
+How it works: every node runs embedded Raft (HashiCorp), alone or not.
+Changes go through the leader's log and are applied on every node in the
+same order; a change made on a follower is forwarded to the leader. Nodes
+talk over one port (8081) with mutual TLS, using certificates from a private
+CA the cluster creates for itself; the join code carries the CA's
+fingerprint and a one-time secret (valid for an hour), so there is nothing to
+copy between servers. A node that joins starts as a non-voter and votes once
+it has caught up. Existing single nodes upgrade in place: their state becomes
+the cluster's first log entry.
+
+**DNS never waits for the cluster.** Each node answers from its own copy of
+the settings, so a node cut off from the others keeps filtering with what it
+last had. Without a leader only changes pause; sign-in still works (with an
+authenticator code).
+
+Leadership controls, under **Cluster**:
+
+- **Make leader** hands leadership to another node now.
+- **Prefer as leader**: the node leads whenever it is up and caught up.
+- **Never lead**: the node keeps a full copy and answers DNS, but never
+  leads or votes. With two nodes, this lets the other one take changes on
+  its own even while this one is down. (With two voting nodes, changes pause
+  if either is down. A small third "witness" node is planned.)
+- **Recover with this node only**, for when the other node is gone for good:
+  the survivor becomes a cluster of one and keeps its settings. It refuses
+  while any other node still answers, and asks again if the nodes left out
+  could still have a majority between them, so two clusters never run at
+  once. Nodes left out are locked out (their certificates are no longer
+  accepted) until they join again with a new code.
+- **Join another DNServe instead** moves a node that is set up already into
+  another cluster, replacing its accounts and settings.
+
+By default a node learns its cluster address from the address its dashboard
+is opened at. Set `DNSERVE_CLUSTER_ADVERTISE` (for example
+`192.168.1.10:8081`) if other nodes reach it differently, such as through a
+different published port.
+
 ## Configuring without files
 
 | Variable | Example | Sets |
@@ -150,6 +200,9 @@ Notes:
 | `DNSERVE_TIME_ZONE` | `Europe/London` | time zone for group schedules (default: the container's `TZ`, else UTC) |
 | `DNSERVE_BLOCK_BYPASS` | `true` | block public DoH resolvers and Private Relay |
 | `DNSERVE_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
+| `DNSERVE_CLUSTER_ADVERTISE` | `192.168.1.10:8081` | how other nodes reach this one (default: learned from the dashboard's address) |
+| `DNSERVE_CLUSTER_LISTEN` | `:8081` | node-to-node listener |
+| `DNSERVE_NODE_NAME` | `pi-kitchen` | this node's name when it is first created (rename it under Cluster) |
 | `DNSERVE_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
 
 Environment variables override the optional config file; settings saved in
@@ -163,7 +216,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 
 | | Endpoint |
 |---|---|
-| First run | `GET /setup`, `POST /setup` `{code, username, password}` |
+| First run | `GET /setup`, `POST /setup` `{code, username, password}`, or `POST /setup/join` `{code, join_code, host}` |
 | Sign in | `POST /auth/login`, then `POST /auth/mfa` `{code}` (authenticator or recovery code) |
 | Enroll MFA | `POST /auth/totp/begin` (returns the secret and `otpauth://` URL), `POST /auth/totp/confirm` `{code}` |
 | You | `GET /auth/me`, `POST /auth/password`, `GET`/`DELETE /auth/sessions`, `POST /auth/logout`, `POST /auth/recovery-codes` `{password}`, `POST /auth/authenticator/begin` `{password}` then `/confirm` `{code}` |
@@ -175,6 +228,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
 | Groups | `GET`/`POST /groups` `{name, rules, skip_blocklists, schedules: [{name, days, start, end, block_all, rules}], devices}`, `PUT`/`DELETE /groups/{id}` |
 | Recent queries | `GET /queries?client=&search=&result=&before=&limit=` (`client` is an IP or device id; `result` is `blocked`, `allowed`, `failed`, …) |
+| Cluster | `GET /cluster`, `POST /cluster/join-codes` `{host}`, `PUT /cluster/nodes/{id}` `{name, never_leader}`, `DELETE /cluster/nodes/{id}`, `POST /cluster/preferred` `{id}`, `POST /cluster/transfer` `{to}`, `POST /cluster/recover` `{password, accept_risk}`, `POST /cluster/join` `{join_code, host, password}` |
 | Status and audit | `GET /status`, `GET /audit` |
 
 Permissions: `dashboard.view`, `querylog.view`, `data.export`,
@@ -192,8 +246,9 @@ docker run --rm -v dnserve-data:/data ghcr.io/prezmc/dnserve -reset-mfa USERNAME
 docker start dnserve
 ```
 
-That clears the account's second factor (you set it up again at the next
-sign-in) and is recorded in the audit log. Add `-reset-password` to also
+That clears the account's second factor when the node starts (you set it up
+again at the next sign-in) and is recorded in the audit log. In a cluster
+the node must reach the leader for it to apply. Add `-reset-password` to also
 print a new temporary password.
 
 ## Tunnel mode
@@ -304,11 +359,11 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
 1. **DNS node.** 1a core node. 1b Unbound recursive mode, WireGuard
    tunnel mode, DoH/DoT for clients. 1c admin API with users, roles and
    mandatory MFA, and the web UI with a setup wizard. 1d devices, recent
-   queries, router names, groups with schedules, and a load tester
-   (this).
-2. **Clustering and backups.** Embedded Raft so any node can lead, owner
-   overrides, witness mode, audit log, versioned config, scheduled encrypted
-   backups.
+   queries, router names, groups with schedules, and a load tester.
+2. **Clustering and backups.** Embedded Raft so any node can lead, join
+   codes, owner overrides (preferred leader, never lead, transfer, forced
+   recovery) (this). Next: witness mode, versioned config, scheduled
+   encrypted backups.
 3. **Analytics.** The AdGuard Insight features (threat scoring, domain types,
    devices, search) built in, across every node.
 4. **Multi-server deploy and failover testing.**

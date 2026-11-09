@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -20,7 +21,9 @@ import (
 
 func (a *API) getSetup(w http.ResponseWriter, r *http.Request) {
 	st := a.Store.State()
-	writeJSON(w, http.StatusOK, map[string]bool{"needed": len(st.Users) == 0, "done": st.SetupDone})
+	// joining: this node joined a cluster and is waiting for its accounts.
+	joining := a.Cluster != nil && a.Cluster.Joined() && len(st.Users) == 0
+	writeJSON(w, http.StatusOK, map[string]bool{"needed": len(st.Users) == 0, "done": st.SetupDone, "joining": joining, "can_join": a.Cluster != nil})
 }
 
 // postSetup creates the first admin. It needs the one-time code from the
@@ -151,12 +154,24 @@ func (a *API) mfa(w http.ResponseWriter, r *http.Request, p *Principal) {
 	u := p.User
 	ok := false
 	if step, valid := auth.VerifyTOTP(u.TOTPSecret, req.Code, a.now()); valid {
-		// Recording the step rejects a replay of the same code.
+		// Recording the step rejects a replay of the same code. When the
+		// cluster can't take changes, sign-in still works: this node
+		// remembers the step itself.
 		_, err := a.Store.Apply(store.NewCommand(store.OpTOTPUsed, u.Username, store.TOTPUsed{ID: u.ID, Step: step}))
-		ok = err == nil
+		if errors.Is(err, store.ErrUnavailable) {
+			ok = a.localStep(u, step)
+		} else {
+			ok = err == nil
+		}
 	} else if len(strings.TrimSpace(req.Code)) > 8 {
 		h := auth.HashToken(auth.NormalizeRecovery(req.Code))
 		_, err := a.Store.Apply(store.NewCommand(store.OpRecoveryUsed, u.Username, store.RecoveryUsed{ID: u.ID, Hash: h}))
+		if errors.Is(err, store.ErrUnavailable) {
+			// A recovery code must be used up everywhere, which needs
+			// the cluster.
+			writeErr(w, http.StatusServiceUnavailable, "recovery codes can't be used while this node can't reach the cluster leader; use your authenticator app, or recover the cluster first")
+			return
+		}
 		ok = err == nil
 	}
 	if !ok {
@@ -167,6 +182,21 @@ func (a *API) mfa(w http.ResponseWriter, r *http.Request, p *Principal) {
 	a.Throttle.Succeed(key)
 	a.Throttle.Succeed("u:" + strings.ToLower(u.Username))
 	a.finishSignIn(w, r)
+}
+
+// localStep accepts a TOTP step not used before on this node, for sign-in
+// while the cluster has no leader.
+func (a *API) localStep(u *store.User, step int64) bool {
+	a.mfaMu.Lock()
+	defer a.mfaMu.Unlock()
+	if a.mfaSteps == nil {
+		a.mfaSteps = map[string]int64{}
+	}
+	if step <= u.TOTPLastStep || step <= a.mfaSteps[u.ID] {
+		return false
+	}
+	a.mfaSteps[u.ID] = step
+	return true
 }
 
 func (a *API) finishSignIn(w http.ResponseWriter, r *http.Request) {

@@ -10,6 +10,7 @@ services:
       - "53:53/tcp"
       - "853:853/tcp"     # DNS over TLS for your devices
       - "8080:8080/tcp"   # dashboard, setup wizard, health and metrics
+      - "8081:8081/tcp"   # node-to-node (clustering); only other DNServe nodes need it
       # DNS over HTTPS. Uncomment if nothing else on the host uses 443,
       # or map another host port, e.g. "8443:443/tcp".
       # - "443:443/tcp"

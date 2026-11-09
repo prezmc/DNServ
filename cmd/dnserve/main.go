@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -24,6 +25,7 @@ import (
 	"github.com/prezmc/dnserve/internal/api"
 	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/cache"
+	"github.com/prezmc/dnserve/internal/cluster"
 	"github.com/prezmc/dnserve/internal/config"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/policy"
@@ -50,7 +52,7 @@ func run() error {
 	checkConfig := flag.Bool("check-config", false, "validate the config and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	healthcheck := flag.String("healthcheck", "", "probe http://ADDR/healthz and exit 0 if healthy (for container health checks)")
-	resetMFA := flag.String("reset-mfa", "", "recovery: clear USERNAME's two-factor setup and exit (stop the node first)")
+	resetMFA := flag.String("reset-mfa", "", "recovery: clear USERNAME's two-factor setup when the node next starts, and exit (stop the node first)")
 	resetPassword := flag.Bool("reset-password", false, "with -reset-mfa: also set and print a new temporary password")
 	flag.Parse()
 
@@ -94,6 +96,18 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open state: %w", err)
 	}
+	// Clustering. Every node runs Raft, alone or not, so another node can
+	// join at any time. Changes go through the cluster from here on.
+	cl, err := cluster.Open(cluster.Options{
+		DataDir: base.DataDir, Listen: base.Cluster.Listen, Advertise: base.Cluster.Advertise,
+		Name: os.Getenv("DNSERVE_NODE_NAME"), Version: version, Log: log.With("component", "cluster"),
+	}, st)
+	if err != nil {
+		return fmt.Errorf("start cluster: %w", err)
+	}
+	defer cl.Close()
+	go applyConsoleCommands(cl, st, base.DataDir, log)
+
 	cfg := st.State().Settings.Overlay(base)
 	if err := cfg.Validate(); err != nil {
 		log.Error("saved settings are invalid; using the file and environment config until they are fixed", "err", err)
@@ -181,6 +195,7 @@ func run() error {
 	}
 	adm := api.New(st, sessions, base, log.With("component", "api"))
 	adm.AllowedOrigins = splitList(os.Getenv("DNSERVE_ALLOWED_ORIGINS"))
+	adm.Cluster = cl
 	adm.QueryLog = qlog
 	adm.CheckDomain = engine.Lookup
 	adm.LookupName = srv.LookupName
@@ -229,6 +244,11 @@ func run() error {
 		}
 		if c != nil {
 			out["cache"] = c.Stats()
+		}
+		ls := cl.LocalStatus()
+		out["cluster"] = map[string]any{
+			"healthy": ls.LeaderID != "", "leader": st.State().Cluster.NodeName(ls.LeaderID),
+			"nodes": len(st.State().Cluster.Nodes), "name": cl.Name(),
 		}
 		return out
 	}
@@ -345,7 +365,9 @@ func applySettings(ctx context.Context, cfg, next config.Config, srv *server.Ser
 }
 
 // recoverAccount is the locked-out-admin escape hatch. It needs shell
-// access to the data volume, which already implies full control.
+// access to the data volume, which already implies full control. Changes
+// must go through the cluster, so they are queued in the data volume and
+// applied when the node next starts and has a leader.
 func recoverAccount(dataDir, username string, newPassword bool) error {
 	st, err := store.Open(dataDir)
 	if err != nil {
@@ -355,26 +377,72 @@ func recoverAccount(dataDir, username string, newPassword bool) error {
 	if u == nil {
 		return fmt.Errorf("no user %q", username)
 	}
-	if _, err := st.Apply(store.NewCommand(store.OpMFAReset, "console", store.IDOnly{ID: u.ID})); err != nil {
-		return err
-	}
-	fmt.Printf("two-factor sign-in cleared for %q; set it up again at the next sign-in\n", username)
+	cmds := []store.Command{store.NewCommand(store.OpMFAReset, "console", store.IDOnly{ID: u.ID})}
+	var pw string
 	if newPassword {
-		pw := auth.RandomID(12)
+		pw = auth.RandomID(12)
 		hash, err := auth.HashPassword(pw)
 		if err != nil {
 			return err
 		}
-		if _, err := st.Apply(store.NewCommand(store.OpUserPassword, "console", store.UserPassword{ID: u.ID, PasswordHash: hash})); err != nil {
-			return err
-		}
-		fmt.Printf("temporary password: %s\n", pw)
+		cmds = append(cmds, store.NewCommand(store.OpUserPassword, "console", store.UserPassword{ID: u.ID, PasswordHash: hash}))
 	}
+	if err := queueConsoleCommands(dataDir, cmds); err != nil {
+		return err
+	}
+	fmt.Printf("two-factor sign-in will be cleared for %q when the node starts; set it up again at the next sign-in\n", username)
+	if pw != "" {
+		fmt.Printf("temporary password (works once the node has started): %s\n", pw)
+	}
+	fmt.Println("in a cluster, the node needs to reach the leader for this to apply")
 	sessions, err := auth.OpenSessions(dataDir)
 	if err == nil {
 		sessions.RevokeUser(u.ID, "")
+		_ = sessions.Save()
 	}
 	return nil
+}
+
+func consolePath(dataDir string) string { return filepath.Join(dataDir, "console-commands.json") }
+
+func queueConsoleCommands(dataDir string, cmds []store.Command) error {
+	var all []store.Command
+	if b, err := os.ReadFile(consolePath(dataDir)); err == nil {
+		_ = json.Unmarshal(b, &all)
+	}
+	all = append(all, cmds...)
+	b, err := json.Marshal(all)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(consolePath(dataDir), b, 0o600)
+}
+
+// applyConsoleCommands applies commands queued by -reset-mfa once the
+// cluster can take changes.
+func applyConsoleCommands(cl *cluster.Cluster, st *store.Store, dataDir string, log *slog.Logger) {
+	b, err := os.ReadFile(consolePath(dataDir))
+	if err != nil {
+		return
+	}
+	var cmds []store.Command
+	if err := json.Unmarshal(b, &cmds); err != nil {
+		log.Error("unreadable console commands; removing", "err", err)
+		os.Remove(consolePath(dataDir))
+		return
+	}
+	for len(cmds) > 0 {
+		if _, err := st.Apply(cmds[0]); err != nil && errors.Is(err, store.ErrUnavailable) {
+			time.Sleep(5 * time.Second)
+			continue
+		} else if err != nil {
+			log.Error("console command failed", "op", cmds[0].Op, "err", err)
+		} else {
+			log.Warn("applied console command", "op", cmds[0].Op)
+		}
+		cmds = cmds[1:]
+	}
+	os.Remove(consolePath(dataDir))
 }
 
 // setLocalDNS points LAN names at the router, or clears it.
