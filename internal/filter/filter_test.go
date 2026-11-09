@@ -173,3 +173,22 @@ func BenchmarkLookup(b *testing.B) {
 		ix.Lookup(names[i%len(names)])
 	}
 }
+
+func TestBlockBypass(t *testing.T) {
+	cfg := config.Default().Filtering
+	cfg.BlockBypass = true
+	cfg.Rules = []string{"@@||dns.quad9.net^"}
+	e := NewEngine(cfg, t.TempDir(), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := e.Rebuild(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if m := e.Lookup("dns.google"); !m.Blocked || m.Source != "Bypass protection" {
+		t.Fatalf("dns.google = %+v", m)
+	}
+	if !e.Lookup("mask.icloud.com").Blocked {
+		t.Fatal("iCloud Private Relay should be blocked")
+	}
+	if e.Lookup("dns.quad9.net").Blocked {
+		t.Fatal("a custom allow must override bypass protection")
+	}
+}

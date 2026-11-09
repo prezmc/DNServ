@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/netip"
 	"strings"
 	"sync"
@@ -43,8 +44,10 @@ type Server struct {
 	group    singleflight.Group
 	Metrics  *Metrics
 
-	mu      sync.Mutex
-	servers []*dns.Server
+	mu       sync.Mutex
+	servers  []*dns.Server
+	https    []*http.Server
+	dohAddrs []string
 	// refreshCtx bounds background prefetch/revalidation work.
 	refreshCtx    context.Context
 	refreshCancel context.CancelFunc
@@ -152,31 +155,45 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		}
 	}
 	s.servers = nil
+	for _, hs := range s.https {
+		if err := hs.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	s.https = nil
 	return errors.Join(errs...)
 }
 
-// ServeDNS implements dns.Handler.
+// ServeDNS implements dns.Handler for plain DNS (UDP/TCP) and DNS over TLS.
 func (s *Server) ServeDNS(w dns.ResponseWriter, req *dns.Msg) {
-	start := time.Now()
-	client := clientAddr(w.RemoteAddr())
+	_, isUDP := w.RemoteAddr().(*net.UDPAddr)
+	resp := s.Handle(req, clientAddr(w.RemoteAddr()), isUDP)
+	if resp == nil {
+		return
+	}
+	if err := w.WriteMsg(resp); err != nil {
+		s.log.Debug("write failed", "err", err)
+	}
+}
 
+// Handle answers one query from client. udp limits the response to the
+// client's advertised buffer size. A nil result means drop the query.
+func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
+	start := time.Now()
 	if !s.clientAllowed(client) {
 		s.Metrics.refused.Add(1)
-		s.reply(w, req, rcodeMsg(req, dns.RcodeRefused))
-		return
+		return s.finalize(req, rcodeMsg(req, dns.RcodeRefused), udp)
 	}
 	if s.limiter != nil && !s.limiter.allow(client, start) {
 		s.Metrics.rateLimited.Add(1)
-		return // drop silently, as Unbound's ratelimit does
+		return nil // drop silently, as Unbound's ratelimit does
 	}
 	if req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 || req.Response {
-		s.reply(w, req, rcodeMsg(req, dns.RcodeFormatError))
-		return
+		return s.finalize(req, rcodeMsg(req, dns.RcodeFormatError), udp)
 	}
-
 	resp, outcome := s.resolve(req)
 	s.Metrics.observe(outcome, resp, time.Since(start))
-	s.reply(w, req, resp)
+	return s.finalize(req, resp, udp)
 }
 
 // Outcome classifies how a query was answered.
@@ -197,6 +214,15 @@ func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome) {
 
 	if m, ok := s.localAnswer(req, name); ok {
 		return m, OutLocal
+	}
+
+	// Firefox's canary domain: NXDOMAIN tells it not to switch on its own
+	// DNS over HTTPS and bypass this server's filtering.
+	if s.cfg.Filtering.Enabled && (name == "use-application-dns.net" || strings.HasSuffix(name, ".use-application-dns.net")) {
+		m := new(dns.Msg)
+		m.SetRcode(req, dns.RcodeNameError)
+		m.Ns = []dns.RR{s.blockSOA(q.Name)}
+		return m, OutBlocked
 	}
 
 	if f := s.filter; f != nil {
@@ -290,18 +316,15 @@ func upstreamQuery(req *dns.Msg) *dns.Msg {
 	return m
 }
 
-func (s *Server) reply(w dns.ResponseWriter, req, resp *dns.Msg) {
+// finalize sets response flags, mirrors the client's EDNS and truncates
+// to what the transport allows.
+func (s *Server) finalize(req, resp *dns.Msg, udp bool) *dns.Msg {
 	if resp == nil {
-		return
+		return nil
 	}
 	resp.Response = true
 	resp.RecursionAvailable = true
 	clientOpt := req.IsEdns0()
-	size := dns.MinMsgSize
-	if clientOpt != nil {
-		size = max(int(clientOpt.UDPSize()), dns.MinMsgSize)
-		size = min(size, int(s.cfg.DNS.UDPSize))
-	}
 	// Only send an OPT record back if the client sent one.
 	extra := resp.Extra[:0:0]
 	for _, rr := range resp.Extra {
@@ -313,14 +336,16 @@ func (s *Server) reply(w dns.ResponseWriter, req, resp *dns.Msg) {
 	if clientOpt != nil {
 		resp.SetEdns0(s.cfg.DNS.UDPSize, clientOpt.Do())
 	}
-	if _, isUDP := w.RemoteAddr().(*net.UDPAddr); isUDP {
+	if udp {
+		size := dns.MinMsgSize
+		if clientOpt != nil {
+			size = min(max(int(clientOpt.UDPSize()), dns.MinMsgSize), int(s.cfg.DNS.UDPSize))
+		}
 		resp.Truncate(size)
 	} else {
 		resp.Truncate(dns.MaxMsgSize)
 	}
-	if err := w.WriteMsg(resp); err != nil {
-		s.log.Debug("write failed", "err", err)
-	}
+	return resp
 }
 
 func (s *Server) clientAllowed(a netip.Addr) bool {
