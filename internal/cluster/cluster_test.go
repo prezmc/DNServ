@@ -18,6 +18,9 @@ type node struct {
 	addr string
 	st   *store.Store
 	c    *Cluster
+	// witness runs the node as a witness; noAdvertise leaves its address
+	// to be learned when it joins.
+	witness, noAdvertise bool
 }
 
 func freeAddr(t *testing.T) string {
@@ -37,13 +40,23 @@ func startNode(t *testing.T, name string) *node {
 	return n
 }
 
+func startWitness(t *testing.T, name string) *node {
+	n := &node{t: t, dir: t.TempDir(), addr: freeAddr(t), witness: true}
+	n.open(name)
+	return n
+}
+
 func (n *node) open(name string) {
 	t := n.t
 	st, err := store.Open(n.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := Open(Options{DataDir: n.dir, Listen: n.addr, Advertise: n.addr, Name: name, Version: "test", Log: quiet(), Fast: true}, st)
+	adv := n.addr
+	if n.noAdvertise {
+		adv = ""
+	}
+	c, err := Open(Options{DataDir: n.dir, Listen: n.addr, Advertise: adv, Name: name, Version: "test", Log: quiet(), Fast: true, Witness: n.witness}, st)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -314,4 +327,53 @@ func TestUpgradeImportsExistingState(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "b gets the pre-cluster state", func() bool { return b.st.State().Users["old"] != nil })
+}
+
+func TestWitnessKeepsTwoNodesWorking(t *testing.T) {
+	a, b := pair(t)
+	w := &node{t: t, dir: t.TempDir(), addr: freeAddr(t), witness: true, noAdvertise: true}
+	w.open("shed-pi")
+	if w.c.leaderID() != "" || len(w.st.State().Cluster.Nodes) != 0 {
+		t.Fatal("a witness started a cluster of its own")
+	}
+	code, _, err := a.c.CreateJoinCode("admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.c.Join(context.Background(), code, ""); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "three voters", func() bool { return voters(t, a) == 3 })
+	wn := a.st.State().Cluster.Nodes[w.c.ID()]
+	if !wn.Witness || wn.Addr != w.addr {
+		t.Fatalf("witness recorded as %+v, want address %s learned from its connection", wn, w.addr)
+	}
+	if err := a.apply(store.OpClusterPreferred, store.IDOnly{ID: w.c.ID()}); err == nil {
+		t.Fatal("witness made preferred leader")
+	}
+	if err := a.c.TransferLeadership(w.c.ID()); err == nil {
+		t.Fatal("leadership handed to a witness")
+	}
+	if st := a.c.Status(context.Background()); st.Tolerates != 1 {
+		t.Fatalf("tolerates %d, want 1", st.Tolerates)
+	}
+
+	// Losing the leader: b takes over with the witness's vote, and never
+	// the witness itself for long.
+	a.close()
+	waitFor(t, "b leads", b.leading)
+	b.mustApply(store.OpUserCreate, store.UserCreate{ID: "u5", Username: "sam", Role: store.RoleViewer, PasswordHash: "h"})
+	waitFor(t, "witness has the change", func() bool { return w.st.State().Users["u5"] != nil })
+
+	// Losing the other full node instead: the witness may win the
+	// election, but hands leadership to a full node as soon as one is back.
+	a.open("alpha")
+	waitFor(t, "a back", func() bool { return a.st.State().Users["u5"] != nil })
+	b.close()
+	waitFor(t, "a leads", a.leading)
+	a.mustApply(store.OpUserCreate, store.UserCreate{ID: "u6", Username: "joe", Role: store.RoleViewer, PasswordHash: "h"})
+	time.Sleep(time.Second)
+	if w.leading() {
+		t.Fatal("witness kept leadership while a full node was up")
+	}
 }

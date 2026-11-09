@@ -108,9 +108,12 @@ func (c *Cluster) Join(ctx context.Context, code, host string) (string, error) {
 		return "", err
 	}
 	c.mu.Lock()
-	node := store.Node{ID: c.id.ID, Name: c.id.Name, Addr: c.advertiseLocked()}
+	node := store.Node{ID: c.id.ID, Name: c.id.Name, Witness: c.opt.Witness}
+	if c.opt.Advertise != "" || c.id.Advertise != "" {
+		node.Addr = c.advertiseLocked()
+	}
 	c.mu.Unlock()
-	req := joinReq{CodeID: jc.ID, Secret: jc.Secret, Node: node, PublicKey: publicPEM(key)}
+	req := joinReq{CodeID: jc.ID, Secret: jc.Secret, Node: node, PublicKey: publicPEM(key), Port: c.port()}
 
 	pinned := pinnedConfig(jc.CAFP)
 	cl := &http.Client{Timeout: 15 * time.Second, Transport: &http.Transport{
@@ -157,6 +160,9 @@ func (c *Cluster) Join(ctx context.Context, code, host string) (string, error) {
 	c.id.ClusterID, c.id.Joined, c.id.PendingCAKey = rep.ClusterID, true, ""
 	if rep.Name != "" {
 		c.id.Name = rep.Name
+	}
+	if c.id.Advertise == "" && rep.Addr != "" {
+		c.setLearnedLocked(rep.Addr) // as the other node saw it
 	}
 	name := c.id.Name
 	err = c.saveIdentityLocked()
@@ -236,8 +242,8 @@ func (c *Cluster) transferLocal(to string) error {
 		if n == nil {
 			return store.ErrNotFound
 		}
-		if n.NeverLeader {
-			return fmt.Errorf("%q is set to never lead", n.Name)
+		if n.NeverLeader || n.Witness {
+			return fmt.Errorf("%q doesn't lead", n.Name)
 		}
 		f = r.LeadershipTransferToServer(raft.ServerID(to), raft.ServerAddress(c.addrOf(to)))
 	}
@@ -372,9 +378,10 @@ type MemberStatus struct {
 	Leader      bool   `json:"leader"`
 	Voter       bool   `json:"voter"`
 	NeverLeader bool   `json:"never_leader"`
+	Witness     bool   `json:"witness"`
 	Preferred   bool   `json:"preferred"`
-	// Role: leader, follower, joining (catching up before it votes),
-	// standby (never leads), or adding (not in Raft yet).
+	// Role: leader, follower, witness, joining (catching up before it
+	// votes), standby (never leads), or adding (not in Raft yet).
 	Role      string    `json:"role"`
 	Reachable bool      `json:"reachable"`
 	Version   string    `json:"version,omitempty"`
@@ -384,11 +391,14 @@ type MemberStatus struct {
 
 // Status is the cluster as seen from this node.
 type Status struct {
-	ClusterID        string         `json:"cluster_id"`
-	Self             string         `json:"self"`
-	LeaderID         string         `json:"leader_id"`
-	Healthy          bool           `json:"healthy"` // has a leader; changes work
-	Voters           int            `json:"voters"`
+	ClusterID string `json:"cluster_id"`
+	Self      string `json:"self"`
+	LeaderID  string `json:"leader_id"`
+	Healthy   bool   `json:"healthy"` // has a leader; changes work
+	Voters    int    `json:"voters"`
+	// Tolerates is how many voting nodes can be down while changes still
+	// work.
+	Tolerates        int            `json:"tolerates"`
 	Nodes            []MemberStatus `json:"nodes"`
 	Advertise        string         `json:"advertise"`
 	AdvertiseLearned bool           `json:"advertise_learned"`
@@ -432,7 +442,7 @@ func (c *Cluster) Status(ctx context.Context) Status {
 	for id := range ids {
 		m := MemberStatus{ID: id, Name: st.Cluster.NodeName(id), Self: id == self.ID, Leader: id == self.LeaderID, Preferred: id == st.Cluster.Preferred}
 		if n := st.Cluster.Nodes[id]; n != nil {
-			m.Addr, m.NeverLeader, m.JoinedAt = n.Addr, n.NeverLeader, n.JoinedAt
+			m.Addr, m.NeverLeader, m.Witness, m.JoinedAt = n.Addr, n.NeverLeader, n.Witness, n.JoinedAt
 		}
 		if id == self.ID {
 			m.Name = self.Name
@@ -454,6 +464,8 @@ func (c *Cluster) Status(ctx context.Context) Status {
 			m.Role = "standby"
 		case !m.Voter:
 			m.Role = "joining"
+		case m.Witness:
+			m.Role = "witness"
 		default:
 			m.Role = "follower"
 		}
@@ -479,6 +491,9 @@ func (c *Cluster) Status(ctx context.Context) Status {
 		}(m)
 	}
 	wg.Wait()
+	if out.Voters > 0 {
+		out.Tolerates = (out.Voters - 1) / 2
+	}
 	sort.Slice(out.Nodes, func(i, j int) bool {
 		if out.Nodes[i].JoinedAt.Equal(out.Nodes[j].JoinedAt) {
 			return out.Nodes[i].Name < out.Nodes[j].Name

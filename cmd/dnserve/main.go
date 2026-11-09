@@ -96,6 +96,13 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open state: %w", err)
 	}
+	switch role := strings.ToLower(envOr("DNSERVE_ROLE", "node")); role {
+	case "node":
+	case "witness":
+		return runWitness(base, st, log)
+	default:
+		return fmt.Errorf("DNSERVE_ROLE: unknown role %q (node or witness)", role)
+	}
 	// Clustering. Every node runs Raft, alone or not, so another node can
 	// join at any time. Changes go through the cluster from here on.
 	cl, err := cluster.Open(cluster.Options{
@@ -313,6 +320,89 @@ func run() error {
 		}
 	}
 	return nil
+}
+
+// runWitness runs a witness: a cluster member that votes and keeps the
+// log, so two full nodes keep a majority when either is down. It answers
+// no DNS and has no dashboard. It joins with the code in DNSERVE_JOIN.
+func runWitness(base config.Config, st *store.Store, log *slog.Logger) error {
+	cl, err := cluster.Open(cluster.Options{
+		DataDir: base.DataDir, Listen: base.Cluster.Listen, Advertise: base.Cluster.Advertise,
+		Name: os.Getenv("DNSERVE_NODE_NAME"), Version: version, Log: log.With("component", "cluster"), Witness: true,
+	}, st)
+	if err != nil {
+		return fmt.Errorf("start cluster: %w", err)
+	}
+	defer cl.Close()
+	log.Info("starting dnserve witness", "version", version, "name", cl.Name())
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	go func() {
+		if cl.Joined() {
+			return
+		}
+		code := strings.TrimSpace(os.Getenv("DNSERVE_JOIN"))
+		if code == "" {
+			log.Warn("this witness isn't in a cluster yet: on a DNServe node open Cluster, make a join code, and start this container with DNSERVE_JOIN=<code>")
+			return
+		}
+		for {
+			jctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			name, err := cl.Join(jctx, code, "")
+			cancel()
+			if err == nil {
+				log.Info("witness joined the cluster", "name", name)
+				return
+			}
+			if errors.Is(err, store.ErrBadJoinCode) {
+				log.Error("join code refused; make a new one under Cluster and restart this container with it", "err", err)
+				return
+			}
+			log.Warn("joining failed; retrying in 15s", "err", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(15 * time.Second):
+			}
+		}
+	}()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok\n")) })
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if cl.LocalStatus().LeaderID == "" {
+			http.Error(w, "no cluster leader\n", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte("ready\n"))
+	})
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		ls := cl.LocalStatus()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		leader := "none (changes paused)"
+		if ls.LeaderID != "" {
+			leader = st.State().Cluster.NodeName(ls.LeaderID)
+		}
+		fmt.Fprintf(w, "DNServe witness %q\nIn a cluster: %v\nLeader: %s\n\nThis container only votes in the cluster. Manage it from a DNServe node's dashboard under Cluster.\n", cl.Name(), cl.Joined(), leader)
+	})
+	httpSrv := &http.Server{Addr: base.HTTP.Listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("http server failed", "err", err)
+			stop()
+		}
+	}()
+	<-ctx.Done()
+	log.Info("shutting down")
+	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return httpSrv.Shutdown(sctx)
 }
 
 // applySettings moves the running node from cfg to next and returns what

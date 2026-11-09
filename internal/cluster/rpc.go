@@ -276,6 +276,10 @@ type joinReq struct {
 	Secret    string     `json:"secret"`
 	Node      store.Node `json:"node"`
 	PublicKey string     `json:"public_key"`
+	// Port is the joiner's cluster port. When Node.Addr is empty (the
+	// joiner doesn't know how others reach it), the address it connected
+	// from is used with this port.
+	Port string `json:"port"`
 }
 
 type joinReply struct {
@@ -283,6 +287,7 @@ type joinReply struct {
 	CA        string `json:"ca"`
 	ClusterID string `json:"cluster_id"`
 	Name      string `json:"name"`
+	Addr      string `json:"addr"`
 }
 
 // rpcJoin admits a new node that holds a valid join code. It needs no
@@ -302,6 +307,14 @@ func (c *Cluster) rpcJoin(w http.ResponseWriter, r *http.Request) {
 	if _, ok := pub.(*ecdsa.PublicKey); !ok {
 		replyErr(w, errors.New("unsupported key"))
 		return
+	}
+	if req.Node.Addr == "" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || req.Port == "" {
+			replyErr(w, errors.New("the joining node sent no address"))
+			return
+		}
+		req.Node.Addr = net.JoinHostPort(host, req.Port)
 	}
 	st := c.st.State()
 	if st.Cluster.CAKey == "" {
@@ -323,7 +336,7 @@ func (c *Cluster) rpcJoin(w http.ResponseWriter, r *http.Request) {
 	}
 	name, _ := res.(string)
 	c.poke()
-	reply(w, http.StatusOK, joinReply{Cert: cert, CA: cs.CACert, ClusterID: cs.ID, Name: name})
+	reply(w, http.StatusOK, joinReply{Cert: cert, CA: cs.CACert, ClusterID: cs.ID, Name: name, Addr: req.Node.Addr})
 }
 
 func keyPEM(k *ecdsa.PrivateKey) string {

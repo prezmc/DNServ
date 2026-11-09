@@ -51,6 +51,10 @@ type Options struct {
 	Name    string
 	Version string
 	Log     *slog.Logger
+	// Witness runs this node as a witness: it votes and keeps the log so
+	// two full nodes keep a majority when one is down, but it never
+	// starts a cluster of its own and hands leadership to a full node.
+	Witness bool
 	// Fast shortens Raft timeouts (tests).
 	Fast bool
 }
@@ -63,6 +67,9 @@ type Cluster struct {
 	log   *slog.Logger
 	hlog  hclog.Logger
 	creds atomic.Pointer[creds]
+	// learned mirrors id.Advertise, readable without c.mu (Raft asks for
+	// the address while c.mu is held during start).
+	learned atomic.Pointer[string]
 
 	mu        sync.Mutex // guards id and the Raft instance across restarts
 	id        identity
@@ -240,6 +247,7 @@ func (c *Cluster) loadIdentity() error {
 	default:
 		return err
 	}
+	c.setLearnedLocked(c.id.Advertise)
 	cr, err := loadCreds(c.id.CertPEM, c.id.KeyPEM, c.id.CAPEM)
 	if err != nil {
 		return fmt.Errorf("cluster certificate: %w", err)
@@ -266,13 +274,16 @@ func (c *Cluster) advertise() string {
 	if c.opt.Advertise != "" {
 		return c.opt.Advertise
 	}
-	c.mu.Lock()
-	a := c.id.Advertise
-	c.mu.Unlock()
-	if a != "" {
-		return a
+	if a := c.learned.Load(); a != nil && *a != "" {
+		return *a
 	}
 	return net.JoinHostPort(guessIP(), c.port())
+}
+
+// setLearnedLocked records a learned address; c.mu must be held.
+func (c *Cluster) setLearnedLocked(a string) {
+	c.id.Advertise = a
+	c.learned.Store(&a)
 }
 
 // AdvertiseLearned reports whether the address came from the config or
@@ -307,7 +318,7 @@ func (c *Cluster) LearnHost(host string) {
 	c.mu.Lock()
 	changed := c.id.Advertise != a
 	if changed {
-		c.id.Advertise = a
+		c.setLearnedLocked(a)
 		_ = c.saveIdentityLocked()
 	}
 	c.mu.Unlock()
@@ -406,7 +417,7 @@ func (c *Cluster) startRaft(recover *raft.Configuration) error {
 		trans.Close()
 		return fail(err)
 	}
-	if !existing && !c.id.Joined {
+	if !existing && !c.id.Joined && !c.opt.Witness {
 		boot := raft.Configuration{Servers: []raft.Server{{Suffrage: raft.Voter, ID: conf.LocalID, Address: raft.ServerAddress(c.advertiseLocked())}}}
 		if err := raft.BootstrapCluster(conf, logs, bolt, snaps, trans, boot); err != nil {
 			trans.Close()
@@ -424,16 +435,8 @@ func (c *Cluster) startRaft(recover *raft.Configuration) error {
 	return nil
 }
 
-// advertiseLocked is advertise for callers holding c.mu.
-func (c *Cluster) advertiseLocked() string {
-	if c.opt.Advertise != "" {
-		return c.opt.Advertise
-	}
-	if c.id.Advertise != "" {
-		return c.id.Advertise
-	}
-	return net.JoinHostPort(guessIP(), c.port())
-}
+// advertiseLocked is advertise; kept for callers holding c.mu.
+func (c *Cluster) advertiseLocked() string { return c.advertise() }
 
 func (c *Cluster) stopRaftLocked() error {
 	if c.r == nil {
@@ -735,6 +738,11 @@ func (c *Cluster) reconcile(r *raft.Raft) {
 				}
 				return
 			}
+		case id == self && n.Witness && s.Suffrage == raft.Voter:
+			if to := c.pickSuccessor(r, have, want); to != "" {
+				c.transferTo(r, to, "a witness hands leadership to a full node")
+				return
+			}
 		case n.NeverLeader && s.Suffrage == raft.Voter:
 			if id == self {
 				if to := c.pickSuccessor(r, have, want); to != "" {
@@ -765,7 +773,7 @@ func (c *Cluster) pickSuccessor(r *raft.Raft, have map[string]raft.Server, want 
 		return p
 	}
 	for id, s := range have {
-		if id != c.ID() && s.Suffrage == raft.Voter && want[id] != nil && !want[id].NeverLeader && c.caughtUp(r, id) {
+		if id != c.ID() && s.Suffrage == raft.Voter && want[id] != nil && !want[id].NeverLeader && !want[id].Witness && c.caughtUp(r, id) {
 			return id
 		}
 	}

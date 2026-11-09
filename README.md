@@ -170,8 +170,7 @@ Leadership controls, under **Cluster**:
 - **Prefer as leader**: the node leads whenever it is up and caught up.
 - **Never lead**: the node keeps a full copy and answers DNS, but never
   leads or votes. With two nodes, this lets the other one take changes on
-  its own even while this one is down. (With two voting nodes, changes pause
-  if either is down. A small third "witness" node is planned.)
+  its own even while this one is down.
 - **Recover with this node only**, for when the other node is gone for good:
   the survivor becomes a cluster of one and keeps its settings. It refuses
   while any other node still answers, and asks again if the nodes left out
@@ -181,8 +180,31 @@ Leadership controls, under **Cluster**:
 - **Join another DNServe instead** moves a node that is set up already into
   another cluster, replacing its accounts and settings.
 
+### How many nodes?
+
+DNServe works with one node, two, or more. The Cluster page says how many
+voting nodes can be down while changes still work.
+
+| Setup | DNS if a node is down | Changes if a node is down |
+|---|---|---|
+| 1 node | Down | Down |
+| 2 nodes | The other answers | Pause until it's back (or set one to Never lead) |
+| 2 nodes + witness | The other answers | Keep working |
+| 3 nodes | Others answer | Keep working |
+
+A **witness** is the same image started with `DNSERVE_ROLE=witness` on a
+third machine. It votes and keeps the change log, but answers no DNS and has
+no dashboard, so a Raspberry Pi or a NAS is plenty. It joins with a join code
+in `DNSERVE_JOIN` (the join-code screen shows the full command; see also
+`deploy/docker-compose.witness.yml`). If it wins an election it hands
+leadership straight to a full node. Put it on a different machine from your
+DNS nodes: a witness on the same box doesn't help when that box fails. With
+an even number of full nodes (4, 6, …) a witness also lets the cluster lose
+one more node.
+
 By default a node learns its cluster address from the address its dashboard
-is opened at. Set `DNSERVE_CLUSTER_ADVERTISE` (for example
+is opened at, or, for a witness, from the address the other node sees it
+connect from. Set `DNSERVE_CLUSTER_ADVERTISE` (for example
 `192.168.1.10:8081`) if other nodes reach it differently, such as through a
 different published port.
 
@@ -202,6 +224,8 @@ different published port.
 | `DNSERVE_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
 | `DNSERVE_CLUSTER_ADVERTISE` | `192.168.1.10:8081` | how other nodes reach this one (default: learned from the dashboard's address) |
 | `DNSERVE_CLUSTER_LISTEN` | `:8081` | node-to-node listener |
+| `DNSERVE_ROLE` | `witness` | `node` (default) or `witness` (votes only; see above) |
+| `DNSERVE_JOIN` | `DNSJ1-…` | witness only: the join code it uses the first time it starts |
 | `DNSERVE_NODE_NAME` | `pi-kitchen` | this node's name when it is first created (rename it under Cluster) |
 | `DNSERVE_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
 
@@ -362,7 +386,7 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
    queries, router names, groups with schedules, and a load tester.
 2. **Clustering and backups.** Embedded Raft so any node can lead, join
    codes, owner overrides (preferred leader, never lead, transfer, forced
-   recovery) (this). Next: witness mode, versioned config, scheduled
+   recovery), witness mode (this). Next: versioned config, scheduled
    encrypted backups.
 3. **Analytics.** The AdGuard Insight features (threat scoring, domain types,
    devices, search) built in, across every node.
