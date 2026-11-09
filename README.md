@@ -212,6 +212,37 @@ connect from. Set `DNSERVE_CLUSTER_ADVERTISE` (for example
 `192.168.1.10:8081`) if other nodes reach it differently, such as through a
 different published port.
 
+## Backups and settings history
+
+**Settings history.** Every change to settings, devices or groups is kept
+as a version (the last 50, on every node). Under **Backups & history** you
+can compare any version with now and go back to it. Going back is itself a
+new version, so it can be undone. Accounts aren't part of the history, so
+going back never brings back an old password or a deleted user.
+
+**Encrypted backups.** A backup is one `.dnsbak` file with the accounts,
+API tokens, settings, devices, groups and settings history. It is encrypted
+with a passphrase you choose when you set backups up (at least 12
+characters). DNServe keeps only a public key made from it: nodes can make
+backups on their own but can't read them, and without the passphrase
+nobody can open one. Keep it in a password manager.
+
+- **Download a backup now** from the dashboard at any time.
+- **Automatic backups** run daily or weekly (Sundays) at a set time, in the
+  same time zone as group schedules. Every node keeps its own in
+  `/data/backups` (the last 14 by default).
+- **A copy off the server:** mount a folder from a NAS or another disk into
+  the container (for example `-v /mnt/nas/dnserve:/backups`) and enter
+  `/backups` as the copy folder. The leading node writes one copy of each
+  backup there.
+- **Restore** from a file under Backups & history (replaces the accounts and
+  configuration on every node; the cluster's nodes stay as they are), or on
+  a brand-new node choose **Restore from a backup** in the setup wizard.
+
+Backup files use XChaCha20-Poly1305. The key comes from an ephemeral X25519
+key agreed with the passphrase's key (scrypt, then HKDF-SHA256), and the
+readable header (when, which node) is authenticated too.
+
 ## Configuring without files
 
 | Variable | Example | Sets |
@@ -244,7 +275,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 
 | | Endpoint |
 |---|---|
-| First run | `GET /setup`, `POST /setup` `{code, username, password}`, or `POST /setup/join` `{code, join_code, host}` |
+| First run | `GET /setup`, `POST /setup` `{code, username, password}`, `POST /setup/join` `{code, join_code, host}`, or `POST /setup/restore` (multipart: `file`, `passphrase`, `code`) |
 | Sign in | `POST /auth/login`, then `POST /auth/mfa` `{code}` (authenticator or recovery code) |
 | Enroll MFA | `POST /auth/totp/begin` (returns the secret and `otpauth://` URL), `POST /auth/totp/confirm` `{code}` |
 | You | `GET /auth/me`, `POST /auth/password`, `GET`/`DELETE /auth/sessions`, `POST /auth/logout`, `POST /auth/recovery-codes` `{password}`, `POST /auth/authenticator/begin` `{password}` then `/confirm` `{code}` |
@@ -256,6 +287,8 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
 | Groups | `GET`/`POST /groups` `{name, rules, skip_blocklists, schedules: [{name, days, start, end, block_all, rules}], devices}`, `PUT`/`DELETE /groups/{id}` |
 | Recent queries | `GET /queries?client=&search=&result=&before=&limit=` (`client` is an IP or device id; `result` is `blocked`, `allowed`, `failed`, …) |
+| Settings history | `GET /config/versions`, `GET /config/versions/{id}` (with the changes going back would make), `POST /config/versions/{id}/restore` |
+| Backups | `GET /backups`, `POST /backups/passphrase` `{passphrase, password}`, `PUT /backups/schedule` `{every: daily\|weekly\|"", at: "HH:MM", keep, offsite}`, `POST /backups/download`, `GET /backups/files/{local\|offsite}/{name}`, `POST /backups/restore` (multipart: `file`, `passphrase`, `password`) |
 | Cluster | `GET /cluster`, `POST /cluster/join-codes` `{host}`, `PUT /cluster/nodes/{id}` `{name, never_leader}`, `DELETE /cluster/nodes/{id}`, `POST /cluster/preferred` `{id}`, `POST /cluster/transfer` `{to}`, `POST /cluster/recover` `{password, accept_risk}`, `POST /cluster/join` `{join_code, host, password}` |
 | Status and audit | `GET /status`, `GET /audit` |
 
@@ -390,8 +423,8 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
    queries, router names, groups with schedules, and a load tester.
 2. **Clustering and backups.** Embedded Raft so any node can lead, join
    codes, owner overrides (preferred leader, never lead, transfer, forced
-   recovery), witness mode (this). Next: versioned config, scheduled
-   encrypted backups.
+   recovery), witness mode, settings history with restore, and scheduled
+   encrypted backups (this). Later: backups to S3-compatible storage.
 3. **Analytics.** The AdGuard Insight features (threat scoring, domain types,
    devices, search) built in, across every node.
 4. **Multi-server deploy and failover testing.**

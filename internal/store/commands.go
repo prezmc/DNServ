@@ -478,6 +478,12 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 	if strings.HasPrefix(c.Op, opClusterPrefix) {
 		return applyCluster(st, c, dec)
 	}
+	switch c.Op {
+	case OpConfigRestore:
+		return applyConfigRestore(st, c, dec)
+	case OpBackupConfig, OpBackupRestore:
+		return applyBackup(st, c, dec)
+	}
 	return nil, nil, fmt.Errorf("unknown command %q", c.Op)
 }
 

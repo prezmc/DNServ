@@ -218,13 +218,23 @@ type groupView struct {
 	Active  []string `json:"active"`  // schedules running now
 }
 
-func (a *API) listGroups(w http.ResponseWriter, r *http.Request, p *Principal) {
-	st := a.Store.State()
-	eff := a.Effective()
-	loc, err := eff.Location()
+// zone is the time zone schedules (groups and backups) run in, and its
+// name for people.
+func (a *API) zone() (*time.Location, string) {
+	loc, err := a.Effective().Location()
 	if err != nil {
 		loc = time.UTC
 	}
+	name := loc.String()
+	if name == "Local" {
+		name = a.now().In(loc).Format("MST") // the container's TZ, usually UTC
+	}
+	return loc, name
+}
+
+func (a *API) listGroups(w http.ResponseWriter, r *http.Request, p *Principal) {
+	st := a.Store.State()
+	loc, zone := a.zone()
 	now := a.now().In(loc)
 	set := policy.Build(st)
 	out := []groupView{}
@@ -242,10 +252,6 @@ func (a *API) listGroups(w http.ResponseWriter, r *http.Request, p *Principal) {
 		out = append(out, v)
 	}
 	slices.SortFunc(out, func(x, y groupView) int { return strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name)) })
-	zone := loc.String()
-	if zone == "Local" {
-		zone = now.Format("MST") // the container's TZ, usually UTC
-	}
 	writeJSON(w, http.StatusOK, map[string]any{"groups": out, "time_zone": zone, "now": now.Format("Mon 15:04")})
 }
 

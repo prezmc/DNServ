@@ -311,7 +311,9 @@ function setupChoice(code) {
       h('button', { class: 'choice', type: 'button', autofocus: true, onclick: () => setupAdmin(code) },
         h('b', {}, 'Yes, set up a new DNServe'), h('span', { class: 'muted small' }, 'Create an admin account and choose your settings.')),
       h('button', { class: 'choice', type: 'button', onclick: () => setupJoin(code) },
-        h('b', {}, 'No, add this server to my DNServe'), h('span', { class: 'muted small' }, 'It copies the accounts, settings and blocklists from your other node and stays in sync with it.'))),
+        h('b', {}, 'No, add this server to my DNServe'), h('span', { class: 'muted small' }, 'It copies the accounts, settings and blocklists from your other node and stays in sync with it.')),
+      h('button', { class: 'choice', type: 'button', onclick: () => setupRestore(code) },
+        h('b', {}, 'Restore from a backup'), h('span', { class: 'muted small' }, 'Bring back the accounts and settings from a DNServe backup file.'))),
     h('div', { class: 'actions' }, h('button', { class: 'link', type: 'button', onclick: setupAccount }, 'Back')),
   ));
 }
@@ -566,6 +568,7 @@ const ROUTES = [
   { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
   { path: 'cluster', title: 'Cluster', page: clusterPage, show: () => can('cluster.manage') },
+  { path: 'backups', title: 'Backups & history', page: backupsPage, show: () => can('backups.manage') },
   { path: 'audit', title: 'Audit log', page: audit, show: () => can('audit.view') },
   { path: 'account', title: 'Your account', page: account, show: () => true },
 ];
@@ -1426,6 +1429,215 @@ async function clusterPage(main) {
       (c.voters === 2 ? 'The other node can then take changes on its own, even while ' + n.name + ' is down.' : ''), 'Never lead', false))) return;
     act(() => api('PUT', '/cluster/nodes/' + n.id, { never_leader: !n.never_leader }));
   }
+}
+
+// ---------- backups & history ----------
+
+// apiForm posts a multipart form (a file upload).
+async function apiForm(path, fd) {
+  const r = await fetch('/api/v1' + path, { method: 'POST', body: fd, credentials: 'same-origin', headers: csrf ? { 'X-CSRF-Token': csrf } : {} });
+  const text = await r.text();
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch (_) { /* not JSON */ } }
+  if (!r.ok) throw new Error((data && data.error) || ('Request failed (HTTP ' + r.status + ')'));
+  return data;
+}
+
+// fetchFile downloads a file from the API and saves it.
+async function fetchFile(method, path) {
+  const r = await fetch('/api/v1' + path, { method, credentials: 'same-origin', headers: csrf ? { 'X-CSRF-Token': csrf } : {} });
+  if (!r.ok) {
+    let m = 'Download failed (HTTP ' + r.status + ')';
+    try { m = (await r.json()).error || m; } catch (_) { /* keep */ }
+    throw new Error(m);
+  }
+  const name = ((r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [, 'dnserve-backup.dnsbak'])[1];
+  const a = h('a', { href: URL.createObjectURL(await r.blob()), download: name });
+  document.body.append(a);
+  a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+
+function fmtSize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1 << 20) return (n / 1024).toFixed(0) + ' KB';
+  return (n / (1 << 20)).toFixed(1) + ' MB';
+}
+
+const shown = (v) => (v === 'present' ? 'Exists' : v || '\u2014');
+
+// settingName turns "settings.filtering.block_mode" into "Filtering › block mode".
+function settingName(path) {
+  const parts = path.split('.');
+  const kind = parts.shift();
+  const nice = parts.map(p => p.replace(/_/g, ' '));
+  if (kind === 'devices') nice[0] = 'Device “' + nice[0] + '”';
+  if (kind === 'groups') nice[0] = 'Group “' + nice[0] + '”';
+  if (nice.length) nice[0] = nice[0].charAt(0).toUpperCase() + nice[0].slice(1);
+  return nice.join(' › ');
+}
+
+function passphraseFields(label) {
+  return [
+    h('label', { for: 'pp' }, label || 'Backup passphrase'),
+    h('input', { id: 'pp', name: 'pp', type: 'password', autocomplete: 'new-password', minlength: 12, required: true }),
+    h('p', { class: 'muted small' }, 'At least 12 characters. Four or five random words works well. Use a different one from your password.'),
+    h('label', { for: 'pp2' }, 'Confirm passphrase'),
+    h('input', { id: 'pp2', name: 'pp2', type: 'password', autocomplete: 'new-password', required: true }),
+    h('label', { for: 'bpw' }, 'Your DNServe password'),
+    h('input', { id: 'bpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
+  ];
+}
+
+async function backupsPage(main) {
+  const title = 'Backups & history';
+  page(main, title, h('p', { class: 'muted' }, 'Loading…'));
+  let vers, bk;
+  try { [vers, bk] = await Promise.all([api('GET', '/config/versions'), api('GET', '/backups')]); } catch (e) { return page(main, title, msg('err', e.message)); }
+
+  // Settings history.
+  const compare = async (v) => {
+    let d;
+    try { d = await api('GET', '/config/versions/' + v.id); } catch (e) { return toast(e.message, 'err'); }
+    const ch = d.changes || [];
+    const dl = dialog('Go back to ' + fmtTime(v.time) + '?', [
+      h('p', { class: 'muted' }, 'Version ' + v.id + ': ' + v.summary + ' (' + v.actor + ')'),
+      ch.length ? h('div', { class: 'scroll' }, h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Setting'), h('th', {}, 'Now'), h('th', {}, 'After going back'))),
+        h('tbody', {}, ch.map(c => h('tr', {}, h('td', {}, settingName(c.path)), h('td', { class: 'small' }, shown(c.now)), h('td', { class: 'small' }, shown(c.then)))))))
+        : msg('ok', 'This version is the same as your current settings.'),
+      h('p', { class: 'muted small' }, 'Accounts and API tokens stay as they are. Going back is recorded as a new version, so you can undo it.'),
+      h('div', { class: 'actions' },
+        ch.length ? h('button', { class: 'primary', type: 'button', onclick: async () => {
+          try { await api('POST', '/config/versions/' + v.id + '/restore', {}); toast('Settings are back to how they were on ' + fmtTime(v.time)); dl.close(); } catch (e) { toast(e.message, 'err'); }
+        } }, 'Go back to this version') : null,
+        h('button', { type: 'button', autofocus: true, onclick: () => dl.close() }, 'Cancel'))]);
+    dl.classList.add('wide');
+    dl.addEventListener('close', () => route());
+  };
+  const history = h('div', { class: 'card' }, h('h2', {}, 'Settings history'),
+    h('p', { class: 'muted' }, 'DNServe keeps the last ' + vers.max + ' versions of your settings, devices and groups, on every node. Look at what changed and go back to any of them. Accounts aren’t part of this, so going back never brings back an old password.'),
+    vers.versions.length ? h('div', { class: 'scroll' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'Who'), h('th', {}, 'What changed'), h('th', {}))),
+      h('tbody', {}, vers.versions.map(v => h('tr', {},
+        h('td', { class: 'nowrap' }, fmtTime(v.time)), h('td', {}, v.actor), h('td', {}, v.summary),
+        h('td', {}, v.id === vers.current ? h('span', { class: 'badge' }, 'current') : h('button', { class: 'link', onclick: () => compare(v) }, 'Compare and go back')))))))
+      : h('p', { class: 'muted' }, 'No changes yet. Each change you save from now on appears here.'));
+
+  // Backups.
+  const backupCard = !bk.configured ? setupBackups() : scheduleCard();
+
+  function setupBackups() {
+    return h('div', { class: 'card highlight' }, h('h2', {}, 'Set up backups'),
+      h('p', {}, 'A backup holds your accounts, settings, devices, groups and settings history in one file, encrypted with a passphrase you choose. Use one to rebuild DNServe on a new server, or to undo a mistake.'),
+      msg('warn', 'Write the passphrase down somewhere safe, like a password manager. DNServe doesn’t keep it, so without it nobody, including you, can open a backup.'),
+      form({}, [passphraseFields(), h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Set up backups'))], async (f) => {
+        if (val(f, 'pp') !== val(f, 'pp2')) throw new Error("The passphrases don't match.");
+        await api('POST', '/backups/passphrase', { passphrase: val(f, 'pp'), password: val(f, 'password') });
+        toast('Backups are set up');
+        route();
+      }));
+  }
+
+  function scheduleCard() {
+    const files = bk.files || [];
+    return h('div', { class: 'card' }, h('h2', {}, 'Backups'),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
+        ev.target.disabled = true;
+        try { await fetchFile('POST', '/backups/download'); } catch (e) { toast(e.message, 'err'); }
+        ev.target.disabled = false;
+      } }, 'Download a backup now')),
+      form({ 'data-track': true }, [
+        h('h3', {}, 'Automatic backups'),
+        h('label', { for: 'every' }, 'How often'),
+        h('select', { id: 'every', name: 'every' },
+          h('option', { value: '', selected: !bk.every }, 'Off (download by hand only)'),
+          h('option', { value: 'daily', selected: bk.every === 'daily' }, 'Every day'),
+          h('option', { value: 'weekly', selected: bk.every === 'weekly' }, 'Every week, on Sunday')),
+        h('label', { for: 'at' }, 'At'),
+        h('input', { id: 'at', name: 'at', type: 'time', value: bk.at || '03:00' }),
+        h('p', { class: 'muted small' }, 'In ', h('b', {}, bk.time_zone), ' time, the same as group schedules.', can('network.manage') ? [' ', h('a', { href: '#/settings' }, 'Change')] : null),
+        h('label', { for: 'keep' }, 'Keep the last'),
+        h('div', { class: 'row' }, h('input', { id: 'keep', name: 'keep', type: 'number', min: 1, max: 365, value: bk.keep || bk.default_keep }), h('span', { class: 'muted' }, 'backups')),
+        h('label', { for: 'offsite' }, 'Also copy to a folder (optional)'),
+        h('input', { id: 'offsite', name: 'offsite', type: 'text', value: bk.offsite || '', placeholder: '/backups', spellcheck: 'false' }),
+        h('p', { class: 'muted small' }, 'Every node keeps its own backups in ', h('code', {}, bk.dir || '/data/backups'),
+          '. To keep copies off the server too, mount a folder from your NAS or another disk into the container (for example ', h('code', {}, '-v /mnt/nas/dnserve:/backups'),
+          ') and enter its path here. The leading node writes one copy per backup there.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save schedule')),
+      ], async (f) => {
+        await api('PUT', '/backups/schedule', { every: val(f, 'every'), at: val(f, 'at'), keep: parseInt(val(f, 'keep'), 10) || 0, offsite: val(f, 'offsite').trim() });
+        setTimeout(route, 900);
+        return val(f, 'every') ? 'Saved. Backups run ' + (val(f, 'every') === 'daily' ? 'every day' : 'every Sunday') + ' at ' + val(f, 'at') + '.' : 'Saved. Automatic backups are off.';
+      }),
+      h('h3', {}, 'Saved backups'),
+      files.length ? h('div', { class: 'scroll' }, h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Made'), h('th', {}, 'By node'), h('th', {}, 'Where'), h('th', {}, 'Size'), h('th', {}))),
+        h('tbody', {}, files.map(x => h('tr', {},
+          h('td', { class: 'nowrap' }, fmtTime(x.created)), h('td', {}, x.node || '—'),
+          h('td', {}, x.where === 'offsite' ? 'Copy folder' : 'This node'), h('td', { class: 'small muted' }, fmtSize(x.size)),
+          h('td', {}, h('button', { class: 'link', onclick: () => fetchFile('GET', '/backups/files/' + x.where + '/' + encodeURIComponent(x.name)).catch(e => toast(e.message, 'err')) }, 'Download')))))))
+        : h('p', { class: 'muted' }, bk.every ? 'None yet. The first one is made at the next scheduled time.' : 'None saved on this node. Turn on automatic backups above, or download one now.'),
+      h('details', {}, h('summary', {}, 'Change the backup passphrase'),
+        h('p', { class: 'muted small' }, 'New backups use the new passphrase. Backups you already have still open with the old one, so keep it until they’re no longer needed.'),
+        form({}, [passphraseFields('New backup passphrase'), h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Change passphrase'))], async (f) => {
+          if (val(f, 'pp') !== val(f, 'pp2')) throw new Error("The passphrases don't match.");
+          await api('POST', '/backups/passphrase', { passphrase: val(f, 'pp'), password: val(f, 'password') });
+          f.reset();
+          return 'Changed. New backups use the new passphrase.';
+        })));
+  }
+
+  const restoreCard = h('details', { class: 'card' }, h('summary', {}, 'Restore from a backup file'),
+    msg('warn', 'This replaces the accounts, settings, devices, groups and settings history on every node with the backup’s. The cluster’s nodes and the backup settings stay as they are.'),
+    form({}, [
+      h('label', { for: 'rf' }, 'Backup file'),
+      h('input', { id: 'rf', name: 'file', type: 'file', accept: '.dnsbak', required: true }),
+      h('label', { for: 'rpp' }, 'The passphrase it was made with'),
+      h('input', { id: 'rpp', name: 'passphrase', type: 'password', autocomplete: 'off', required: true }),
+      h('label', { for: 'rpw2' }, 'Your DNServe password'),
+      h('input', { id: 'rpw2', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
+      h('div', { class: 'actions' }, h('button', { class: 'primary danger-fill', type: 'submit' }, 'Restore')),
+    ], async (f) => {
+      if (!(await ask('Replace the accounts and settings with the backup’s?', 'Restore'))) return;
+      const fd = new FormData();
+      fd.append('file', f.elements.file.files[0]);
+      fd.append('passphrase', val(f, 'passphrase'));
+      fd.append('password', val(f, 'password'));
+      const r = await apiForm('/backups/restore', fd);
+      toast('Restored the backup made on ' + fmtTime(r.created) + (r.node ? ' by ' + r.node : ''));
+      if (r.signed_out) { csrf = ''; ME = null; boot(); return; }
+      try { ME = await api('GET', '/auth/me'); } catch (_) { /* boot handles it */ }
+      route();
+    }));
+
+  page(main, title, history, backupCard, restoreCard);
+}
+
+// setupRestore: first run from a backup file.
+function setupRestore(code) {
+  render(centered(
+    h('h1', {}, 'Restore DNServe from a backup'),
+    h('p', { class: 'muted' }, 'Use a backup file from this or another DNServe. Its accounts, settings, devices, groups and backup schedule come back as they were.'),
+    form({}, [
+      h('label', { for: 'sf' }, 'Backup file (.dnsbak)'),
+      h('input', { id: 'sf', name: 'file', type: 'file', accept: '.dnsbak', required: true, autofocus: true }),
+      h('label', { for: 'spp' }, 'Backup passphrase'),
+      h('input', { id: 'spp', name: 'passphrase', type: 'password', autocomplete: 'off', required: true }),
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Restore'), h('button', { class: 'link', type: 'button', onclick: () => setupChoice(code) }, 'Back')),
+    ], async (f) => {
+      const fd = new FormData();
+      fd.append('file', f.elements.file.files[0]);
+      fd.append('passphrase', val(f, 'passphrase'));
+      fd.append('code', code);
+      const r = await apiForm('/setup/restore', fd);
+      render(centered(
+        h('h1', {}, 'DNServe is restored'),
+        msg('ok', 'Everything from the backup made on ' + fmtTime(r.created) + ' is back.'),
+        h('p', {}, 'Sign in with an account from the backup. If this server has a new address, update the DNS servers in your router.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', autofocus: true, onclick: boot }, 'Sign in'))));
+    }),
+  ));
 }
 
 // ---------- audit ----------

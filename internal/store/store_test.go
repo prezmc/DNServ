@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/prezmc/dnserve/internal/config"
@@ -100,5 +101,70 @@ func TestSettingsOverlayAndReset(t *testing.T) {
 	}
 	if notified != 2 {
 		t.Fatalf("subscribers notified %d times, want 2", notified)
+	}
+}
+
+func TestConfigHistoryAndRestore(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, s, OpUserCreate, UserCreate{ID: "a1", Username: "admin", Role: RoleAdmin, PasswordHash: "h"})
+	if n := len(s.State().ConfigVersions); n != 0 {
+		t.Fatalf("account change made %d versions", n)
+	}
+	on, off := true, false
+	mustApply(t, s, OpSettingsUpdate, Settings{BlockBypass: &on})
+	mustApply(t, s, OpDeviceSave, Device{ID: "d1", Name: "Laptop", Addrs: []string{"192.168.1.20"}})
+	mustApply(t, s, OpSettingsUpdate, Settings{BlockBypass: &off})
+	mustApply(t, s, OpSettingsUpdate, Settings{BlockBypass: &off}) // no change: no version
+	vs := s.State().ConfigVersions
+	if len(vs) != 4 || vs[0].Summary != "before the first recorded change" {
+		t.Fatalf("versions: %d %+v", len(vs), vs[0])
+	}
+	// Back to just after the first change: bypass on, no devices.
+	mustApply(t, s, OpConfigRestore, VersionID{ID: vs[1].ID})
+	st := s.State()
+	if st.Settings.BlockBypass == nil || !*st.Settings.BlockBypass || len(st.Devices) != 0 || st.Users["a1"] == nil {
+		t.Fatalf("restore: bypass %v devices %d", st.Settings.BlockBypass, len(st.Devices))
+	}
+	if len(st.ConfigVersions) != 5 {
+		t.Fatal("a restore should be a version of its own, so it can be undone")
+	}
+	if _, err := s.Apply(NewCommand(OpConfigRestore, "t", VersionID{ID: 999})); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing version: %v", err)
+	}
+	for i := 0; i < MaxVersions+5; i++ {
+		v := i%2 == 0
+		mustApply(t, s, OpSettingsUpdate, Settings{BlockBypass: &v})
+	}
+	if n := len(s.State().ConfigVersions); n != MaxVersions {
+		t.Fatalf("kept %d versions", n)
+	}
+}
+
+func TestBackupRestoreKeepsCluster(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustApply(t, s, OpClusterInit, ClusterInit{ID: "c1", CACert: "ca", CAKey: "k", Node: Node{ID: "n1", Name: "one", Addr: "x:1"}})
+	mustApply(t, s, OpUserCreate, UserCreate{ID: "a1", Username: "admin", Role: RoleAdmin, PasswordHash: "h"})
+	data := s.State().BackupData()
+	mustApply(t, s, OpUserCreate, UserCreate{ID: "a2", Username: "later", Role: RoleAdmin, PasswordHash: "h"})
+	if _, err := s.Apply(NewCommand(OpBackupRestore, "t", BackupRestore{Data: BackupData{Users: map[string]*User{}}})); err == nil {
+		t.Fatal("restored a backup with no admin")
+	}
+	mustApply(t, s, OpBackupRestore, BackupRestore{Data: data, From: "one"})
+	st := s.State()
+	if st.Users["a2"] != nil || st.Users["a1"] == nil || st.Cluster.ID != "c1" || len(st.Cluster.Nodes) != 1 {
+		t.Fatalf("after restore: users %d cluster %q", len(st.Users), st.Cluster.ID)
+	}
+	if _, err := s.Apply(NewCommand(OpBackupConfig, "t", BackupConfig{Every: "daily", At: "03:00"})); err == nil {
+		t.Fatal("schedule without a key accepted")
+	}
+	mustApply(t, s, OpBackupConfig, BackupConfig{PublicKey: "pk", Salt: "s", Every: "daily", At: "03:00", Keep: 7})
+	if a := st.Audit; len(a) > 0 && strings.Contains(string(s.State().Audit[len(s.State().Audit)-1].After), "pk") {
+		t.Fatal("audit log holds the backup key")
 	}
 }
