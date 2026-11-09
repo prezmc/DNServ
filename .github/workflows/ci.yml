@@ -19,6 +19,11 @@ jobs:
       - name: Check formatting
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
+      - name: Install Unbound (for the recursive-mode integration test)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q unbound dns-root-data
+          sudo systemctl disable --now unbound || true
       - run: go test -race ./...
       - name: Benchmarks (smoke)
         run: go test -run '^$' -bench . -benchtime 200ms ./internal/...

@@ -1,5 +1,8 @@
-# DNServe node configuration. Every key is optional; anything left out uses
-# the default shown here. Unknown keys are rejected so typos are caught.
+# DNServe node configuration. You don't need this file: a node runs with
+# these defaults out of the box, and the dashboard (step 1c) will manage
+# settings in the data volume. Use it for advanced tuning, or set the
+# common options with DNSERVE_* environment variables (see README).
+# Every key is optional. Unknown keys are rejected so typos are caught.
 
 dns:
   listen: [":53"]          # served on UDP and TCP
@@ -8,14 +11,36 @@ dns:
   allowed_nets: []
   udp_size: 1232           # EDNS buffer size (DNS Flag Day 2020)
   rate_limit: 0            # max queries/second per client IP, 0 = off
+  tls:                     # encrypted DNS for your devices
+    dot_listen: [":853"]   # DNS over TLS; [] disables
+    doh_listen: [":443"]   # DNS over HTTPS; [] disables
+    doh_path: /dns-query
+    cert_file: ""          # PEM cert + key; empty = self-signed in /data/tls
+    key_file: ""
+    hostnames: [dnserve.local]   # names/IPs in the self-signed certificate
 
 upstream:
-  mode: forward            # "recursive" and "tunnel" arrive in step 1b
+  # forward:   encrypted forwarding to the servers below (default)
+  # recursive: resolve from the root servers with the bundled Unbound
+  #            (DNSSEC, QNAME minimisation; no third-party resolver)
+  # tunnel:    recursive, with queries leaving through a VPN
+  #            (see deploy/docker-compose.tunnel.yml)
+  mode: forward
   servers:                 # fastest healthy server first, failover on error
     - https://cloudflare-dns.com/dns-query   # DNS over HTTPS
     - tls://one.one.one.one                  # DNS over TLS
   bootstrap: ["1.1.1.1:53", "1.0.0.1:53"]    # only to look up the names above
   timeout: 3s
+  recursive:
+    binary: unbound
+    port: 5335             # loopback only
+    threads: 1
+    cache_mb: 128
+  tunnel:
+    interface: wg0         # must exist and be up
+    expected_egress: []    # optional: your VPN's exit IPs/CIDRs, checked live
+    check_interval: 30s
+    on_down: forward       # forward (encrypted fallback) or block (SERVFAIL)
 
 cache:
   enabled: true
@@ -32,6 +57,9 @@ filtering:
   block_mode: null_ip      # null_ip (0.0.0.0 / ::), nxdomain or refused
   block_ttl: 10s
   refresh_interval: 24h
+  # Block public DNS-over-HTTPS resolvers and iCloud Private Relay so
+  # devices can't quietly skip filtering.
+  block_bypass: false
   lists:
     - name: HaGeZi Multi Pro
       url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt

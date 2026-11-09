@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -37,12 +40,34 @@ type DNSConfig struct {
 	UDPSize uint16 `yaml:"udp_size"`
 	// RateLimit is the maximum queries per second per client IP (0 = off).
 	RateLimit int `yaml:"rate_limit"`
+	// TLS configures encrypted DNS for clients: DNS over TLS and DNS over
+	// HTTPS.
+	TLS TLSConfig `yaml:"tls"`
+}
+
+// TLSConfig serves DNS over TLS (RFC 7858) and DNS over HTTPS (RFC 8484)
+// to clients.
+type TLSConfig struct {
+	// DoTListen addresses for DNS over TLS (usually ":853"). Empty disables.
+	DoTListen []string `yaml:"dot_listen"`
+	// DoHListen addresses for DNS over HTTPS (usually ":443"). Empty disables.
+	DoHListen []string `yaml:"doh_listen"`
+	// DoHPath is the URL path for DoH queries.
+	DoHPath string `yaml:"doh_path"`
+	// CertFile and KeyFile are a PEM certificate and key. When both are
+	// empty a self-signed certificate is generated in data_dir/tls.
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+	// Hostnames for the generated certificate.
+	Hostnames []string `yaml:"hostnames"`
 }
 
 // UpstreamConfig selects how queries the node can't answer are resolved.
 type UpstreamConfig struct {
-	// Mode: "forward" (encrypted or plain forwarding). "recursive" and
-	// "tunnel" arrive in step 1b.
+	// Mode:
+	//   "forward"   encrypted (or plain) forwarding to Servers.
+	//   "recursive" resolve from the root servers with the bundled Unbound.
+	//   "tunnel"    recursive, with outbound traffic over a VPN tunnel.
 	Mode string `yaml:"mode"`
 	// Servers, tried in order of measured latency, failing over on error.
 	// Schemes: https:// (DoH), tls:// (DoT), udp://, tcp://.
@@ -51,6 +76,40 @@ type UpstreamConfig struct {
 	// servers. Must be IP addresses.
 	Bootstrap []string      `yaml:"bootstrap"`
 	Timeout   time.Duration `yaml:"timeout"`
+	// Recursive configures the bundled Unbound (recursive and tunnel modes).
+	Recursive RecursiveConfig `yaml:"recursive"`
+	// Tunnel configures tunnel mode.
+	Tunnel TunnelConfig `yaml:"tunnel"`
+}
+
+// RecursiveConfig tunes the bundled Unbound resolver.
+type RecursiveConfig struct {
+	// Binary is the path to the unbound executable.
+	Binary string `yaml:"binary"`
+	// Port is the loopback port Unbound listens on.
+	Port int `yaml:"port"`
+	// Threads is the number of Unbound worker threads (0 = 1).
+	Threads int `yaml:"threads"`
+	// CacheMB is Unbound's total cache size in megabytes (split between the
+	// RRset and message caches).
+	CacheMB int `yaml:"cache_mb"`
+}
+
+// TunnelConfig controls tunnel mode. The tunnel itself (WireGuard) is set up
+// by a VPN container sharing DNServe's network, or by the host; DNServe
+// checks it is up and refuses to leak queries when it is not.
+type TunnelConfig struct {
+	// Interface that must exist and be up, e.g. "wg0" or "tun0".
+	Interface string `yaml:"interface"`
+	// ExpectedEgress optionally lists the IPs or CIDRs your VPN exits from.
+	// When set, the node checks the address authoritative servers see.
+	ExpectedEgress []string `yaml:"expected_egress"`
+	// CheckInterval is how often the tunnel is checked.
+	CheckInterval time.Duration `yaml:"check_interval"`
+	// OnDown: "forward" falls back to encrypted forwarding to Servers (the
+	// ISP still sees nothing); "block" answers SERVFAIL until the tunnel is
+	// back.
+	OnDown string `yaml:"on_down"`
 }
 
 // CacheConfig tunes the in-memory answer cache.
@@ -88,6 +147,9 @@ type FilteringConfig struct {
 	Rules []string `yaml:"rules"`
 	// RefreshInterval is how often remote lists are re-downloaded.
 	RefreshInterval time.Duration `yaml:"refresh_interval"`
+	// BlockBypass blocks well-known public DNS-over-HTTPS resolvers and
+	// Apple's iCloud Private Relay, so devices can't quietly skip filtering.
+	BlockBypass bool `yaml:"block_bypass"`
 }
 
 // ListConfig is one blocklist or allowlist.
@@ -110,12 +172,29 @@ func Default() Config {
 			Listen:    []string{":53"},
 			UDPSize:   1232,
 			RateLimit: 0,
+			TLS: TLSConfig{
+				DoTListen: []string{":853"},
+				DoHListen: []string{":443"},
+				DoHPath:   "/dns-query",
+				Hostnames: []string{"dnserve.local"},
+			},
 		},
 		Upstream: UpstreamConfig{
 			Mode:      "forward",
 			Servers:   []string{"https://cloudflare-dns.com/dns-query", "tls://one.one.one.one"},
 			Bootstrap: []string{"1.1.1.1:53", "1.0.0.1:53"},
 			Timeout:   3 * time.Second,
+			Recursive: RecursiveConfig{
+				Binary:  "unbound",
+				Port:    5335,
+				Threads: 1,
+				CacheMB: 128,
+			},
+			Tunnel: TunnelConfig{
+				Interface:     "wg0",
+				CheckInterval: 30 * time.Second,
+				OnDown:        "forward",
+			},
 		},
 		Cache: CacheConfig{
 			Enabled:     true,
@@ -160,6 +239,42 @@ func Load(path string) (Config, error) {
 	return cfg, cfg.Validate()
 }
 
+// ApplyEnv overrides settings from DNSERVE_* environment variables, so a
+// node can be configured from docker run or compose without any file. It
+// is applied after the file (if any), so the environment wins.
+func (c *Config) ApplyEnv(getenv func(string) string) error {
+	list := func(v string) []string {
+		var out []string
+		for _, p := range strings.Split(v, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	var errs []error
+	set := func(key string, fn func(string) error) {
+		if v := strings.TrimSpace(getenv(key)); v != "" {
+			if err := fn(v); err != nil {
+				errs = append(errs, fmt.Errorf("%s: %w", key, err))
+			}
+		}
+	}
+	set("DNSERVE_UPSTREAM_MODE", func(v string) error { c.Upstream.Mode = v; return nil })
+	set("DNSERVE_UPSTREAM_SERVERS", func(v string) error { c.Upstream.Servers = list(v); return nil })
+	set("DNSERVE_TUNNEL_INTERFACE", func(v string) error { c.Upstream.Tunnel.Interface = v; return nil })
+	set("DNSERVE_TUNNEL_EXPECTED_EGRESS", func(v string) error { c.Upstream.Tunnel.ExpectedEgress = list(v); return nil })
+	set("DNSERVE_TUNNEL_ON_DOWN", func(v string) error { c.Upstream.Tunnel.OnDown = v; return nil })
+	set("DNSERVE_ALLOWED_NETS", func(v string) error { c.DNS.AllowedNets = list(v); return nil })
+	set("DNSERVE_BLOCK_BYPASS", func(v string) error {
+		b, err := strconv.ParseBool(v)
+		c.Filtering.BlockBypass = b
+		return err
+	})
+	set("DNSERVE_BLOCK_MODE", func(v string) error { c.Filtering.BlockMode = v; return nil })
+	return errors.Join(errs...)
+}
+
 // Validate checks the configuration for mistakes that would stop the node.
 func (c Config) Validate() error {
 	var errs []error
@@ -177,9 +292,46 @@ func (c Config) Validate() error {
 			}
 		}
 	case "recursive", "tunnel":
-		errs = append(errs, fmt.Errorf("upstream.mode %q is not available yet", c.Upstream.Mode))
+		r := c.Upstream.Recursive
+		if r.Binary == "" {
+			errs = append(errs, errors.New("upstream.recursive.binary is required"))
+		}
+		if r.Port <= 0 || r.Port > 65535 {
+			errs = append(errs, errors.New("upstream.recursive.port must be 1-65535"))
+		}
+		if c.Upstream.Mode == "tunnel" {
+			t := c.Upstream.Tunnel
+			if t.Interface == "" && len(t.ExpectedEgress) == 0 {
+				errs = append(errs, errors.New("upstream.tunnel: set interface and/or expected_egress so the node can tell the tunnel is up"))
+			}
+			if t.CheckInterval <= 0 {
+				errs = append(errs, errors.New("upstream.tunnel.check_interval must be positive"))
+			}
+			switch t.OnDown {
+			case "forward":
+				if len(c.Upstream.Servers) == 0 {
+					errs = append(errs, errors.New("upstream.tunnel.on_down forward needs upstream.servers"))
+				}
+			case "block":
+			default:
+				errs = append(errs, fmt.Errorf("upstream.tunnel.on_down: unknown value %q (use forward or block)", t.OnDown))
+			}
+			for _, e := range t.ExpectedEgress {
+				if _, err := netip.ParsePrefix(e); err != nil {
+					if _, err := netip.ParseAddr(e); err != nil {
+						errs = append(errs, fmt.Errorf("upstream.tunnel.expected_egress: %q is not an IP or CIDR", e))
+					}
+				}
+			}
+		}
 	default:
 		errs = append(errs, fmt.Errorf("upstream.mode: unknown mode %q", c.Upstream.Mode))
+	}
+	if len(c.DNS.TLS.DoHListen) > 0 && !strings.HasPrefix(c.DNS.TLS.DoHPath, "/") {
+		errs = append(errs, errors.New("dns.tls.doh_path must start with /"))
+	}
+	if (c.DNS.TLS.CertFile == "") != (c.DNS.TLS.KeyFile == "") {
+		errs = append(errs, errors.New("dns.tls: set both cert_file and key_file, or neither"))
 	}
 	if c.Upstream.Timeout <= 0 {
 		errs = append(errs, errors.New("upstream.timeout must be positive"))

@@ -1,0 +1,57 @@
+# Tunnel mode: DNServe resolves from the root servers, and every query it
+# sends leaves through a WireGuard VPN, so your ISP sees neither the names
+# you look up nor which servers you ask.
+#
+# gluetun (https://github.com/qdm12/gluetun) owns the network: DNServe shares
+# its network namespace, and gluetun's firewall drops anything that tries to
+# leave outside the tunnel. DNServe also checks the tunnel itself and falls
+# back to encrypted forwarding (or stops resolving) if it goes down.
+#
+# Setup: fill in the four WIREGUARD/VPN values below from your VPN provider
+# (gluetun's wiki lists the variables for each provider), then
+# `docker compose -f docker-compose.tunnel.yml up -d`.
+services:
+  vpn:
+    image: qmcgaw/gluetun:latest
+    container_name: dnserve-vpn
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/net/tun:/dev/net/tun"]
+    environment:
+      - VPN_SERVICE_PROVIDER=mullvad        # or custom, protonvpn, ivpn, ...
+      - VPN_TYPE=wireguard
+      - WIREGUARD_PRIVATE_KEY=changeme
+      - WIREGUARD_ADDRESSES=10.64.0.2/32
+      - SERVER_COUNTRIES=Sweden
+      # Let your LAN reach DNServe through gluetun's firewall.
+      - FIREWALL_INPUT_PORTS=53,853,8080
+      # DNServe answers DNS on port 53, so gluetun's own DNS must be off
+      # (DNS_SERVER on recent gluetun versions, DOT on older ones).
+      - DNS_SERVER=off
+      - DOT=off
+    ports:
+      # DNServe's ports are published here, because it shares this network.
+      - "53:53/udp"
+      - "53:53/tcp"
+      - "853:853/tcp"
+      - "8080:8080/tcp"
+
+  dnserve:
+    image: prezmcmahon/dnserve:latest
+    container_name: dnserve
+    restart: unless-stopped
+    network_mode: "service:vpn"
+    depends_on: [vpn]
+    environment:
+      - TZ=America/Chicago
+      # Tunnel mode without a config file. The dashboard (step 1c) will
+      # manage these too.
+      - DNSERVE_UPSTREAM_MODE=tunnel
+      # gluetun's WireGuard interface. Check with
+      # `docker exec dnserve-vpn ip link` if the node reports it missing.
+      - DNSERVE_TUNNEL_INTERFACE=wg0
+    volumes:
+      - dnserve-data:/data
+
+volumes:
+  dnserve-data:

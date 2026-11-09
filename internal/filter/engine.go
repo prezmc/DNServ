@@ -98,6 +98,13 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 		}
 	}
 
+	if e.cfg.BlockBypass {
+		src := b.AddSource("Bypass protection", TierList)
+		for _, d := range BypassDomains {
+			b.Add(src, Rule{Domain: d, Kind: Suffix})
+		}
+	}
+
 	load := func(l config.ListConfig, allow bool) {
 		if !l.Enabled {
 			return
