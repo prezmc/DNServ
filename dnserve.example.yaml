@@ -1,0 +1,49 @@
+# DNServe node configuration. Every key is optional; anything left out uses
+# the default shown here. Unknown keys are rejected so typos are caught.
+
+dns:
+  listen: [":53"]          # served on UDP and TCP
+  # Client networks allowed to query. Empty = private ranges only, so the
+  # node never becomes an open resolver if port 53 is exposed by mistake.
+  allowed_nets: []
+  udp_size: 1232           # EDNS buffer size (DNS Flag Day 2020)
+  rate_limit: 0            # max queries/second per client IP, 0 = off
+
+upstream:
+  mode: forward            # "recursive" and "tunnel" arrive in step 1b
+  servers:                 # fastest healthy server first, failover on error
+    - https://cloudflare-dns.com/dns-query   # DNS over HTTPS
+    - tls://one.one.one.one                  # DNS over TLS
+  bootstrap: ["1.1.1.1:53", "1.0.0.1:53"]    # only to look up the names above
+  timeout: 3s
+
+cache:
+  enabled: true
+  max_entries: 100000
+  min_ttl: 0s
+  max_ttl: 24h
+  negative_ttl: 5m         # cap for NXDOMAIN / no-data answers
+  prefetch: true           # refresh popular entries before they expire
+  serve_stale: 1h          # answer from expired entries if upstream fails
+  persist: true            # save the cache on shutdown, reload on start
+
+filtering:
+  enabled: true
+  block_mode: null_ip      # null_ip (0.0.0.0 / ::), nxdomain or refused
+  block_ttl: 10s
+  refresh_interval: 24h
+  lists:
+    - name: HaGeZi Multi Pro
+      url: https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt
+      enabled: true
+  allowlists: []
+  rules:
+    # - "||ads.example.com^"     block a domain and its subdomains
+    # - "@@||cdn.example.com^"   always allow (beats every list)
+    # - "*.tracker.example"      subdomains only
+    # - "exact.example.com"      just this name
+
+http:
+  listen: ":8080"          # /healthz, /readyz, /metrics
+
+data_dir: /data
