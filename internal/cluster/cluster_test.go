@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -375,5 +376,33 @@ func TestWitnessKeepsTwoNodesWorking(t *testing.T) {
 	time.Sleep(time.Second)
 	if w.leading() {
 		t.Fatal("witness kept leadership while a full node was up")
+	}
+}
+
+func TestAskPeers(t *testing.T) {
+	a, b := pair(t)
+	b.c.Handle("echo", func(ctx context.Context, body json.RawMessage) (any, error) {
+		var in map[string]string
+		json.Unmarshal(body, &in)
+		return map[string]string{"from": b.c.Name(), "got": in["q"]}, nil
+	})
+	reps := a.c.AskPeers(context.Background(), "echo", map[string]string{"q": "hi"})
+	if len(reps) != 1 || reps[0].Err != nil {
+		t.Fatalf("replies = %+v", reps)
+	}
+	var out map[string]string
+	json.Unmarshal(reps[0].Body, &out)
+	if out["got"] != "hi" || out["from"] != b.c.Name() || reps[0].Name != b.c.Name() {
+		t.Fatalf("reply = %v", out)
+	}
+	// A node without the handler says so; a stopped node is reported, not waited on.
+	if reps := b.c.AskPeers(context.Background(), "echo", nil); len(reps) != 1 || reps[0].Err == nil {
+		t.Fatalf("missing handler: %+v", reps)
+	}
+	b.close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if reps := a.c.AskPeers(ctx, "echo", nil); len(reps) != 1 || reps[0].Err == nil {
+		t.Fatalf("stopped peer: %+v", reps)
 	}
 }

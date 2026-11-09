@@ -2,11 +2,15 @@ package server
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
+	"path/filepath"
 	"testing"
 
 	"github.com/miekg/dns"
 
+	"github.com/prezmc/dnserve/internal/analytics"
 	"github.com/prezmc/dnserve/internal/policy"
 	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/store"
@@ -20,14 +24,24 @@ func BenchmarkHandle(b *testing.B) {
 		name   string
 		qname  string
 		groups bool
+		hist   bool
 	}{
-		{"cached", "www.example.com.", false},
-		{"blocked", "x.ads.example.", false},
-		{"cached-in-group", "www.example.com.", true},
+		{"cached", "www.example.com.", false, false},
+		{"blocked", "x.ads.example.", false, false},
+		{"cached-in-group", "www.example.com.", true, false},
+		{"cached-with-history", "www.example.com.", false, true},
 	} {
 		b.Run(tc.name, func(b *testing.B) {
 			s, _ := newTestServer(b, nil, &fakeResolver{})
 			s.SetQueryLog(querylog.New(20000))
+			if tc.hist {
+				hs, err := analytics.Open(filepath.Join(b.TempDir(), "h.db"), func() string { return "n" }, 30, 90, slog.New(slog.NewTextHandler(io.Discard, nil)))
+				if err != nil {
+					b.Fatal(err)
+				}
+				defer hs.Close()
+				s.SetHistory(hs)
+			}
 			if tc.groups {
 				st := &store.State{
 					Groups: map[string]*store.Group{"kids": {ID: "kids", Name: "Kids", Rules: []string{"||games.example^"},

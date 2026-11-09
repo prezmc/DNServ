@@ -82,6 +82,8 @@ type Cluster struct {
 	mux    *mux
 	rpcSrv *http.Server
 	client atomic.Pointer[http.Client]
+	// handlers are member-only RPCs other packages add (see Handle).
+	handlers sync.Map // name -> PeerHandler
 
 	// Leader bookkeeping, used only by the run loop.
 	leaderSince  time.Time

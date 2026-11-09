@@ -84,6 +84,18 @@ cluster:
   # advertise: "192.168.1.10:8081"   # how other nodes reach this one; by
   #                                  # default learned from the dashboard URL
 
+# Query history, kept by each node in data_dir/history.db for Analytics
+# and the Query log. Admins can change both in Settings. 0 keeps none.
+history:
+  days: 30                 # every query, for search (about 25 MB per day
+                           # kept for every 100,000 queries a day)
+  stats_days: 90           # hourly totals per device and domain, for charts
+
+# Risk scores in Analytics (never used to block).
+analytics:
+  threat_feeds: true       # download malware and phishing feeds
+  trusted_domains: []      # never marked risky (covers subdomains)
+
 # Time zone for group schedules, e.g. Europe/London (default: TZ or UTC).
 time_zone: ""
 data_dir: /data

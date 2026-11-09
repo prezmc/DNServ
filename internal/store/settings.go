@@ -24,6 +24,12 @@ type Settings struct {
 	Lists            *[]config.ListConfig `json:"lists,omitempty"`
 	Allowlists       *[]config.ListConfig `json:"allowlists,omitempty"`
 	Rules            *[]string            `json:"rules,omitempty"`
+
+	HistoryDays *int `json:"history_days,omitempty"`
+	StatsDays   *int `json:"stats_days,omitempty"`
+
+	ThreatFeeds    *bool     `json:"threat_feeds,omitempty"`
+	TrustedDomains *[]string `json:"trusted_domains,omitempty"`
 }
 
 // Overlay returns base with every set field replaced.
@@ -73,6 +79,18 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.Rules != nil {
 		c.Filtering.Rules = append([]string(nil), (*s.Rules)...)
+	}
+	if s.HistoryDays != nil {
+		c.History.Days = *s.HistoryDays
+	}
+	if s.StatsDays != nil {
+		c.History.StatsDays = *s.StatsDays
+	}
+	if s.ThreatFeeds != nil {
+		c.Analytics.ThreatFeeds = *s.ThreatFeeds
+	}
+	if s.TrustedDomains != nil {
+		c.Analytics.TrustedDomains = append([]string(nil), (*s.TrustedDomains)...)
 	}
 	return c
 }
@@ -124,6 +142,18 @@ func (s *Settings) Merge(p Settings) {
 	if p.Rules != nil {
 		s.Rules = p.Rules
 	}
+	if p.HistoryDays != nil {
+		s.HistoryDays = p.HistoryDays
+	}
+	if p.StatsDays != nil {
+		s.StatsDays = p.StatsDays
+	}
+	if p.ThreatFeeds != nil {
+		s.ThreatFeeds = p.ThreatFeeds
+	}
+	if p.TrustedDomains != nil {
+		s.TrustedDomains = p.TrustedDomains
+	}
 }
 
 // Touches reports which permission areas a patch changes.
@@ -131,7 +161,12 @@ func (p Settings) Touches() (upstream, network, lists, rules bool) {
 	upstream = p.UpstreamMode != nil || p.UpstreamServers != nil || p.TunnelInterface != nil ||
 		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil
 	network = p.AllowedNets != nil || p.LocalDNS != nil || p.TimeZone != nil || p.Records != nil
-	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.FilteringEnabled != nil || p.BlockMode != nil
+	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.FilteringEnabled != nil || p.BlockMode != nil ||
+		p.ThreatFeeds != nil || p.TrustedDomains != nil
 	rules = p.Rules != nil
 	return
 }
+
+// TouchesHistory reports whether a patch changes how long query history is
+// kept (an admin decision, since it is about privacy).
+func (p Settings) TouchesHistory() bool { return p.HistoryDays != nil || p.StatsDays != nil }

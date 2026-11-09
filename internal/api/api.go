@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prezmc/dnserve/internal/analytics"
 	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/backup"
 	"github.com/prezmc/dnserve/internal/cluster"
@@ -26,6 +27,7 @@ import (
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserve/internal/threat"
 )
 
 // CookieName is the session cookie.
@@ -61,6 +63,11 @@ type API struct {
 	// Cluster is this node's cluster membership (nil: not clustered, as
 	// in tests).
 	Cluster *cluster.Cluster
+	// Analytics is this node's long-term query history (nil: analytics
+	// views show only other nodes, or nothing).
+	Analytics *analytics.Store
+	// Intel scores domains for risk and names their type (nil: off).
+	Intel *threat.Intel
 	// Backups makes and stores this node's backups (nil: downloads and
 	// stored backups are unavailable, as in tests).
 	Backups *backup.Manager
@@ -164,6 +171,7 @@ func (a *API) Handler() http.Handler {
 	// Cluster.
 	a.clusterRoutes(m)
 	a.backupRoutes(m)
+	a.analyticsRoutes(m)
 
 	// Status and audit.
 	m.HandleFunc("GET /api/v1/status", a.authed(store.PermDashboard, a.status))

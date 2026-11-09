@@ -10,6 +10,8 @@
   --warn: #9a6700;
   --bad: #c62828;
   --code: #eef1f5;
+  --s-allowed: #2257d6;
+  --s-blocked: #c26a12;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -25,6 +27,8 @@
     --warn: #d4a72c;
     --bad: #ff6b6b;
     --code: #232931;
+    --s-allowed: #5b8af0;
+    --s-blocked: #cc7f30;
     color-scheme: dark;
   }
 }
@@ -179,3 +183,35 @@ details.card[open] > summary { margin-bottom: .75rem; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
 td code { white-space: nowrap; }
+
+/* analytics */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--panel); padding: .4rem .75rem; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+.chart-wrap { position: relative; }
+.chart { width: 100%; height: auto; display: block; }
+.chart .grid-line { stroke: var(--line); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .bar-allowed { fill: var(--s-allowed); }
+.chart .bar-blocked { fill: var(--s-blocked); }
+.chart .hit { fill: transparent; }
+.chart .hit:hover { fill: var(--text); fill-opacity: .06; }
+.chart-tip {
+  position: absolute; top: 0; transform: translateX(-50%); pointer-events: none; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 8px; padding: .4rem .6rem; font-size: .85rem; box-shadow: 0 4px 14px rgb(0 0 0 / .12); white-space: nowrap;
+}
+.legend { display: flex; gap: 1rem; margin-bottom: .25rem; color: var(--muted); }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: .35rem; vertical-align: -1px; }
+.key.allowed { background: var(--s-allowed); }
+.key.blocked { background: var(--s-blocked); }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 1rem; }
+table.top { width: 100%; }
+table.top td { vertical-align: top; }
+table.top td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.top .link.mono { text-align: left; word-break: break-all; padding: 0; }
+.meter { height: 4px; background: var(--code); border-radius: 2px; margin-top: .3rem; overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--s-allowed); border-radius: 2px; }
+.badge.risk-high { background: var(--bad); color: var(--panel); }
+.badge.risk-medium { background: var(--warn); color: var(--panel); }
+.risky .card { border-color: var(--warn); }

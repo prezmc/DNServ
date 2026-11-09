@@ -72,6 +72,33 @@ setup wizard and dashboard handle the rest from your browser.
   which rule and list. Give DNServe your router's address (`local_dns`) and
   it shows the names your router knows and answers local names such as
   `printer.lan` through it.
+- **Analytics and query history.** Each node keeps its own query history
+  in SQLite (`/data/history.db`): every query for 30 days and hourly
+  totals for 90 by default (Settings → Query history, admins only; 0
+  keeps none). **Analytics** shows queries over time, blocked share,
+  cache hits, response time, top domains, top blocked domains with what
+  caught them, and the busiest devices, for the last hour up to 90 days,
+  for everyone or one device. Click a domain for its chart, which devices
+  asked and one-click Block, Allow or Undo. The **Query log** searches
+  every node's history (several words match in any order), pages back in
+  time and exports CSV. With several nodes, the dashboard asks each one
+  and merges the answers; there is no central database, and a node that
+  is down is named as missing. Writing history never slows DNS answers:
+  queries are queued and written in batches, and if the disk can't keep
+  up they are counted and dropped rather than waited on. People with only
+  `dashboard.view` see totals and top domains; devices, the query log and
+  exports need `querylog.view` (and `data.export`).
+- **Risk scores and domain types.** Analytics marks risky domains (0-100)
+  from public threat feeds (URLhaus and ThreatFox from abuse.ch, Phishing
+  Army, HaGeZi's Threat Intelligence Feeds) plus a few signs in the name
+  itself (machine-generated look, often-abused top-level domains,
+  look-alike characters), and says what each domain is and who runs it
+  (Advertising · Google) from AdGuard's companies database (CC BY-SA
+  4.0). A **Risky domains** list sits at the top of Analytics, and the
+  domain detail and Query log show scores and reasons. Scores never block
+  anything. Turn the feeds off, or list trusted domains, under Settings →
+  Risk scoring. Each node downloads the sources itself, keeps them in
+  `/data/threat` and refreshes them twice a day (about 30 MB of memory).
 - **Local names.** Give names to things on your network under **Local
   names**: `nas.home → 192.168.1.20`, an alias like `files.home → nas.home`
   (or to an outside name), or a wildcard like `*.lab.home`. Every node
@@ -264,6 +291,9 @@ readable header (when, which node) is authenticated too.
 | `DNSERVE_TIME_ZONE` | `Europe/London` | time zone for group schedules (default: the container's `TZ`, else UTC) |
 | `DNSERVE_BLOCK_BYPASS` | `true` | block public DoH resolvers and Private Relay |
 | `DNSERVE_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
+| `DNSERVE_THREAT_FEEDS` | `false` | download threat feeds for risk scores (default on) |
+| `DNSERVE_HISTORY_DAYS` | `14` | days of individual queries each node keeps (0 = none) |
+| `DNSERVE_STATS_DAYS` | `90` | days of hourly totals each node keeps (0 = none) |
 | `DNSERVE_CLUSTER_ADVERTISE` | `192.168.1.10:8081` | how other nodes reach this one (default: learned from the dashboard's address) |
 | `DNSERVE_CLUSTER_LISTEN` | `:8081` | node-to-node listener |
 | `DNSERVE_ROLE` | `witness` | `node` (default) or `witness` (votes only; see above) |
@@ -295,6 +325,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
 | Groups | `GET`/`POST /groups` `{name, rules, skip_blocklists, schedules: [{name, days, start, end, block_all, rules}], devices}`, `PUT`/`DELETE /groups/{id}` |
 | Recent queries | `GET /queries?client=&search=&result=&before=&limit=` (`client` is an IP or device id; `result` is `blocked`, `allowed`, `failed`, …) |
+| Analytics | `GET /analytics/summary`, `/analytics/top?by=domains\|blocked\|clients`, `/analytics/domain?name=`, `/analytics/queries?search=&result=&before=`, `/analytics/export` (CSV), `/analytics/risky`, `/analytics/intel` (sources). All take `range=1h\|24h\|7d\|30d\|90d` and `client=` (IP or device id), and merge every node's history |
 | Settings history | `GET /config/versions`, `GET /config/versions/{id}` (with the changes going back would make), `POST /config/versions/{id}/restore` |
 | Backups | `GET /backups`, `POST /backups/passphrase` `{passphrase, password}`, `PUT /backups/schedule` `{every: daily\|weekly\|"", at: "HH:MM", keep, offsite}`, `POST /backups/download`, `GET /backups/files/{local\|offsite}/{name}`, `POST /backups/restore` (multipart: `file`, `passphrase`, `password`) |
 | Cluster | `GET /cluster`, `POST /cluster/join-codes` `{host}`, `PUT /cluster/nodes/{id}` `{name, never_leader}`, `DELETE /cluster/nodes/{id}`, `POST /cluster/preferred` `{id}`, `POST /cluster/transfer` `{to}`, `POST /cluster/recover` `{password, accept_risk}`, `POST /cluster/join` `{join_code, host, password}` |
@@ -433,8 +464,9 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
    codes, owner overrides (preferred leader, never lead, transfer, forced
    recovery), witness mode, settings history with restore, and scheduled
    encrypted backups (this). Later: backups to S3-compatible storage.
-3. **Analytics.** The AdGuard Insight features (threat scoring, domain types,
-   devices, search) built in, across every node.
+3. **Analytics.** Per-node query history merged across nodes, charts,
+   top lists, "caught by", search and export, and the AdGuard Insight
+   features: threat-feed risk scores and domain types and owners (this).
 4. **Multi-server deploy and failover testing.**
 
 ## License

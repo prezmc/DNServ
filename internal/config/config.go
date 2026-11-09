@@ -28,6 +28,8 @@ type Config struct {
 	Filtering FilteringConfig `yaml:"filtering"`
 	HTTP      HTTPConfig      `yaml:"http"`
 	Cluster   ClusterConfig   `yaml:"cluster"`
+	History   HistoryConfig   `yaml:"history"`
+	Analytics AnalyticsConfig `yaml:"analytics"`
 	DataDir   string          `yaml:"data_dir"`
 	// TimeZone is an IANA name such as "Europe/London" used for group
 	// schedules. Empty means the container's TZ, or UTC.
@@ -187,6 +189,31 @@ type ClusterConfig struct {
 	Advertise string `yaml:"advertise"`
 }
 
+// HistoryConfig is how long each node keeps its query history (in
+// data_dir/history.db).
+type HistoryConfig struct {
+	// Days of individual queries to keep for search. 0 keeps none.
+	Days int `yaml:"days"`
+	// StatsDays of hourly totals per device and domain, for charts and top
+	// lists. 0 keeps none.
+	StatsDays int `yaml:"stats_days"`
+}
+
+// AnalyticsConfig controls risk scoring in the dashboard.
+type AnalyticsConfig struct {
+	// ThreatFeeds downloads malware and phishing feeds to score the
+	// domains devices look up (they don't block anything).
+	ThreatFeeds bool `yaml:"threat_feeds"`
+	// TrustedDomains (and their subdomains) are never flagged as risky.
+	TrustedDomains []string `yaml:"trusted_domains"`
+}
+
+// History limits.
+const (
+	MaxHistoryDays = 365
+	MaxStatsDays   = 730
+)
+
 // Default returns a configuration that works out of the box: encrypted
 // forwarding to Cloudflare over DNS over HTTPS, caching on, filtering on.
 func Default() Config {
@@ -235,9 +262,11 @@ func Default() Config {
 			BlockTTL:        10 * time.Second,
 			RefreshInterval: 24 * time.Hour,
 		},
-		HTTP:    HTTPConfig{Listen: ":8080"},
-		Cluster: ClusterConfig{Listen: ":8081"},
-		DataDir: "/data",
+		HTTP:      HTTPConfig{Listen: ":8080"},
+		Cluster:   ClusterConfig{Listen: ":8081"},
+		History:   HistoryConfig{Days: 30, StatsDays: 90},
+		Analytics: AnalyticsConfig{ThreatFeeds: true},
+		DataDir:   "/data",
 	}
 }
 
@@ -300,12 +329,21 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	set("DNSERVE_CLUSTER_LISTEN", func(v string) error { c.Cluster.Listen = v; return nil })
 	set("DNSERVE_CLUSTER_ADVERTISE", func(v string) error { c.Cluster.Advertise = v; return nil })
 	set("DNSERVE_BLOCK_MODE", func(v string) error { c.Filtering.BlockMode = v; return nil })
+	set("DNSERVE_THREAT_FEEDS", func(v string) (err error) { c.Analytics.ThreatFeeds, err = strconv.ParseBool(v); return })
+	set("DNSERVE_HISTORY_DAYS", func(v string) (err error) { c.History.Days, err = strconv.Atoi(v); return })
+	set("DNSERVE_STATS_DAYS", func(v string) (err error) { c.History.StatsDays, err = strconv.Atoi(v); return })
 	return errors.Join(errs...)
 }
 
 // Validate checks the configuration for mistakes that would stop the node.
 func (c Config) Validate() error {
 	var errs []error
+	if c.History.Days < 0 || c.History.Days > MaxHistoryDays {
+		errs = append(errs, fmt.Errorf("history.days must be 0-%d", MaxHistoryDays))
+	}
+	if c.History.StatsDays < 0 || c.History.StatsDays > MaxStatsDays {
+		errs = append(errs, fmt.Errorf("history.stats_days must be 0-%d", MaxStatsDays))
+	}
 	if len(c.DNS.Listen) == 0 {
 		errs = append(errs, errors.New("dns.listen: at least one address is required"))
 	}

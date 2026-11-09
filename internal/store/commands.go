@@ -606,6 +606,14 @@ func clearField(s *Settings, f string) error {
 		s.Allowlists = nil
 	case "rules":
 		s.Rules = nil
+	case "history_days":
+		s.HistoryDays = nil
+	case "stats_days":
+		s.StatsDays = nil
+	case "threat_feeds":
+		s.ThreatFeeds = nil
+	case "trusted_domains":
+		s.TrustedDomains = nil
 	default:
 		return fmt.Errorf("unknown setting %q", f)
 	}
