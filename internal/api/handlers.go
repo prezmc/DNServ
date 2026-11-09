@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"github.com/prezmc/dnserve/internal/auth"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/store"
+	"rsc.io/qr"
 )
 
 // --- setup ---
@@ -154,10 +156,13 @@ func (a *API) totpBegin(w http.ResponseWriter, r *http.Request, p *Principal) {
 	if _, ok := a.apply(w, store.NewCommand(store.OpTOTPBegin, p.User.Username, store.TOTPBegin{ID: p.User.ID, Secret: secret})); !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"secret":      secret,
-		"otpauth_url": auth.TOTPURL(secret, p.User.Username, Issuer),
-	})
+	u := auth.TOTPURL(secret, p.User.Username, Issuer)
+	out := map[string]string{"secret": secret, "otpauth_url": u}
+	if code, err := qr.Encode(u, qr.M); err == nil {
+		code.Scale = 6
+		out["qr_png"] = "data:image/png;base64," + base64.StdEncoding.EncodeToString(code.PNG())
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // totpConfirm finishes enrollment with a code from the app, returns the
@@ -222,7 +227,7 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 			perms = append(perms, pm)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"signed_in": s.Stage == auth.StageFull, "stage": s.Stage, "csrf": s.CSRF, "user": u.Public(), "perms": perms})
+	writeJSON(w, http.StatusOK, map[string]any{"signed_in": s.Stage == auth.StageFull, "stage": s.Stage, "csrf": s.CSRF, "session_id": s.ID, "user": u.Public(), "perms": perms})
 }
 
 func (a *API) changePassword(w http.ResponseWriter, r *http.Request, p *Principal) {

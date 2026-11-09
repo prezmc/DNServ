@@ -28,6 +28,7 @@ import (
 	"github.com/prezmc/dnserve/internal/server"
 	"github.com/prezmc/dnserve/internal/store"
 	"github.com/prezmc/dnserve/internal/upstream"
+	"github.com/prezmc/dnserve/internal/web"
 )
 
 var version = "dev"
@@ -341,6 +342,7 @@ func splitList(s string) []string {
 func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, ups *atomic.Pointer[resolverSet], ready *atomic.Bool, apiHandler http.Handler) http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("/api/", apiHandler)
+	mux.Handle("/", web.Handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok\n"))
 	})
