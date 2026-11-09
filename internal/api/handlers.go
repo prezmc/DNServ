@@ -47,7 +47,7 @@ func (a *API) postSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	if subtle.ConstantTimeCompare([]byte(auth.NormalizeSetupCode(req.Code)), []byte(auth.NormalizeSetupCode(a.setupCode))) != 1 {
 		a.Throttle.Fail("setup:" + ip)
-		writeErr(w, http.StatusForbidden, "wrong setup code (find it with: docker logs <container>)")
+		writeErr(w, http.StatusForbidden, "that setup code doesn't match; check the container log (a restart prints a new one)")
 		return
 	}
 	if err := auth.CheckPasswordStrength(req.Password, req.Username); err != nil {
@@ -67,6 +67,35 @@ func (a *API) postSetup(w http.ResponseWriter, r *http.Request) {
 	token, s := a.Sessions.Create(id, auth.StageEnroll, ip, r.UserAgent())
 	a.setCookie(w, r, token, auth.PendingTTL)
 	writeJSON(w, http.StatusCreated, map[string]any{"stage": s.Stage, "csrf": s.CSRF})
+}
+
+// checkSetupCode lets the wizard confirm the code before asking for an
+// account. It is throttled like setup itself.
+func (a *API) checkSetupCode(w http.ResponseWriter, r *http.Request) {
+	var req struct{ Code string }
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if err := a.checkOrigin(r); err != nil {
+		writeErr(w, http.StatusForbidden, err.Error())
+		return
+	}
+	key := "setup:" + clientIP(r)
+	if ok, wait := a.Throttle.Allowed(key); !ok {
+		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("too many attempts; try again in %s", wait.Round(time.Second)))
+		return
+	}
+	code := a.SetupCode()
+	if code == "" {
+		writeErr(w, http.StatusConflict, "setup is already complete; sign in instead")
+		return
+	}
+	if subtle.ConstantTimeCompare([]byte(auth.NormalizeSetupCode(req.Code)), []byte(auth.NormalizeSetupCode(code))) != 1 {
+		a.Throttle.Fail(key)
+		writeErr(w, http.StatusForbidden, "that setup code doesn't match; check the container log (a restart prints a new one)")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- sign-in ---

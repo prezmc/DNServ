@@ -37,7 +37,7 @@ services:
       - "8080:8080/tcp"
 
   dnserve:
-    image: prezmcmahon/dnserve:latest
+    image: ghcr.io/prezmc/dnserve:latest
     container_name: dnserve
     restart: unless-stopped
     network_mode: "service:vpn"

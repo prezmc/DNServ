@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -189,6 +190,12 @@ func run() error {
 		if set.unbound != nil {
 			out["unbound"] = map[string]any{"ready": set.unbound.ub.Ready(), "restarts": set.unbound.ub.Restarts()}
 		}
+		// Lets the UI offer tunnel mode only where a VPN interface exists.
+		if ifc := eff.Upstream.Tunnel.Interface; ifc != "" {
+			_, err := net.InterfaceByName(ifc)
+			out["tunnel_interface_present"] = err == nil
+		}
+		out["started_at"] = started.UTC()
 		if set.tunnel != nil {
 			ok, why := set.tunnel.Up()
 			out["tunnel"] = map[string]any{"up": ok, "detail": why, "interface": eff.Upstream.Tunnel.Interface}

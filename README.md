@@ -72,7 +72,7 @@ setup wizard and dashboard handle the rest from your browser.
 ```bash
 docker run -d --name dnserve --restart unless-stopped \
   -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 \
-  -v dnserve-data:/data prezmcmahon/dnserve:latest
+  -v dnserve-data:/data ghcr.io/prezmc/dnserve:latest
 ```
 
 or `docker compose up -d` with the included `docker-compose.yml`.
@@ -170,7 +170,7 @@ your MFA. If the only admin is locked out, stop the node and run:
 
 ```bash
 docker stop dnserve
-docker run --rm -v dnserve-data:/data prezmcmahon/dnserve -reset-mfa USERNAME
+docker run --rm -v dnserve-data:/data ghcr.io/prezmc/dnserve -reset-mfa USERNAME
 docker start dnserve
 ```
 
@@ -247,9 +247,9 @@ The Unbound integration test runs when `unbound` and a DNSSEC root key are
 installed (`apt install unbound` or `apk add unbound dnssec-root`).
 
 Images: `.github/workflows/publish.yml` builds amd64 and arm64 images and
-pushes `prezmcmahon/dnserve` to Docker Hub on every push to `main` and on
-version tags, once the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository
-secrets are set.
+pushes `ghcr.io/prezmc/dnserve` on every push to `main` and on version tags.
+Adding `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets also
+pushes `prezmcmahon/dnserve` to Docker Hub.
 
 ## Roadmap
 

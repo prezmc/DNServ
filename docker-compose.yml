@@ -2,21 +2,21 @@
 # No config files needed; settings live in the dnserve-data volume.
 services:
   dnserve:
-    image: prezmcmahon/dnserve:latest
+    image: ghcr.io/prezmc/dnserve:latest
     container_name: dnserve
     restart: unless-stopped
     ports:
       - "53:53/udp"
       - "53:53/tcp"
       - "853:853/tcp"     # DNS over TLS for your devices
-      - "8080:8080/tcp"   # health, metrics (dashboard in step 1c)
+      - "8080:8080/tcp"   # dashboard, setup wizard, health and metrics
       # DNS over HTTPS. Uncomment if nothing else on the host uses 443,
       # or map another host port, e.g. "8443:443/tcp".
       # - "443:443/tcp"
     volumes:
       - dnserve-data:/data
     environment:
-      - TZ=America/Chicago
+      - TZ=America/Chicago   # your time zone, used by schedules
 
 volumes:
   dnserve-data:

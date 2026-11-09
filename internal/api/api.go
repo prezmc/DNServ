@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -55,6 +56,13 @@ func New(st *store.Store, sess *auth.Sessions, base config.Config, log *slog.Log
 	if len(st.State().Users) == 0 {
 		a.setupCode = auth.NewSetupCode()
 		log.Warn("first-run setup: open the dashboard and enter this setup code", "setup_code", a.setupCode)
+		fmt.Fprintf(os.Stderr, "\n"+
+			"  +--------------------------------------------------+\n"+
+			"  |  DNServe first-run setup                         |\n"+
+			"  |                                                  |\n"+
+			"  |  Open http://<this server>:8080 in a browser     |\n"+
+			"  |  and enter this setup code:   %-19s|\n"+
+			"  +--------------------------------------------------+\n\n", a.setupCode)
 	}
 	return a
 }
@@ -76,6 +84,7 @@ func (a *API) Handler() http.Handler {
 	// Setup and sign-in.
 	m.HandleFunc("GET /api/v1/setup", a.getSetup)
 	m.HandleFunc("POST /api/v1/setup", a.postSetup)
+	m.HandleFunc("POST /api/v1/setup/check", a.checkSetupCode)
 	m.HandleFunc("POST /api/v1/auth/login", a.login)
 	m.HandleFunc("POST /api/v1/auth/mfa", a.stage(auth.StageMFA, a.mfa))
 	m.HandleFunc("POST /api/v1/auth/totp/begin", a.stage(auth.StageEnroll, a.totpBegin))
