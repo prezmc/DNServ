@@ -12,6 +12,7 @@ import (
 	"net/netip"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -34,15 +35,15 @@ type Filter interface {
 
 // Server handles DNS queries.
 type Server struct {
-	cfg      config.Config
-	cache    *cache.Cache // nil when disabled
-	filter   Filter
-	resolver Resolver
-	log      *slog.Logger
-	allowed  []netip.Prefix
-	limiter  *rateLimiter
-	group    singleflight.Group
-	Metrics  *Metrics
+	cfg    config.Config
+	cache  *cache.Cache // nil when disabled
+	filter Filter
+	log    *slog.Logger
+	// live holds what settings can change while running.
+	live    atomic.Pointer[live]
+	limiter *rateLimiter
+	group   singleflight.Group
+	Metrics *Metrics
 
 	mu       sync.Mutex
 	servers  []*dns.Server
@@ -61,14 +62,39 @@ func New(cfg config.Config, c *cache.Cache, f Filter, r Resolver, log *slog.Logg
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
-		cfg: cfg, cache: c, filter: f, resolver: r, log: log,
-		allowed: allowed, Metrics: NewMetrics(),
+		cfg: cfg, cache: c, filter: f, log: log, Metrics: NewMetrics(),
 		refreshCtx: ctx, refreshCancel: cancel,
 	}
+	s.live.Store(&live{resolver: r, allowed: allowed, filtering: cfg.Filtering})
 	if cfg.DNS.RateLimit > 0 {
 		s.limiter = newRateLimiter(cfg.DNS.RateLimit)
 	}
 	return s, nil
+}
+
+type live struct {
+	resolver  Resolver
+	allowed   []netip.Prefix
+	filtering config.FilteringConfig
+}
+
+// Apply switches the resolver (nil keeps the current one), allowed client
+// networks and filtering settings without dropping queries in flight.
+// Cached answers are kept unless flush is set.
+func (s *Server) Apply(r Resolver, allowedNets []string, fc config.FilteringConfig, flush bool) error {
+	allowed, err := parseNets(allowedNets)
+	if err != nil {
+		return err
+	}
+	cur := s.live.Load()
+	if r == nil {
+		r = cur.resolver
+	}
+	s.live.Store(&live{resolver: r, allowed: allowed, filtering: fc})
+	if flush && s.cache != nil {
+		s.cache.Flush()
+	}
+	return nil
 }
 
 // DefaultAllowedNets are the client networks allowed when none are
@@ -218,7 +244,7 @@ func (s *Server) resolve(req *dns.Msg) (*dns.Msg, Outcome) {
 
 	// Firefox's canary domain: NXDOMAIN tells it not to switch on its own
 	// DNS over HTTPS and bypass this server's filtering.
-	if s.cfg.Filtering.Enabled && (name == "use-application-dns.net" || strings.HasSuffix(name, ".use-application-dns.net")) {
+	if s.live.Load().filtering.Enabled && (name == "use-application-dns.net" || strings.HasSuffix(name, ".use-application-dns.net")) {
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeNameError)
 		m.Ns = []dns.RR{s.blockSOA(q.Name)}
@@ -277,7 +303,7 @@ func (s *Server) fetch(key string, req *dns.Msg) (*dns.Msg, error) {
 
 func (s *Server) exchange(ctx context.Context, key string, req *dns.Msg) (*dns.Msg, error) {
 	up := upstreamQuery(req)
-	resp, err := s.resolver.Exchange(ctx, up)
+	resp, err := s.live.Load().resolver.Exchange(ctx, up)
 	if err != nil {
 		s.Metrics.upstreamErrors.Add(1)
 		return nil, err
@@ -353,7 +379,7 @@ func (s *Server) clientAllowed(a netip.Addr) bool {
 		return false
 	}
 	a = a.Unmap()
-	for _, p := range s.allowed {
+	for _, p := range s.live.Load().allowed {
 		if p.Contains(a) {
 			return true
 		}
@@ -386,7 +412,7 @@ func rcodeMsg(req *dns.Msg, rcode int) *dns.Msg {
 // blockSOA is the authority record on blocked negative answers, so clients
 // cache the block for BlockTTL.
 func (s *Server) blockSOA(zone string) dns.RR {
-	ttl := uint32(s.cfg.Filtering.BlockTTL / time.Second)
+	ttl := uint32(s.live.Load().filtering.BlockTTL / time.Second)
 	return &dns.SOA{
 		Hdr: dns.RR_Header{Name: zone, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: ttl},
 		Ns:  "dnserve.blocked.", Mbox: "blocked.dnserve.blocked.",
@@ -396,11 +422,11 @@ func (s *Server) blockSOA(zone string) dns.RR {
 
 func (s *Server) blocked(req *dns.Msg) *dns.Msg {
 	q := req.Question[0]
-	ttl := uint32(s.cfg.Filtering.BlockTTL / time.Second)
+	ttl := uint32(s.live.Load().filtering.BlockTTL / time.Second)
 	m := new(dns.Msg)
 	m.SetReply(req)
 	m.Authoritative = false
-	switch s.cfg.Filtering.BlockMode {
+	switch s.live.Load().filtering.BlockMode {
 	case "nxdomain":
 		m.Rcode = dns.RcodeNameError
 		m.Ns = []dns.RR{s.blockSOA(q.Name)}

@@ -154,9 +154,9 @@ type FilteringConfig struct {
 
 // ListConfig is one blocklist or allowlist.
 type ListConfig struct {
-	Name    string `yaml:"name"`
-	URL     string `yaml:"url"`
-	Enabled bool   `yaml:"enabled"`
+	Name    string `yaml:"name" json:"name"`
+	URL     string `yaml:"url" json:"url"`
+	Enabled bool   `yaml:"enabled" json:"enabled"`
 }
 
 // HTTPConfig serves health checks and metrics.
@@ -340,6 +340,18 @@ func (c Config) Validate() error {
 	case "null_ip", "nxdomain", "refused":
 	default:
 		errs = append(errs, fmt.Errorf("filtering.block_mode: unknown mode %q", c.Filtering.BlockMode))
+	}
+	for _, n := range c.DNS.AllowedNets {
+		if _, err := netip.ParsePrefix(n); err != nil {
+			if _, err := netip.ParseAddr(n); err != nil {
+				errs = append(errs, fmt.Errorf("dns.allowed_nets: %q is not an IP or CIDR", n))
+			}
+		}
+	}
+	for _, l := range append(append([]ListConfig(nil), c.Filtering.Lists...), c.Filtering.Allowlists...) {
+		if strings.TrimSpace(l.URL) == "" {
+			errs = append(errs, fmt.Errorf("filtering: list %q has no url", l.Name))
+		}
 	}
 	if c.Cache.Enabled && c.Cache.MaxEntries <= 0 {
 		errs = append(errs, errors.New("cache.max_entries must be positive"))
