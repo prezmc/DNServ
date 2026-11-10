@@ -213,8 +213,12 @@ Run the same image on a second server (same command or compose file, port
    this server to my DNServe**, and paste the join code.
 
 The new node copies the accounts, settings, devices, groups and rules, and
-from then on every change made on either node reaches both. Add the second
-node's address to your router as a second DNS server.
+from then on every change made on either node reaches both, usually within
+a second. Blocklist contents are the same on every node too: the leader
+downloads each list and the others copy its exact version over the cluster
+link, so rule counts match. A node that can't reach the leader downloads
+lists itself. **Update lists now** on any node asks the leader. Add the
+second node's address to your router as a second DNS server.
 
 How it works: every node runs embedded Raft (HashiCorp), alone or not.
 Changes go through the leader's log and are applied on every node in the
