@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -29,7 +30,11 @@ type ListStatus struct {
 	Skipped   int       `json:"skipped"`
 	Updated   time.Time `json:"updated"`
 	FromCache bool      `json:"from_cache"`
-	Error     string    `json:"error,omitempty"`
+	// SHA256 identifies the downloaded copy in use; FromLeader says it
+	// came from the cluster leader rather than the list's own server.
+	SHA256     string `json:"sha256,omitempty"`
+	FromLeader bool   `json:"from_leader,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // Engine owns the current Index and rebuilds it when lists change. Lookups
@@ -43,6 +48,9 @@ type Engine struct {
 	idx    atomic.Pointer[Index]
 	mu     sync.Mutex // serializes rebuilds
 	status atomic.Pointer[[]ListStatus]
+
+	peer      atomic.Pointer[Peer]
+	onRebuild atomic.Pointer[func(changed bool)]
 }
 
 // NewEngine creates an engine. dataDir caches downloaded lists so a
@@ -87,6 +95,22 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 	defer e.mu.Unlock()
 	start := time.Now()
 	cfg := *e.cfg.Load()
+	before := e.Versions()
+
+	// In a cluster, use the leader's copy of each list, so every node has
+	// exactly the same rules. If the leader can't be asked, download as a
+	// single node would.
+	var follow map[string]string
+	var peer Peer
+	if p := e.peer.Load(); p != nil {
+		peer = *p
+		vctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		v, err := peer.Versions(vctx)
+		cancel()
+		if err == nil {
+			follow = v
+		}
+	}
 
 	b := NewBuilder()
 	var statuses []ListStatus
@@ -118,7 +142,21 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 		if st.Name == "" {
 			st.Name = l.URL
 		}
-		rc, fromCache, updated, err := e.open(ctx, l.URL, forceDownload)
+		var rc io.ReadCloser
+		var fromCache bool
+		var updated time.Time
+		var err error
+		if want := follow[l.URL]; want != "" && isURL(l.URL) {
+			rc, updated, err = e.openLeaderCopy(ctx, peer, l.URL, want)
+			if err == nil {
+				st.FromLeader, fromCache = true, true
+			} else {
+				e.log.Warn("couldn't get the leader's copy of a list; downloading it here", "list", st.Name, "err", err)
+			}
+		}
+		if rc == nil {
+			rc, fromCache, updated, err = e.open(ctx, l.URL, forceDownload)
+		}
 		if err != nil {
 			st.Error = err.Error()
 			statuses = append(statuses, st)
@@ -135,6 +173,9 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 		if err != nil {
 			st.Error = err.Error()
 		}
+		if isURL(l.URL) {
+			st.SHA256, _ = fileSHA(e.localCopy(l.URL))
+		}
 		statuses = append(statuses, st)
 	}
 	for _, l := range cfg.Allowlists {
@@ -147,8 +188,32 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 	idx := b.Build()
 	e.idx.Store(idx)
 	e.status.Store(&statuses)
-	e.log.Info("filter index built", "rules", idx.Len(), "lists", len(statuses), "took", time.Since(start).Round(time.Millisecond))
+	e.log.Info("filter index built", "rules", idx.Len(), "lists", len(statuses), "from_leader", follow != nil, "took", time.Since(start).Round(time.Millisecond))
+	if fn := e.onRebuild.Load(); fn != nil {
+		changed := !maps.Equal(before, e.Versions())
+		go (*fn)(changed)
+	}
 	return nil
+}
+
+// openLeaderCopy opens the cached copy of src when it is the leader's
+// version (want), fetching the leader's copy first if it isn't.
+func (e *Engine) openLeaderCopy(ctx context.Context, peer Peer, src, want string) (io.ReadCloser, time.Time, error) {
+	path := e.localCopy(src)
+	if sum, err := fileSHA(path); err != nil || sum != want {
+		fctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		err := e.fetchFromPeer(fctx, peer, src, want)
+		cancel()
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	fi, _ := f.Stat()
+	return f, fi.ModTime(), nil
 }
 
 // Run rebuilds on the configured interval until ctx ends.

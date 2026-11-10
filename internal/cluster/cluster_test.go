@@ -1,12 +1,15 @@
 package cluster
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -441,5 +444,32 @@ func TestChangeBeforeInitSurvives(t *testing.T) {
 			t.Fatalf("round %d: the join code made before cluster.init was lost", i)
 		}
 		n.close()
+	}
+}
+
+func TestFetchFromLeader(t *testing.T) {
+	a, b := pair(t)
+	waitFor(t, "a leads", a.leading)
+	path := filepath.Join(t.TempDir(), "list.txt")
+	const sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := os.WriteFile(path, []byte("||ads.example^\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a.c.ServeFiles(func(name string) (string, bool) { return path, name == sha })
+	a.c.Handle("echo", func(_ context.Context, body json.RawMessage) (any, error) { return "leader", nil })
+
+	var buf bytes.Buffer
+	if err := b.c.FetchFromLeader(context.Background(), sha, &buf); err != nil || buf.String() != "||ads.example^\n" {
+		t.Fatalf("fetch: %q, %v", buf.String(), err)
+	}
+	if err := b.c.FetchFromLeader(context.Background(), strings.Repeat("f", 64), io.Discard); err == nil {
+		t.Fatal("fetched a file the leader doesn't have")
+	}
+	if raw, err := b.c.AskLeader(context.Background(), "echo", nil); err != nil || string(bytes.TrimSpace(raw)) != `"leader"` {
+		t.Fatalf("ask leader: %s, %v", raw, err)
+	}
+	// The leader itself does the work.
+	if _, err := a.c.AskLeader(context.Background(), "echo", nil); !errors.Is(err, ErrNoFullLeader) {
+		t.Fatalf("leader asking itself: %v", err)
 	}
 }

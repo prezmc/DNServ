@@ -4,7 +4,10 @@ package failover
 
 import (
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -118,6 +121,78 @@ func TestTwoNodesAndWitness(t *testing.T) {
 		start = time.Now()
 		l.mustChange("n2")
 		r.note("change on n2 (a follower) answered by both in %s", time.Since(start).Round(10*time.Millisecond))
+	})
+
+	l.scenario("blocklists match on both nodes", func(r *result) {
+		// A list server that hands out a new version on every download,
+		// as busy real lists do.
+		var hits atomic.Int32
+		ln, err := net.Listen("tcp", "0.0.0.0:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			n := hits.Add(1)
+			fmt.Fprintf(w, "||ads.blocklab.example^\n")
+			for i := int32(0); i < n; i++ {
+				fmt.Fprintf(w, "||v%d.blocklab.example^\n", i+1)
+			}
+		})}
+		go srv.Serve(ln)
+		defer srv.Close()
+		gw, err := docker("network", "inspect", "-f", "{{(index .IPAM.Config 0).Gateway}}", l.prefix+"-lan")
+		if err != nil {
+			t.Fatal(err)
+		}
+		url := fmt.Sprintf("http://%s:%d/list.txt", gw, ln.Addr().(*net.TCPAddr).Port)
+		if _, err := l.api("n1").do("PATCH", "/api/v1/settings", map[string]any{"lists": []map[string]any{{"name": "lab list", "url": url, "enabled": true}}}, nil); err != nil {
+			t.Fatal(err)
+		}
+		same := func() (int, bool) {
+			var a, b int
+			var sa, sb string
+			for i, n := range []string{"n1", "n2"} {
+				var st struct {
+					Filter struct {
+						Rules int
+						Lists []struct{ SHA256 string }
+					}
+				}
+				if _, err := l.api(n).do("GET", "/api/v1/status", nil, &st); err != nil || len(st.Filter.Lists) == 0 {
+					return 0, false
+				}
+				if i == 0 {
+					a, sa = st.Filter.Rules, st.Filter.Lists[0].SHA256
+				} else {
+					b, sb = st.Filter.Rules, st.Filter.Lists[0].SHA256
+				}
+			}
+			return a, a == b && sa == sb && sa != ""
+		}
+		start := time.Now()
+		var rules int
+		l.waitFor("both nodes on the same list version", 30*time.Second, func() bool { var ok bool; rules, ok = same(); return ok })
+		r.note("list added: both nodes had the same %d rules after %s (%d download(s) from the list's server)", rules, time.Since(start).Round(10*time.Millisecond), hits.Load())
+		for _, n := range []string{"n1", "n2"} {
+			l.waitFor(n+" blocks the list's domain", 10*time.Second, func() bool {
+				a, err := query(l.node(n).ip, "ads.blocklab.example.")
+				return err == nil && len(a) > 0 && a[0] == "0.0.0.0"
+			})
+		}
+		// "Update lists now" on a follower: the leader downloads, the
+		// follower copies it.
+		follower := l.other(l.fullLeader("n1"), full...)
+		before := hits.Load()
+		start = time.Now()
+		if _, err := l.api(follower).do("POST", "/api/v1/lists/update", map[string]any{}, nil); err != nil {
+			t.Fatal(err)
+		}
+		l.waitFor("both nodes on the new version", 30*time.Second, func() bool { n, ok := same(); return ok && n > rules })
+		got, _ := same()
+		r.note("update on %s: both nodes moved to the new version (%d rules) after %s, with %d download(s)", follower, got, time.Since(start).Round(10*time.Millisecond), hits.Load()-before)
+		if hits.Load()-before != 1 {
+			t.Errorf("an update made %d downloads from the list's server, want 1 (the leader's)", hits.Load()-before)
+		}
 	})
 
 	l.scenario("leader server dies", func(r *result) {

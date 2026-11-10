@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -159,6 +160,7 @@ func run() error {
 	// Filtering. DNS starts answering right away; the index is built in the
 	// background and /readyz reports ready once it is in place.
 	engine := filter.NewEngine(cfg.Filtering, cfg.DataDir, nil, log)
+	syncLists(ctx, cl, engine, log)
 	var filterReady atomic.Bool
 	go func() {
 		if err := engine.Rebuild(ctx, false); err != nil {
@@ -259,7 +261,21 @@ func run() error {
 	adm.VirusTotal = virustotal.New(func() string { return st.State().VirusTotalKey })
 	adm.LookupName = srv.LookupName
 	var updating atomic.Bool
+	cl.Handle(peerListsUpdate, func(context.Context, json.RawMessage) (any, error) {
+		adm.UpdateLists()
+		return nil, nil
+	})
 	adm.UpdateLists = func() {
+		// In a cluster the leader downloads, and the others copy its lists.
+		actx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		_, err := cl.AskLeader(actx, peerListsUpdate, nil)
+		cancel()
+		if err == nil {
+			return
+		}
+		if !errors.Is(err, cluster.ErrNoFullLeader) {
+			log.Warn("couldn't ask the leader to update lists; updating here", "err", err)
+		}
 		if !updating.CompareAndSwap(false, true) {
 			return // one at a time
 		}
@@ -853,4 +869,65 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// Peer RPCs for keeping blocklists the same on every node.
+const (
+	peerListVersions = "lists.versions" // the leader's list versions, by URL
+	peerListsChanged = "lists.changed"  // the leader has new list contents
+	peerListsUpdate  = "lists.update"   // download lists now (sent to the leader)
+)
+
+// syncLists makes every node in a cluster filter with exactly the same
+// list contents: the leader downloads lists, and the others copy its copy
+// of each one (by SHA-256) over the cluster link instead of downloading
+// their own, which could differ. A node that can't reach the leader
+// downloads lists itself, so filtering never depends on the cluster.
+func syncLists(ctx context.Context, cl *cluster.Cluster, engine *filter.Engine, log *slog.Logger) {
+	cl.ServeFiles(engine.FileBySHA)
+	cl.Handle(peerListVersions, func(context.Context, json.RawMessage) (any, error) { return engine.Versions(), nil })
+	var pending atomic.Bool
+	cl.Handle(peerListsChanged, func(context.Context, json.RawMessage) (any, error) {
+		if pending.CompareAndSwap(false, true) {
+			go func() {
+				defer pending.Store(false)
+				if err := engine.Rebuild(ctx, false); err != nil {
+					log.Warn("filter rebuild failed", "err", err)
+				}
+			}()
+		}
+		return nil, nil
+	})
+	engine.SetPeer(listPeer{cl})
+	engine.SetOnRebuild(func(changed bool) {
+		if !changed || cl.LocalStatus().LeaderID != cl.ID() {
+			return
+		}
+		nctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		for _, r := range cl.AskPeers(nctx, peerListsChanged, nil) {
+			if r.Err != nil {
+				log.Debug("couldn't tell a node about new lists; it catches up on its next refresh", "node", r.Name, "err", r.Err)
+			}
+		}
+	})
+}
+
+// listPeer gets list versions and contents from the cluster leader.
+type listPeer struct{ cl *cluster.Cluster }
+
+func (p listPeer) Versions(ctx context.Context) (map[string]string, error) {
+	raw, err := p.cl.AskLeader(ctx, peerListVersions, nil)
+	if err != nil {
+		return nil, err
+	}
+	var v map[string]string
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, err
+	}
+	return v, nil
+}
+
+func (p listPeer) Fetch(ctx context.Context, sha string, w io.Writer) error {
+	return p.cl.FetchFromLeader(ctx, sha, w)
 }

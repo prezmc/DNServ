@@ -84,6 +84,7 @@ type Cluster struct {
 	client atomic.Pointer[http.Client]
 	// handlers are member-only RPCs other packages add (see Handle).
 	handlers sync.Map // name -> PeerHandler
+	files    atomic.Pointer[FileSource]
 
 	// Leader bookkeeping, used only by the run loop.
 	leaderSince  time.Time
