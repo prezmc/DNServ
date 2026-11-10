@@ -361,3 +361,70 @@ func TestPauseFiltering(t *testing.T) {
 		t.Fatal("want blocked after resume")
 	}
 }
+
+// cnameResolver answers every name with a CNAME to target, then an A.
+type cnameResolver struct{ target string }
+
+func (c cnameResolver) Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, error) {
+	r := new(dns.Msg)
+	r.SetReply(q)
+	n := q.Question[0].Name
+	if q.Question[0].Qtype == dns.TypeA {
+		r.Answer = []dns.RR{
+			&dns.CNAME{Hdr: dns.RR_Header{Name: n, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300}, Target: "edge.example.net."},
+			&dns.CNAME{Hdr: dns.RR_Header{Name: "edge.example.net.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300}, Target: dns.Fqdn(c.target)},
+			&dns.A{Hdr: dns.RR_Header{Name: dns.Fqdn(c.target), Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300}, A: net.IPv4(192, 0, 2, 7)},
+		}
+	}
+	return r, nil
+}
+
+func TestCNAMEBlocking(t *testing.T) {
+	s, addr := newTestServer(t, nil, cnameResolver{target: "Cdn.Ads.Example"})
+	for i := 0; i < 2; i++ { // the second answer comes from the cache
+		if r := query(t, addr, "assets.news.example", dns.TypeA, "udp"); !isBlocked(r) {
+			t.Fatalf("alias of a blocked name answered (try %d): %v", i, r)
+		}
+	}
+	st := &store.State{
+		Groups:  map[string]*store.Group{"g": {ID: "g", Name: "G", Rules: []string{"@@||assets.news.example^"}}},
+		Devices: map[string]*store.Device{"me": {ID: "me", Name: "Me", Addrs: []string{"127.0.0.1"}, Group: "g"}},
+	}
+	s.SetPolicy(policy.Build(st))
+	if r := query(t, addr, "assets.news.example", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("an allowed name must not be blocked by its CNAME: %v", r)
+	}
+	st.Groups["g"].Rules = nil
+	st.Groups["g"].SkipBlocklists = true
+	s.SetPolicy(policy.Build(st))
+	if r := query(t, addr, "assets.news.example", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("a group that skips blocklists must skip them for CNAMEs too: %v", r)
+	}
+
+	_, addr2 := newTestServer(t, nil, cnameResolver{target: "cdn.good.example"})
+	if r := query(t, addr2, "assets.news.example", dns.TypeA, "udp"); isBlocked(r) || len(r.Answer) != 3 {
+		t.Fatalf("alias of an unblocked name should be answered: %v", r)
+	}
+}
+
+func TestAnswerIPBlocking(t *testing.T) {
+	s, addr := newTestServer(t, nil, &fakeResolver{}) // answers 192.0.2.1
+	st := &store.State{
+		Groups:  map[string]*store.Group{"g": {ID: "g", Name: "G", Rules: []string{"||2.1^"}}},
+		Devices: map[string]*store.Device{"me": {ID: "me", Name: "Me", Addrs: []string{"127.0.0.1"}, Group: "g"}},
+	}
+	s.SetPolicy(policy.Build(st))
+	if r := query(t, addr, "www.example.com", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("a rule for part of an address must not block it: %v", r)
+	}
+	st.Groups["g"].Rules = []string{"||192.0.2.1^"}
+	s.SetPolicy(policy.Build(st))
+	if r := query(t, addr, "www.example.com", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatalf("an answer with a listed address should be blocked: %v", r)
+	}
+	st.Groups["g"].Rules = []string{"||192.0.2.1^", "@@||www.example.com^"}
+	s.SetPolicy(policy.Build(st))
+	if r := query(t, addr, "www.example.com", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("an allowed name keeps its answer: %v", r)
+	}
+}

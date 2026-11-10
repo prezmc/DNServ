@@ -307,31 +307,79 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 		return m, OutBlocked, filter.Match{Blocked: true, Source: "Firefox DoH canary", Rule: filter.Rule{Domain: "use-application-dns.net", Kind: filter.Suffix}}
 	}
 
-	var match filter.Match
-	shared := true
-	if g := s.policy.Load().For(client); g != nil {
-		now := time.Now()
+	g := s.policy.Load().For(client)
+	var now time.Time
+	if g != nil {
+		now = time.Now()
 		if loc := s.loc.Load(); loc != nil {
 			now = now.In(loc)
 		}
-		m, decided := g.Check(name, now)
-		if decided {
-			if m.Blocked {
-				return s.blocked(req), OutBlocked, m
-			}
-			match, shared = m, false
-		} else if g.SkipShared {
-			shared = false
-		}
 	}
-	if f := s.filter; f != nil && shared {
-		if match = f.Lookup(name); match.Blocked {
-			return s.blocked(req), OutBlocked, match
-		}
+	match := s.check(g, name, now)
+	if match.Blocked {
+		return s.blocked(req), OutBlocked, match
 	}
 
 	m, out := s.answer(req, name)
+	// Answer checks, as AdGuard Home does: a name that is an alias (CNAME)
+	// for a blocked name is blocked too, and so is an answer with an
+	// address that a list names (a rule such as "||203.0.113.9^"). Not
+	// when the name itself is allowed. A few map lookups per answer record.
+	if !match.Allowed && m != nil {
+		for _, rr := range m.Answer {
+			var cm filter.Match
+			switch v := rr.(type) {
+			case *dns.CNAME:
+				cm = s.check(g, filter.Normalize(v.Target), now)
+			case *dns.A:
+				cm = s.checkIP(g, v.A, now)
+			case *dns.AAAA:
+				cm = s.checkIP(g, v.AAAA, now)
+			default:
+				continue
+			}
+			if cm.Blocked {
+				return s.blocked(req), OutBlocked, cm
+			}
+			if cm.Allowed {
+				break // an allowed alias or address: the answer stands
+			}
+		}
+	}
 	return m, out, match
+}
+
+// checkIP checks an answer address. Only a rule for exactly that address
+// counts, never one for a "parent" such as "||0.2.1^".
+func (s *Server) checkIP(g *policy.Group, ip net.IP, now time.Time) filter.Match {
+	a, ok := netip.AddrFromSlice(ip)
+	if !ok || a.IsUnspecified() {
+		return filter.Match{}
+	}
+	text := a.Unmap().String()
+	if m := s.check(g, text, now); m.Rule.Domain == text {
+		return m
+	}
+	return filter.Match{}
+}
+
+// check decides one name for a client in group g (nil for none): the
+// group's own rules and schedules first, then the shared blocklists
+// unless the group skips them.
+func (s *Server) check(g *policy.Group, name string, now time.Time) filter.Match {
+	shared := true
+	var match filter.Match
+	if g != nil {
+		m, decided := g.Check(name, now)
+		if decided {
+			return m
+		}
+		shared = !g.SkipShared
+	}
+	if f := s.filter; f != nil && shared {
+		match = f.Lookup(name)
+	}
+	return match
 }
 
 // answer gets the real answer for name, from the cache or upstream.
