@@ -82,6 +82,10 @@ compose file.
 
 ## What happens when
 
+Settings, rules and blocklists are the same on both servers. A change on
+either one reaches the other within about a second, and the leader downloads
+the blocklists for both, so both use the exact same version of each list.
+
 DNS never waits for the other server: each one answers from its own copy of
 the settings. In the failover tests, a client sending 50 queries a second to
 each server got an answer to every query sent to a running server, in every

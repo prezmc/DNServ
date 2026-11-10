@@ -206,6 +206,7 @@ func (c *Cluster) rpcHandler() http.Handler {
 	m.HandleFunc("POST /rpc/transfer", c.member(c.rpcTransfer))
 	m.HandleFunc("POST /rpc/join", c.rpcJoin)
 	m.HandleFunc("POST /rpc/x/{name}", c.member(c.rpcExtra))
+	m.HandleFunc("GET /rpc/file/{name}", c.member(c.rpcFile))
 	return m
 }
 
