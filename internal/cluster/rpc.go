@@ -158,7 +158,7 @@ func (c *Cluster) LocalStatus() NodeStatus {
 	c.mu.Lock()
 	id, r := c.id, c.r
 	c.mu.Unlock()
-	ns := NodeStatus{ID: id.ID, Name: id.Name, Version: c.opt.Version, State: "Shutdown", ClusterID: c.st.State().Cluster.ID}
+	ns := NodeStatus{ID: id.ID, Name: c.Name(), Version: c.opt.Version, State: "Shutdown", ClusterID: c.st.State().Cluster.ID}
 	if r == nil {
 		return ns
 	}

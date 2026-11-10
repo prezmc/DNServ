@@ -27,6 +27,93 @@ function h(tag, attrs, ...kids) {
   return el;
 }
 
+// fuzzyScore says how well q matches text: higher is better, -1 is no
+// match. Every letter of q must appear in order; a plain substring, a match
+// at the start of a word and letters close together score higher.
+function fuzzyScore(q, text) {
+  q = q.toLowerCase().replace(/\s+/g, '');
+  text = text.toLowerCase();
+  if (!q) return 0;
+  const sub = text.indexOf(q);
+  if (sub >= 0) return 1000 - sub - (sub === 0 || /[\s.\-_(]/.test(text[sub - 1]) ? 0 : 50);
+  let score = 0, last = -1;
+  for (const c of q) {
+    const i = text.indexOf(c, last + 1);
+    if (i < 0) return -1;
+    score += i === last + 1 ? 10 : (/[\s.\-_(]/.test(text[i - 1] || ' ') ? 5 : 1);
+    last = i;
+  }
+  return score;
+}
+
+// combo is a select box you can type into: typing narrows the choices with
+// fuzzy matching (letters in order, so "lvrm" finds "Living room TV").
+// opts.options is [{value, label, detail}]; detail (an IP, say) is shown
+// and searched too. With opts.free, any text is a value and the options
+// are only suggestions. onchange gets the chosen value.
+function combo(opts) {
+  let options = opts.options || [];
+  let value = opts.value || '';
+  let shown = [], active = -1;
+  const labelOf = (v) => { const o = options.find(o => o.value === v); return o ? o.label + (o.detail && o.detail !== o.label ? ' · ' + o.detail : '') : v; };
+  const input = h('input', { type: 'text', role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-label': opts.label,
+    placeholder: opts.placeholder || '', spellcheck: 'false', autocomplete: 'off', value: opts.free ? value : (value ? labelOf(value) : '') });
+  const list = h('ul', { class: 'combo-list', role: 'listbox', hidden: true });
+  const wrap = h('div', { class: 'combo' + (opts.class ? ' ' + opts.class : '') }, input, list);
+  const close = () => { list.hidden = true; input.setAttribute('aria-expanded', 'false'); active = -1; };
+  const pick = (o) => {
+    value = o ? o.value : '';
+    input.value = opts.free ? value : (o && o.value ? labelOf(o.value) : '');
+    close();
+    opts.onchange && opts.onchange(value);
+  };
+  const draw = () => {
+    const q = input.value.trim();
+    const typed = !opts.free && value && q === labelOf(value) ? '' : q;
+    shown = options.map(o => ({ o, s: fuzzyScore(typed, o.label + ' ' + (o.detail || '') + ' ' + o.value) }))
+      .filter(x => x.s >= 0).sort((a, b) => typed ? b.s - a.s : 0).slice(0, 50).map(x => x.o);
+    active = shown.length && typed ? 0 : -1;
+    list.replaceChildren(...(shown.length ? shown.map((o, i) => h('li', { role: 'option', class: i === active ? 'on' : null, 'aria-selected': String(o.value === value),
+      onmousedown: (ev) => { ev.preventDefault(); pick(o); } }, o.label, o.detail && o.detail !== o.label ? h('span', { class: 'muted small' }, ' ', o.detail) : null))
+      : [h('li', { class: 'muted small empty' }, opts.free ? 'No suggestions' : 'Nothing matches')]));
+    list.hidden = opts.free && !shown.length;
+    input.setAttribute('aria-expanded', String(!list.hidden));
+  };
+  const move = (d) => {
+    if (list.hidden) draw();
+    if (!shown.length) return;
+    active = (active + d + shown.length) % shown.length;
+    list.querySelectorAll('li').forEach((li, i) => li.classList.toggle('on', i === active));
+    const li = list.children[active];
+    li && li.scrollIntoView({ block: 'nearest' });
+  };
+  input.addEventListener('focus', () => { if (!opts.free) input.select(); draw(); });
+  input.addEventListener('input', () => { draw(); if (opts.free) { value = input.value.trim(); opts.oninput && opts.oninput(value); } });
+  input.addEventListener('blur', () => {
+    close();
+    if (!opts.free) input.value = value ? labelOf(value) : ''; // typed text that wasn't picked is dropped
+  });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown') { ev.preventDefault(); move(1); }
+    else if (ev.key === 'ArrowUp') { ev.preventDefault(); move(-1); }
+    else if (ev.key === 'Enter') {
+      if (!list.hidden && active >= 0) { ev.preventDefault(); pick(shown[active]); }
+      else if (opts.free) { close(); opts.onchange && opts.onchange(value); }
+    } else if (ev.key === 'Escape' && !list.hidden) { ev.preventDefault(); ev.stopPropagation(); close(); }
+  });
+  wrap.setOptions = (o) => { options = o; if (!list.hidden) draw(); };
+  Object.defineProperty(wrap, 'value', { get: () => value });
+  return wrap;
+}
+
+// deviceOptions lists devices for a combo, each with its addresses, since
+// a device's name is only as good as what the router or DHCP reported.
+function deviceOptions(devs, all) {
+  const out = all ? [{ value: '', label: all }] : [];
+  devs.forEach(d => out.push({ value: d.id || d.addrs[0], label: deviceLabel(d), detail: (d.addrs || []).join(', ') }));
+  return out;
+}
+
 function render(...nodes) {
   if (timer) { clearInterval(timer); timer = null; }
   app.replaceChildren(...nodes);
@@ -656,20 +743,22 @@ function serversCard(sum, s) {
   const pct = (a, b) => (b ? fmtPct(a / b) : '—');
   return h('div', { class: 'card d-servers' },
     h('div', { class: 'row spread' }, h('h2', {}, nodes.length > 1 ? 'Servers' : 'Server'), can('cluster.manage') ? h('a', { href: '#/cluster', class: 'small' }, 'Cluster') : null),
-    h('table', { class: 'top servers' },
-      h('thead', {}, h('tr', {}, h('th', {}, 'Server'), h('th', { class: 'num' }, 'Queries'), h('th', { class: 'num' }, 'Blocked'), h('th', { class: 'num' }, 'Cache'), h('th', { class: 'num' }, 'Avg'))),
-      h('tbody', {}, nodes.map(n => {
-        const c = n.counts || { total: 0, blocked: 0, cached: 0, ms_sum: 0 };
-        return h('tr', {},
-          h('td', {}, h('div', {}, h('span', { class: 'dot ' + (n.ok ? 'ok' : 'bad') }), n.name,
-            n.name === leader ? h('span', { class: 'badge accent' }, 'leader') : null,
-            n.name === self && nodes.length > 1 ? h('span', { class: 'muted small' }, ' this one') : null),
-          n.ok ? bar(c.total, Math.max(...nodes.map(x => (x.counts ? x.counts.total : 0)))) : h('div', { class: 'small bad-text' }, n.error || 'not answering')),
-          h('td', { class: 'num' }, n.ok ? [fmtNum(c.total), h('div', { class: 'muted small' }, pct(c.total, total))] : '—'),
-          h('td', { class: 'num' }, n.ok ? pct(c.blocked, c.total) : '—'),
-          h('td', { class: 'num' }, n.ok ? pct(c.cached, c.total) : '—'),
-          h('td', { class: 'num' }, n.ok && c.total ? fmtMs(c.ms_sum / c.total) : '—'));
-      }))),
+    // One block per server (name, then its numbers), so it fits the
+    // narrow dashboard column at any width.
+    h('div', { class: 'servers' }, nodes.map(n => {
+      const c = n.counts || { total: 0, blocked: 0, cached: 0, ms_sum: 0 };
+      const stat = (label, v, sub) => h('div', { class: 'stat' }, h('div', { class: 'muted small' }, label), h('div', { class: 'num' }, v), sub ? h('div', { class: 'muted small' }, sub) : null);
+      return h('div', { class: 'server' },
+        h('div', { class: 'row' }, h('span', { class: 'nowrap' }, h('span', { class: 'dot ' + (n.ok ? 'ok' : 'bad') }), h('b', {}, n.name)),
+          n.name === leader ? h('span', { class: 'badge accent' }, 'leader') : null,
+          n.name === self && nodes.length > 1 ? h('span', { class: 'muted small' }, 'this one') : null),
+        n.ok ? bar(c.total, Math.max(...nodes.map(x => (x.counts ? x.counts.total : 0)))) : h('div', { class: 'small bad-text' }, n.error || 'not answering'),
+        n.ok ? h('div', { class: 'stats' },
+          stat('Queries', fmtNum(c.total), nodes.length > 1 ? pct(c.total, total) + ' of all' : null),
+          stat('Blocked', pct(c.blocked, c.total)),
+          stat('Cache', pct(c.cached, c.total)),
+          stat('Avg', c.total ? fmtMs(c.ms_sum / c.total) : '—')) : null);
+    })),
     h('p', { class: 'muted small' }, 'Answers each server gave its devices. Devices pick a server themselves, so an even split is not expected.'));
 }
 
@@ -1146,7 +1235,10 @@ function editGroup(g, named, gs) {
     h('label', { for: 'gname' }, 'Name'),
     h('input', { id: 'gname', name: 'name', type: 'text', value: g.name, required: true, maxlength: 64, placeholder: 'Kids', autofocus: true }),
     h('label', {}, 'Devices'),
-    h('div', { class: 'perms' }, named.map(d => h('label', { class: 'inline' },
+    named.length > 8 ? h('input', { type: 'search', placeholder: 'Find a device', 'aria-label': 'Find a device', spellcheck: 'false', oninput: (ev) => {
+      ev.target.nextElementSibling.querySelectorAll('label').forEach(l => { l.hidden = fuzzyScore(ev.target.value, l.dataset.k) < 0; });
+    } }) : null,
+    h('div', { class: 'perms' }, named.map(d => h('label', { class: 'inline', 'data-k': d.name + ' ' + (d.addrs || []).join(' '), title: (d.addrs || []).join(', ') || null },
       h('input', { type: 'checkbox', name: 'dev', value: d.id, checked: g.devices.includes(d.id) }), d.name))),
     h('label', { class: 'inline mt' }, h('input', { type: 'checkbox', name: 'skip', checked: g.skip_blocklists }), 'Skip the household blocklists and custom rules (for example a work laptop)'),
     h('label', { for: 'grules' }, 'Extra rules for this group'),
@@ -1219,7 +1311,8 @@ async function queries(main) {
     const blocked = e.result === 'blocked';
     return h('tr', {},
       h('td', { class: 'nowrap small', title: fmtTime(e.time) }, new Date(e.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })),
-      h('td', { class: 'small' }, names[e.client] || e.client, multi && e.node ? h('div', { class: 'muted' }, 'via ', e.node) : null),
+      h('td', { class: 'small' }, names[e.client] ? [names[e.client], h('div', { class: 'muted mono' }, e.client)] : h('span', { class: 'mono' }, e.client),
+        multi && e.node ? h('div', { class: 'muted' }, 'via ', e.node) : null),
       h('td', {}, can('dashboard.view') && useHistory ? h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(e.name, filter.range === '1h' ? '24h' : filter.range) }, e.name) : h('span', { class: 'mono' }, e.name),
         ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name]),
         (e.ips || []).length || (e.cnames || []).length ? h('div', { class: 'muted small mono', title: (e.cnames || []).concat(e.ips || []).join('\n') },
@@ -1278,15 +1371,21 @@ async function queries(main) {
   });
   const pause = h('input', { type: 'checkbox', checked: true, onchange: (ev) => { live = ev.target.checked; if (live) load(); } });
 
-  const devSel = h('select', { name: 'client', 'aria-label': 'Device', onchange: (ev) => { filter.client = ev.target.value; setHash(); load(); } },
-    h('option', { value: '' }, 'All devices'),
-    devs.map(d => h('option', { value: d.id || d.addrs[0], selected: filter.client === (d.id || d.addrs[0]) }, deviceLabel(d))));
-  if (filter.client && !devs.some(d => (d.id || d.addrs[0]) === filter.client)) devSel.append(h('option', { value: filter.client, selected: true }, filter.client));
+  const devOpts = deviceOptions(devs, 'All devices');
+  if (filter.client && !devOpts.some(o => o.value === filter.client)) devOpts.push({ value: filter.client, label: filter.client });
+  const devSel = combo({ label: 'Device', placeholder: 'All devices', options: devOpts, value: filter.client, class: 'dev',
+    onchange: (v) => { filter.client = v; setHash(); load(); } });
   let debounce = null;
-  const search = h('input', { type: 'text', name: 'search', placeholder: 'Search domains', value: filter.search, 'aria-label': 'Search domains', spellcheck: 'false', oninput: (ev) => {
-    clearTimeout(debounce);
-    debounce = setTimeout(() => { filter.search = ev.target.value.trim(); setHash(); load(); }, 250);
-  } });
+  const runSearch = (v) => { clearTimeout(debounce); debounce = setTimeout(() => { if (filter.search === v) return; filter.search = v; setHash(); load(); }, 250); };
+  const search = combo({ label: 'Search domains', placeholder: 'Search domains', free: true, value: filter.search, options: [], oninput: runSearch, onchange: runSearch });
+  // Suggest the domains seen most in the period, so part of a name, or its
+  // letters in order, finds them.
+  if (can('dashboard.view')) Promise.all(['domains', 'blocked'].map(by => api('GET', '/analytics/top?by=' + by + '&range=' + (filter.range === '1h' ? '24h' : filter.range) + '&limit=200').catch(() => null)))
+    .then(rs => {
+      const seen = new Set(), opts = [];
+      rs.forEach((r, i) => ((r && r.rows) || []).forEach(x => { if (!seen.has(x.key)) { seen.add(x.key); opts.push({ value: x.key, label: x.key, detail: i ? 'blocked' : '' }); } }));
+      search.setOptions(opts);
+    });
   const resSel = h('select', { name: 'result', 'aria-label': 'Result', onchange: (ev) => { filter.result = ev.target.value; setHash(); load(); } },
     h('option', { value: '' }, 'All results'),
     h('option', { value: 'blocked', selected: filter.result === 'blocked' }, 'Blocked'),
@@ -1512,9 +1611,8 @@ async function analyticsPage(main) {
       st.range = k; rangeBtns.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.target)));
       setHash(); load();
     } }, k)));
-  const devSel = perDevice ? h('select', { 'aria-label': 'Device', onchange: (ev) => { st.client = ev.target.value; setHash(); load(); } },
-    h('option', { value: '' }, 'All devices'),
-    devs.map(d => h('option', { value: d.id || d.addrs[0], selected: st.client === (d.id || d.addrs[0]) }, deviceLabel(d)))) : null;
+  const devSel = perDevice ? combo({ label: 'Device', placeholder: 'All devices', options: deviceOptions(devs, 'All devices'), value: st.client, class: 'dev',
+    onchange: (v) => { st.client = v; setHash(); load(); } }) : null;
   page(main, 'Analytics', h('div', { class: 'row' }, rangeBtns, devSel), body);
 
   const q = (path, extra) => {
