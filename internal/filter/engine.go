@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -206,8 +207,24 @@ func (e *Engine) open(ctx context.Context, src string, force bool) (io.ReadClose
 	return f, false, time.Now(), nil
 }
 
+// DownloadURL is where a list is fetched from. GitHub file pages
+// (github.com/OWNER/REPO/raw/REF/PATH or /blob/) are fetched from
+// raw.githubusercontent.com, which serves the same file: the github.com
+// form can answer 404 to programs even when the file exists.
+func DownloadURL(src string) string {
+	u, err := url.Parse(src)
+	if err != nil || !strings.EqualFold(u.Host, "github.com") && !strings.EqualFold(u.Host, "www.github.com") {
+		return src
+	}
+	parts := strings.SplitN(strings.TrimPrefix(u.Path, "/"), "/", 5)
+	if len(parts) != 5 || (parts[2] != "raw" && parts[2] != "blob") || parts[3] == "" || parts[4] == "" {
+		return src
+	}
+	return "https://raw.githubusercontent.com/" + parts[0] + "/" + parts[1] + "/" + parts[3] + "/" + parts[4]
+}
+
 func (e *Engine) download(ctx context.Context, src, dst string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, DownloadURL(src), nil)
 	if err != nil {
 		return err
 	}

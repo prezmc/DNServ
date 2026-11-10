@@ -237,3 +237,19 @@ func BenchmarkAlsoOn(b *testing.B) {
 		e.AlsoOn(context.Background(), "host42.example42.com")
 	}
 }
+
+func TestDownloadURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://github.com/blocklistproject/Lists/raw/master/adguard/porn-ags.txt": "https://raw.githubusercontent.com/blocklistproject/Lists/master/adguard/porn-ags.txt",
+		"https://github.com/o/r/blob/main/a/b.txt":                                  "https://raw.githubusercontent.com/o/r/main/a/b.txt",
+		"https://github.com/o/r/raw/refs/heads/main/list.txt":                       "https://raw.githubusercontent.com/o/r/refs/heads/main/list.txt",
+		"https://github.com/o/r/releases/download/v1/list.txt":                      "https://github.com/o/r/releases/download/v1/list.txt",
+		"https://raw.githubusercontent.com/o/r/main/list.txt":                       "https://raw.githubusercontent.com/o/r/main/list.txt",
+		"https://example.com/o/r/raw/main/list.txt":                                 "https://example.com/o/r/raw/main/list.txt",
+		"https://github.com/o/r/raw/main":                                           "https://github.com/o/r/raw/main",
+	} {
+		if got := DownloadURL(in); got != want {
+			t.Errorf("DownloadURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
