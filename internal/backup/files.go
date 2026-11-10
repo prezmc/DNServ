@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // Ext is the backup file extension.
@@ -66,7 +66,7 @@ func FileName(node string, t time.Time) string {
 	if n == "" {
 		n = "node"
 	}
-	return fmt.Sprintf("dnserve-%s-%s%s", n, t.UTC().Format("20060102-150405"), Ext)
+	return fmt.Sprintf("dnserv-%s-%s%s", n, t.UTC().Format("20060102-150405"), Ext)
 }
 
 // Make encrypts the current state into a backup file.
@@ -197,7 +197,7 @@ func listDir(dir, where string) []File {
 	}
 	var out []File
 	for _, e := range ents {
-		if e.IsDir() || !strings.HasPrefix(e.Name(), "dnserve-") || !strings.HasSuffix(e.Name(), Ext) {
+		if e.IsDir() || !isBackupName(e.Name()) {
 			continue
 		}
 		info, err := e.Info()
@@ -249,7 +249,7 @@ func (m *Manager) List() []File {
 
 // Read returns a stored backup by name.
 func (m *Manager) Read(where, name string) ([]byte, error) {
-	if name != filepath.Base(name) || !strings.HasPrefix(name, "dnserve-") || !strings.HasSuffix(name, Ext) {
+	if name != filepath.Base(name) || !isBackupName(name) {
 		return nil, errors.New("no such backup")
 	}
 	dir := m.Dir
@@ -260,4 +260,10 @@ func (m *Manager) Read(where, name string) ([]byte, error) {
 		}
 	}
 	return os.ReadFile(filepath.Join(dir, name))
+}
+
+// isBackupName reports whether name looks like a backup file. Files made
+// before the rename to DNServ start with "dnserve-" and still count.
+func isBackupName(name string) bool {
+	return (strings.HasPrefix(name, "dnserv-") || strings.HasPrefix(name, "dnserve-")) && strings.HasSuffix(name, Ext)
 }

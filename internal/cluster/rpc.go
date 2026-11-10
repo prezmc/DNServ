@@ -16,8 +16,8 @@ import (
 
 	"github.com/hashicorp/raft"
 
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // errRetry means the leader moved or couldn't be reached; try again.

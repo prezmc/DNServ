@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/adguard"
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/adguard"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // imports holds what was read from AdGuard Home between the preview and

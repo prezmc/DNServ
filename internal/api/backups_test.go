@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/prezmc/dnserve/internal/backup"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/backup"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 func (c *client) upload(path string, file []byte, fields map[string]string) (int, string) {

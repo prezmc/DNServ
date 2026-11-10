@@ -19,11 +19,11 @@ import (
 	"github.com/miekg/dns"
 	"golang.org/x/sync/singleflight"
 
-	"github.com/prezmc/dnserve/internal/cache"
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/policy"
-	"github.com/prezmc/dnserve/internal/querylog"
+	"github.com/prezmc/dnserv/internal/cache"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/policy"
+	"github.com/prezmc/dnserv/internal/querylog"
 )
 
 // Resolver is the upstream path (forwarding group now; Unbound later).
@@ -549,7 +549,7 @@ func (s *Server) blockSOA(zone string) dns.RR {
 	ttl := uint32(s.live.Load().filtering.BlockTTL / time.Second)
 	return &dns.SOA{
 		Hdr: dns.RR_Header{Name: zone, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: ttl},
-		Ns:  "dnserve.blocked.", Mbox: "blocked.dnserve.blocked.",
+		Ns:  "dnserv.blocked.", Mbox: "blocked.dnserv.blocked.",
 		Serial: 1, Refresh: 1800, Retry: 900, Expire: 604800, Minttl: ttl,
 	}
 }

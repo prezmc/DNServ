@@ -27,7 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/filter"
+	"github.com/prezmc/dnserv/internal/filter"
 )
 
 // Kind is what a feed lists.
@@ -49,7 +49,7 @@ type Feed struct {
 	Wildcard bool `json:"-"`
 }
 
-// Feeds are the threat feeds DNServe uses.
+// Feeds are the threat feeds DNServ uses.
 var Feeds = []Feed{
 	{ID: "urlhaus", Name: "URLhaus (abuse.ch) malware hosts", URL: "https://urlhaus.abuse.ch/downloads/hostfile/", Kind: KindMalware},
 	{ID: "threatfox", Name: "ThreatFox (abuse.ch) malware and C2 hosts", URL: "https://threatfox.abuse.ch/downloads/hostfile/", Kind: KindMalware},
@@ -67,7 +67,7 @@ type IPFeed struct {
 	Reason string // "a botnet command server"
 }
 
-// IPFeeds are the address lists DNServe uses.
+// IPFeeds are the address lists DNServ uses.
 var IPFeeds = []IPFeed{
 	{ID: "feodo", Name: "Feodo Tracker (abuse.ch) botnet C2 servers", URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Score: 90, Reason: "a botnet command server (Feodo Tracker)"},
 	{ID: "drop4", Name: "Spamhaus DROP (IPv4)", URL: "https://www.spamhaus.org/drop/drop_v4.json", Score: 85, Reason: "a hijacked or criminal network (Spamhaus DROP)"},

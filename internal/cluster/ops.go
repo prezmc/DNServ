@@ -17,8 +17,8 @@ import (
 
 	"github.com/hashicorp/raft"
 
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // JoinCodeTTL is how long a join code works.
@@ -43,7 +43,7 @@ func parseJoinCode(s string) (joinCode, error) {
 	s = strings.Join(strings.Fields(s), "") // tolerate line breaks from copy and paste
 	raw, ok := strings.CutPrefix(s, joinPrefix)
 	if !ok {
-		return j, errors.New("that isn't a DNServe join code (it starts with " + joinPrefix + ")")
+		return j, errors.New("that isn't a DNServ join code (it starts with " + joinPrefix + ")")
 	}
 	b, err := base64.RawURLEncoding.DecodeString(raw)
 	if err != nil || json.Unmarshal(b, &j) != nil || len(j.Addrs) == 0 || j.CAFP == "" || j.ID == "" || j.Secret == "" {
@@ -271,7 +271,7 @@ type RiskError struct {
 func (e *RiskError) Error() string {
 	names := strings.Join(e.Nodes, " and ")
 	if e.CutOff {
-		return fmt.Sprintf("%s may only be cut off from this node rather than down, so it could still be running. If it is recovered on its own too, you'll have two separate DNServes with different settings. Only continue if it is switched off or broken for good", names)
+		return fmt.Sprintf("%s may only be cut off from this node rather than down, so it could still be running. If it is recovered on its own too, you'll have two separate DNServs with different settings. Only continue if it is switched off or broken for good", names)
 	}
 	return fmt.Sprintf("%s could still be running the cluster without this node. Only continue if they are switched off or broken for good", names)
 }
@@ -337,7 +337,7 @@ func (c *Cluster) ForceRecover(ctx context.Context, actor string, acceptRisk boo
 		// This node is the one that was lost: the others carried on
 		// without it. Recovering it too would make a second cluster.
 		sort.Strings(lockedOut)
-		return fmt.Errorf("%s is running and no longer counts this node as a member (the cluster was recovered without it, or it was removed). Make a join code there and use \"Join another DNServe\" on this node instead", strings.Join(lockedOut, " and "))
+		return fmt.Errorf("%s is running and no longer counts this node as a member (the cluster was recovered without it, or it was removed). Make a join code there and use \"Join another DNServ\" on this node instead", strings.Join(lockedOut, " and "))
 	}
 	if len(up) > 0 {
 		sort.Strings(up)

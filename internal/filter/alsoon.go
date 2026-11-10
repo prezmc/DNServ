@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/prezmc/dnserve/internal/config"
+	"github.com/prezmc/dnserv/internal/config"
 )
 
 // ListHit is a list that has a rule for a domain.

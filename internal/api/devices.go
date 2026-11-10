@@ -11,11 +11,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/policy"
-	"github.com/prezmc/dnserve/internal/querylog"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/policy"
+	"github.com/prezmc/dnserv/internal/querylog"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // namesCache remembers router-provided device names for a while, so the
@@ -282,7 +282,7 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
 				continue
 			}
 			if _, ok, _ := filter.ParseLine(l); !ok {
-				writeErr(w, http.StatusBadRequest, where+": "+strconv.Quote(l)+" is not a rule DNServe understands")
+				writeErr(w, http.StatusBadRequest, where+": "+strconv.Quote(l)+" is not a rule DNServ understands")
 				return false
 			}
 		}

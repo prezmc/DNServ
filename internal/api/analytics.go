@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/analytics"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/store"
-	"github.com/prezmc/dnserve/internal/threat"
-	"github.com/prezmc/dnserve/internal/virustotal"
+	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/store"
+	"github.com/prezmc/dnserv/internal/threat"
+	"github.com/prezmc/dnserv/internal/virustotal"
 )
 
 // PeerAnalytics is the cluster RPC name for analytics queries.
@@ -607,7 +607,7 @@ func (a *API) analyticsExport(w http.ResponseWriter, r *http.Request, p *Princip
 	}
 	l := a.newLabeler(r.Context(), addrs)
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="dnserve-queries-`+a.now().Format("2006-01-02-1504")+`.csv"`)
+	w.Header().Set("Content-Disposition", `attachment; filename="dnserv-queries-`+a.now().Format("2006-01-02-1504")+`.csv"`)
 	cw := csv.NewWriter(w)
 	cw.Write([]string{"time", "server", "client", "device", "domain", "type", "result", "allowed_by_rule", "rcode", "answers", "ms", "rule", "list", "risk"})
 	scores := map[string]string{}

@@ -12,7 +12,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/config"
+	"github.com/prezmc/dnserv/internal/config"
 )
 
 func startEncrypted(t *testing.T, up *fakeResolver) (*Server, string) {

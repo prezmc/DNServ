@@ -5,8 +5,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/analytics"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // slowRow is a domain or device with its response times, for the UI.

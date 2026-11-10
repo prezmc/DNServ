@@ -1,14 +1,14 @@
 # More than two DNS nodes behind two DNS addresses
 
 Most devices, and most routers' DHCP settings, accept only two DNS servers.
-With three or more DNServe nodes, you can point clients at two of them, and
+With three or more DNServ nodes, you can point clients at two of them, and
 those two then carry all the traffic. A floating address (a "virtual IP" or
 VIP) lets clients use two fixed addresses while any number of nodes stand
 behind them.
 
-DNServe doesn't manage floating addresses itself. This page explains how they
+DNServ doesn't manage floating addresses itself. This page explains how they
 work, what they need from your network, and how to set them up next to
-DNServe with keepalived if you want them.
+DNServ with keepalived if you want them.
 
 ## Do you need this?
 
@@ -72,29 +72,29 @@ adapter.
 
 ## DNS must listen on the floating addresses
 
-DNServe's default `dns.listen` is `:53`, so it answers on every address the
+DNServ's default `dns.listen` is `:53`, so it answers on every address the
 host has, including a floating address added later. This works only when
-DNServe can see the host's addresses, which means it also runs with
+DNServ can see the host's addresses, which means it also runs with
 `network_mode: host`. Behind Docker's port publishing (`-p 53:53`), traffic
-reaches DNServe only for the host addresses that existed when Docker set up
-the port. Run DNServe with host networking on any node that will hold a
+reaches DNServ only for the host addresses that existed when Docker set up
+the port. Run DNServ with host networking on any node that will hold a
 floating address.
 
 ```yaml
 services:
-  dnserve:
-    image: ghcr.io/prezmc/dnserve:latest
-    container_name: dnserve
+  dnserv:
+    image: ghcr.io/prezmc/dnserv:latest
+    container_name: dnserv
     restart: unless-stopped
-    network_mode: host   # no ports: list; DNServe listens on the host
+    network_mode: host   # no ports: list; DNServ listens on the host
     volumes:
-      - dnserve-data:/data
+      - dnserv-data:/data
 volumes:
-  dnserve-data:
+  dnserv-data:
 ```
 
 With host networking, port 53 must be free on the host. On many Linux hosts
-systemd-resolved holds it (see "Port 53 already in use?" in the README).
+systemd-resolved holds it (see "Port 53 already in use?" in [Installing](install.md)).
 
 ## Setting it up with keepalived
 
@@ -107,8 +107,8 @@ different node.
 `/etc/keepalived/keepalived.conf` on node 1:
 
 ```
-vrrp_script dnserve_ready {
-    # DNServe's readiness check: lists loaded and resolvers answering.
+vrrp_script dnserv_ready {
+    # DNServ's readiness check: lists loaded and resolvers answering.
     script "/usr/bin/curl -fsS --max-time 2 http://127.0.0.1:8080/readyz"
     interval 2
     fall 2
@@ -124,7 +124,7 @@ vrrp_instance DNS_A {
         192.168.1.53/24
     }
     track_script {
-        dnserve_ready
+        dnserv_ready
     }
 }
 
@@ -137,7 +137,7 @@ vrrp_instance DNS_B {
         192.168.1.54/24
     }
     track_script {
-        dnserve_ready
+        dnserv_ready
     }
 }
 ```
@@ -148,7 +148,7 @@ addresses. It takes an address only when both preferred nodes are down.
 Then set your router's DHCP DNS servers to `192.168.1.53` and
 `192.168.1.54`.
 
-To check it: stop DNServe on node 1 (`docker stop dnserve`). Within a few
+To check it: stop DNServ on node 1 (`docker stop dnserv`). Within a few
 seconds `ip addr` on node 2 shows `192.168.1.53`, and lookups against `.53`
 keep working.
 
@@ -170,7 +170,7 @@ keep working.
 
 ## Why not other approaches
 
-- **A load balancer in front of DNServe** becomes a new single point of
+- **A load balancer in front of DNServ** becomes a new single point of
   failure, unless it is itself made redundant with floating addresses.
 - **Anycast** (the same address announced from several places with BGP) is
   how big public resolvers do this. It needs a router that speaks BGP, which

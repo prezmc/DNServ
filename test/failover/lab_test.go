@@ -1,6 +1,6 @@
 //go:build failover
 
-// Package failover runs DNServe nodes in real containers and breaks them on
+// Package failover runs DNServ nodes in real containers and breaks them on
 // purpose: it kills leaders, cuts the network between servers, restarts
 // everything at once and upgrades one node at a time, while a client sends
 // DNS queries to every node nonstop and counts any that go unanswered.
@@ -9,8 +9,8 @@
 //
 //	go test -tags failover -v -timeout 30m ./test/failover/
 //
-// DNSERVE_IMAGE picks the image to test (default: build the repository's
-// Dockerfile as dnserve:failover-test). FAILOVER_REPORT, when set, is a file
+// DNSERV_IMAGE picks the image to test (default: build the repository's
+// Dockerfile as dnserv:failover-test). FAILOVER_REPORT, when set, is a file
 // the results table is written to, as Markdown.
 package failover
 
@@ -36,14 +36,14 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/auth"
+	"github.com/prezmc/dnserv/internal/auth"
 )
 
 const (
 	adminUser = "owner"
 	adminPass = "failover-lab-Passw0rd!"
 	// probeName is a local record every node answers from its own copy of
-	// the settings, so the probe measures DNServe and not an upstream.
+	// the settings, so the probe measures DNServ and not an upstream.
 	probeName = "probe.lab.home.arpa."
 	probeIP   = "10.53.0.1"
 	// probeEvery is the gap between queries to each node (50 per second).
@@ -61,13 +61,13 @@ var (
 func image(t *testing.T) string {
 	t.Helper()
 	imageOnce.Do(func() {
-		if v := os.Getenv("DNSERVE_IMAGE"); v != "" {
+		if v := os.Getenv("DNSERV_IMAGE"); v != "" {
 			imageName = v
 			return
 		}
 		_, file, _, _ := runtime.Caller(0)
 		root := filepath.Join(filepath.Dir(file), "..", "..")
-		imageName = "dnserve:failover-test"
+		imageName = "dnserv:failover-test"
 		out, err := exec.Command("docker", "build", "-q", "-t", imageName, root).CombinedOutput()
 		if err != nil {
 			imageErr = fmt.Errorf("docker build: %v\n%s", err, out)
@@ -192,14 +192,14 @@ func (l *lab) create(name string, witness bool, env ...string) *node {
 	args := []string{"create", "--name", n.container, "--hostname", name,
 		"--network", l.prefix + "-lan",
 		"-v", n.container + ":/data",
-		"-e", "DNSERVE_NODE_NAME=" + name,
-		"-e", "DNSERVE_CLUSTER_ADVERTISE=" + name + "-raft:8081",
+		"-e", "DNSERV_NODE_NAME=" + name,
+		"-e", "DNSERV_CLUSTER_ADVERTISE=" + name + "-raft:8081",
 		// Nothing upstream is reachable from the lab; the probe uses a
 		// local record. Lists would only slow start-up.
-		"-e", "DNSERVE_LOG_LEVEL=debug",
+		"-e", "DNSERV_LOG_LEVEL=debug",
 	}
 	if witness {
-		args = append(args, "-e", "DNSERVE_ROLE=witness")
+		args = append(args, "-e", "DNSERV_ROLE=witness")
 	}
 	for _, e := range env {
 		args = append(args, "-e", e)
@@ -412,7 +412,7 @@ func (l *lab) joinCode(via string) string {
 }
 
 // addNode starts a fresh node and joins it through the setup wizard's
-// "add this server to my DNServe" path.
+// "add this server to my DNServ" path.
 func (l *lab) addNode(name, via string) *node {
 	l.t.Helper()
 	code := l.joinCode(via)
@@ -426,12 +426,12 @@ func (l *lab) addNode(name, via string) *node {
 	return n
 }
 
-// addWitness starts a witness with a join code in DNSERVE_JOIN, as the
+// addWitness starts a witness with a join code in DNSERV_JOIN, as the
 // witness compose file does.
 func (l *lab) addWitness(name, via string) *node {
 	l.t.Helper()
 	code := l.joinCode(via)
-	n := l.create(name, true, "DNSERVE_JOIN="+code)
+	n := l.create(name, true, "DNSERV_JOIN="+code)
 	l.waitFor(name+" in the cluster", 60*time.Second, func() bool {
 		for _, m := range l.status(via).Nodes {
 			if m.Name == name && m.Voter && m.Reachable {

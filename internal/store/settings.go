@@ -1,6 +1,6 @@
 package store
 
-import "github.com/prezmc/dnserve/internal/config"
+import "github.com/prezmc/dnserv/internal/config"
 
 // Settings are the values changed from the UI or API. A nil field means
 // "not set here": the node uses its config file, environment or built-in

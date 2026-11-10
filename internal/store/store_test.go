@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/prezmc/dnserve/internal/config"
+	"github.com/prezmc/dnserv/internal/config"
 )
 
 func mustApply(t *testing.T, s *Store, op string, d any) {

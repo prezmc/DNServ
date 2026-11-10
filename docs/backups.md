@@ -1,0 +1,32 @@
+# Backups and settings history
+
+**Settings history.** Every change to settings, devices or groups is kept
+as a version (the last 50, on every node). Under **Backups & history** you
+can compare any version with now and go back to it. Going back is itself a
+new version, so it can be undone. Accounts aren't part of the history, so
+going back never brings back an old password or a deleted user.
+
+**Encrypted backups.** A backup is one `.dnsbak` file with the accounts,
+API tokens, settings, devices, groups and settings history. It is encrypted
+with a passphrase you choose when you set backups up (at least 12
+characters). DNServ keeps only a public key made from it: nodes can make
+backups on their own but can't read them, and without the passphrase
+nobody can open one. Keep it in a password manager.
+
+- **Download a backup now** from the dashboard at any time.
+- **Automatic backups** run daily or weekly (Sundays) at a set time, in the
+  same time zone as group schedules. Every node keeps its own in
+  `/data/backups` (the last 14 by default).
+- **A copy off the server:** mount a folder from a NAS or another disk into
+  the container (for example `-v /mnt/nas/dnserv:/backups`) and enter
+  `/backups` as the copy folder. The leading node writes one copy of each
+  backup there.
+- **Restore** from a file under Backups & history (replaces the accounts and
+  configuration on every node; the cluster's nodes stay as they are), or on
+  a brand-new node choose **Restore from a backup** in the setup wizard.
+
+Backup files use XChaCha20-Poly1305. The key comes from an ephemeral X25519
+key agreed with the passphrase's key (scrypt, then HKDF-SHA256), and the
+readable header (when, which node) is authenticated too.
+
+[Back to the README](../README.md)

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 func TestSealOpen(t *testing.T) {
@@ -102,7 +102,7 @@ func TestRunDueKeepsAndPrunes(t *testing.T) {
 		now = now.AddDate(0, 0, 1)
 	}
 	local := listDir(dir, "local")
-	if len(local) != 2 || !strings.HasPrefix(local[0].Name, "dnserve-node-a-20261105") {
+	if len(local) != 2 || !strings.HasPrefix(local[0].Name, "dnserv-node-a-20261105") {
 		t.Fatalf("local: %+v", local)
 	}
 	if o := listDir(off, "offsite"); len(o) != 1 {

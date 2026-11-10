@@ -74,10 +74,10 @@ func TestTunnelValidation(t *testing.T) {
 func TestApplyEnv(t *testing.T) {
 	c := Default()
 	env := map[string]string{
-		"DNSERVE_UPSTREAM_MODE":          "tunnel",
-		"DNSERVE_TUNNEL_EXPECTED_EGRESS": "185.65.0.0/16, 193.32.0.1",
-		"DNSERVE_BLOCK_BYPASS":           "true",
-		"DNSERVE_UPSTREAM_SERVERS":       "tls://dns.quad9.net",
+		"DNSERV_UPSTREAM_MODE":          "tunnel",
+		"DNSERV_TUNNEL_EXPECTED_EGRESS": "185.65.0.0/16, 193.32.0.1",
+		"DNSERV_BLOCK_BYPASS":           "true",
+		"DNSERV_UPSTREAM_SERVERS":       "tls://dns.quad9.net",
 	}
 	if err := c.ApplyEnv(func(k string) string { return env[k] }); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestApplyEnv(t *testing.T) {
 	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	env["DNSERVE_BLOCK_BYPASS"] = "maybe"
+	env["DNSERV_BLOCK_BYPASS"] = "maybe"
 	if err := c.ApplyEnv(func(k string) string { return env[k] }); err == nil {
 		t.Fatal("bad boolean must be rejected")
 	}

@@ -2,7 +2,7 @@ name: Publish image
 
 # Builds multi-arch images (amd64, arm64) on every push to main (tag
 # "latest") and on version tags (v1.2.3), and pushes them to GitHub
-# Container Registry as ghcr.io/prezmc/dnserve. That needs no setup.
+# Container Registry as ghcr.io/prezmc/dnserv. That needs no setup.
 # Optional: also push to Docker Hub by adding repository secrets
 # DOCKERHUB_USERNAME and DOCKERHUB_TOKEN.
 
@@ -41,8 +41,8 @@ jobs:
         id: names
         run: |
           echo "images<<EOF" >> "$GITHUB_OUTPUT"
-          echo "ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-          if [ "$HAS_DOCKERHUB" = "true" ]; then echo "prezmcmahon/dnserve" >> "$GITHUB_OUTPUT"; fi
+          echo "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/dnserv" >> "$GITHUB_OUTPUT"
+          if [ "$HAS_DOCKERHUB" = "true" ]; then echo "prezmcmahon/dnserv" >> "$GITHUB_OUTPUT"; fi
           echo "EOF" >> "$GITHUB_OUTPUT"
       - name: Image tags
         id: meta

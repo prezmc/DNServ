@@ -17,11 +17,11 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/analytics"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/querylog"
-	"github.com/prezmc/dnserve/internal/threat"
-	"github.com/prezmc/dnserve/internal/virustotal"
+	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/querylog"
+	"github.com/prezmc/dnserv/internal/threat"
+	"github.com/prezmc/dnserv/internal/virustotal"
 )
 
 func TestAnalytics(t *testing.T) {

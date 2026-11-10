@@ -1,5 +1,5 @@
 // Package adguard reads a running AdGuard Home's settings through its HTTP
-// API and works out how they map onto DNServe, so people can move across
+// API and works out how they map onto DNServ, so people can move across
 // without retyping their lists, rules, local names and devices.
 //
 // Nothing here touches DNS answers: it runs only when an admin asks for an
@@ -19,7 +19,7 @@ import (
 	"time"
 )
 
-// Snapshot is what DNServe read from AdGuard Home.
+// Snapshot is what DNServ read from AdGuard Home.
 type Snapshot struct {
 	Source  string `json:"source"` // base URL
 	Version string `json:"version"`
@@ -71,7 +71,7 @@ type Rewrite struct {
 	Enabled *bool  `json:"enabled,omitempty"` // newer versions only
 }
 
-// DNSInfo is the part of /control/dns_info DNServe can use.
+// DNSInfo is the part of /control/dns_info DNServ can use.
 type DNSInfo struct {
 	Upstreams         []string `json:"upstream_dns"`
 	UpstreamsFile     string   `json:"upstream_dns_file"`
@@ -158,7 +158,7 @@ func NormalizeURL(s string) (string, error) {
 	return u.String(), nil
 }
 
-// Fetch reads everything DNServe can import from AdGuard Home. Only the
+// Fetch reads everything DNServ can import from AdGuard Home. Only the
 // status call must work; parts that older versions lack are listed in
 // Snapshot.Missing.
 func Fetch(ctx context.Context, c Conn) (*Snapshot, error) {

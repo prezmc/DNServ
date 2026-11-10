@@ -1,24 +1,24 @@
-# A DNServe witness: run it on a third machine when you have two DNServe
+# A DNServ witness: run it on a third machine when you have two DNServ
 # nodes, so changes keep working while either node is down. It only votes
 # in the cluster: it answers no DNS and has no dashboard, so it needs very
 # little (a Raspberry Pi or a NAS is plenty).
 #
-# 1. On a DNServe node, open Cluster and make a join code.
+# 1. On a DNServ node, open Cluster and make a join code.
 # 2. Put it below and run `docker compose -f docker-compose.witness.yml up -d`.
 #    The code is used once; after joining, the witness ignores it.
 services:
-  dnserve-witness:
-    image: ghcr.io/prezmc/dnserve:latest
-    container_name: dnserve-witness
+  dnserv-witness:
+    image: ghcr.io/prezmc/dnserv:latest
+    container_name: dnserv-witness
     restart: unless-stopped
     ports:
       - "8081:8081/tcp"   # node-to-node (clustering)
     volumes:
-      - dnserve-witness-data:/data
+      - dnserv-witness-data:/data
     environment:
-      - DNSERVE_ROLE=witness
-      - DNSERVE_JOIN=DNSJ1-paste-your-join-code-here
-      # - DNSERVE_NODE_NAME=witness-pi
+      - DNSERV_ROLE=witness
+      - DNSERV_JOIN=DNSJ1-paste-your-join-code-here
+      # - DNSERV_NODE_NAME=witness-pi
 
 volumes:
-  dnserve-witness-data:
+  dnserv-witness-data:

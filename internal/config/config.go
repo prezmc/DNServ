@@ -111,7 +111,7 @@ type RecursiveConfig struct {
 }
 
 // TunnelConfig controls tunnel mode. The tunnel itself (WireGuard) is set up
-// by a VPN container sharing DNServe's network, or by the host; DNServe
+// by a VPN container sharing DNServ's network, or by the host; DNServ
 // checks it is up and refuses to leak queries when it is not.
 type TunnelConfig struct {
 	// Interface that must exist and be up, e.g. "wg0" or "tun0".
@@ -232,7 +232,7 @@ func Default() Config {
 				DoTListen: []string{":853"},
 				DoHListen: []string{":443"},
 				DoHPath:   "/dns-query",
-				Hostnames: []string{"dnserve.local"},
+				Hostnames: []string{"dnserv.local"},
 			},
 		},
 		Upstream: UpstreamConfig{
@@ -298,7 +298,7 @@ func Load(path string) (Config, error) {
 	return cfg, cfg.Validate()
 }
 
-// ApplyEnv overrides settings from DNSERVE_* environment variables, so a
+// ApplyEnv overrides settings from DNSERV_* environment variables, so a
 // node can be configured from docker run or compose without any file. It
 // is applied after the file (if any), so the environment wins.
 func (c *Config) ApplyEnv(getenv func(string) string) error {
@@ -319,25 +319,25 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 			}
 		}
 	}
-	set("DNSERVE_UPSTREAM_MODE", func(v string) error { c.Upstream.Mode = v; return nil })
-	set("DNSERVE_UPSTREAM_SERVERS", func(v string) error { c.Upstream.Servers = list(v); return nil })
-	set("DNSERVE_TUNNEL_INTERFACE", func(v string) error { c.Upstream.Tunnel.Interface = v; return nil })
-	set("DNSERVE_TUNNEL_EXPECTED_EGRESS", func(v string) error { c.Upstream.Tunnel.ExpectedEgress = list(v); return nil })
-	set("DNSERVE_TUNNEL_ON_DOWN", func(v string) error { c.Upstream.Tunnel.OnDown = v; return nil })
-	set("DNSERVE_ALLOWED_NETS", func(v string) error { c.DNS.AllowedNets = list(v); return nil })
-	set("DNSERVE_LOCAL_DNS", func(v string) error { c.DNS.LocalDNS = v; return nil })
-	set("DNSERVE_TIME_ZONE", func(v string) error { c.TimeZone = v; return nil })
-	set("DNSERVE_BLOCK_BYPASS", func(v string) error {
+	set("DNSERV_UPSTREAM_MODE", func(v string) error { c.Upstream.Mode = v; return nil })
+	set("DNSERV_UPSTREAM_SERVERS", func(v string) error { c.Upstream.Servers = list(v); return nil })
+	set("DNSERV_TUNNEL_INTERFACE", func(v string) error { c.Upstream.Tunnel.Interface = v; return nil })
+	set("DNSERV_TUNNEL_EXPECTED_EGRESS", func(v string) error { c.Upstream.Tunnel.ExpectedEgress = list(v); return nil })
+	set("DNSERV_TUNNEL_ON_DOWN", func(v string) error { c.Upstream.Tunnel.OnDown = v; return nil })
+	set("DNSERV_ALLOWED_NETS", func(v string) error { c.DNS.AllowedNets = list(v); return nil })
+	set("DNSERV_LOCAL_DNS", func(v string) error { c.DNS.LocalDNS = v; return nil })
+	set("DNSERV_TIME_ZONE", func(v string) error { c.TimeZone = v; return nil })
+	set("DNSERV_BLOCK_BYPASS", func(v string) error {
 		b, err := strconv.ParseBool(v)
 		c.Filtering.BlockBypass = b
 		return err
 	})
-	set("DNSERVE_CLUSTER_LISTEN", func(v string) error { c.Cluster.Listen = v; return nil })
-	set("DNSERVE_CLUSTER_ADVERTISE", func(v string) error { c.Cluster.Advertise = v; return nil })
-	set("DNSERVE_BLOCK_MODE", func(v string) error { c.Filtering.BlockMode = v; return nil })
-	set("DNSERVE_THREAT_FEEDS", func(v string) (err error) { c.Analytics.ThreatFeeds, err = strconv.ParseBool(v); return })
-	set("DNSERVE_HISTORY_DAYS", func(v string) (err error) { c.History.Days, err = strconv.Atoi(v); return })
-	set("DNSERVE_STATS_DAYS", func(v string) (err error) { c.History.StatsDays, err = strconv.Atoi(v); return })
+	set("DNSERV_CLUSTER_LISTEN", func(v string) error { c.Cluster.Listen = v; return nil })
+	set("DNSERV_CLUSTER_ADVERTISE", func(v string) error { c.Cluster.Advertise = v; return nil })
+	set("DNSERV_BLOCK_MODE", func(v string) error { c.Filtering.BlockMode = v; return nil })
+	set("DNSERV_THREAT_FEEDS", func(v string) (err error) { c.Analytics.ThreatFeeds, err = strconv.ParseBool(v); return })
+	set("DNSERV_HISTORY_DAYS", func(v string) (err error) { c.History.Days, err = strconv.Atoi(v); return })
+	set("DNSERV_STATS_DAYS", func(v string) (err error) { c.History.StatsDays, err = strconv.Atoi(v); return })
 	return errors.Join(errs...)
 }
 

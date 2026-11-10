@@ -120,7 +120,7 @@ nav.side .menu { display: none; }
 .center { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.1rem; padding: 1rem;
   background: radial-gradient(60rem 30rem at 50% -10%, var(--glow-1), transparent 70%), radial-gradient(50rem 30rem at 100% 110%, var(--glow-2), transparent 70%), var(--bg); }
 .center::before {
-  content: "DNServe"; display: block; padding-left: 42px; height: 34px; line-height: 34px; font-weight: 750; font-size: 1.45rem; letter-spacing: -.02em;
+  content: "DNServ"; display: block; padding-left: 42px; height: 34px; line-height: 34px; font-weight: 750; font-size: 1.45rem; letter-spacing: -.02em;
   background: url(logo.svg) left center / 34px no-repeat;
 }
 .card {
@@ -207,7 +207,7 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* forms */
 label { display: block; margin: .55rem 0 .2rem; font-weight: 600; font-size: .86rem; }
 label.inline { display: flex; align-items: center; gap: .5rem; font-weight: 400; margin: .35rem 0; }
-input[type=text], input[type=password], input[type=number], input[type=time], select, textarea {
+input[type=text], input[type=search], input[type=password], input[type=number], input[type=time], select, textarea {
   width: 100%; padding: .42rem .6rem; border: 1px solid var(--line); border-radius: 8px;
   background: var(--bg); color: var(--text); font: inherit; transition: border-color .15s, box-shadow .15s;
 }
