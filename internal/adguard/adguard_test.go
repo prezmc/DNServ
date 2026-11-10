@@ -176,7 +176,7 @@ func TestBuildPlan(t *testing.T) {
 	if has(rules.Items, "version.bind") || has(rules.Items, "nas.lan") {
 		t.Errorf("rules include defaults or rewrites: %v", texts(rules.Items))
 	}
-	if len(rules.Have) != 1 || len(rules.Skipped) != 3 { // regex, $client, REFUSED rewrite
+	if len(rules.Have) != 1 || len(rules.Skipped) != 2 { // $client, REFUSED rewrite
 		t.Errorf("rules have %v skipped %v", texts(rules.Have), texts(rules.Skipped))
 	}
 	r := *p.patches[KeyRules].Rules
@@ -229,7 +229,7 @@ func TestBuildPlan(t *testing.T) {
 		t.Fatalf("groups: %+v", p.Groups)
 	}
 	kid, work := p.Groups[0], p.Groups[1]
-	if kid.Name != "Kid tablet" || !contains(kid.Rules, "||youtube.com^") || contains(kid.Rules, "||tiktok.com^") || contains(kid.Rules, "/yt-regex/") {
+	if kid.Name != "Kid tablet" || !contains(kid.Rules, "||youtube.com^") || contains(kid.Rules, "||tiktok.com^") || !contains(kid.Rules, "/yt-regex/") {
 		t.Errorf("kid group: %+v", kid)
 	}
 	if !work.SkipBlocklists || len(work.Rules) != 0 {

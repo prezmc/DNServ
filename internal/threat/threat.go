@@ -362,7 +362,7 @@ func loadFeed(path string, idx int, f Feed, d *db) (int, error) {
 			continue
 		}
 		for _, r := range rules {
-			if r.Allow || r.Domain == "" || r.Domain == "localhost" {
+			if r.Allow || r.Bad || r.Kind == filter.Pattern || r.Domain == "" || r.Domain == "localhost" {
 				continue
 			}
 			if target[r.Domain]&(1<<idx) == 0 {

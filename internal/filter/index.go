@@ -1,6 +1,9 @@
 package filter
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Source identifies where a rule came from.
 type Source struct {
@@ -39,6 +42,7 @@ type Index struct {
 
 type tierMaps struct {
 	exact, suffix, sub map[string]ref
+	pats               *patterns
 }
 
 // ref is packed to keep the maps small: source id and tier.
@@ -48,17 +52,20 @@ type ref struct {
 }
 
 func newTierMaps() tierMaps {
-	return tierMaps{exact: map[string]ref{}, suffix: map[string]ref{}, sub: map[string]ref{}}
+	return tierMaps{exact: map[string]ref{}, suffix: map[string]ref{}, sub: map[string]ref{}, pats: &patterns{}}
 }
 
 // Builder accumulates rules into a new Index.
 type Builder struct {
 	idx *Index
+	// pats maps a pattern rule's text to its place in its tier's list.
+	pats map[string]int
+	bad  []Rule
 }
 
 // NewBuilder starts an empty index.
 func NewBuilder() *Builder {
-	return &Builder{idx: &Index{block: newTierMaps(), allow: newTierMaps()}}
+	return &Builder{idx: &Index{block: newTierMaps(), allow: newTierMaps()}, pats: map[string]int{}}
 }
 
 // AddSource registers a source and returns its id.
@@ -76,8 +83,15 @@ func (b *Builder) Add(src uint16, r Rule) {
 	if r.Allow {
 		m = &b.idx.allow
 	}
+	if r.Bad {
+		b.bad = append(b.bad, r)
+		return
+	}
 	var target map[string]ref
 	switch r.Kind {
+	case Pattern:
+		b.addPattern(m.pats, s, r)
+		return
 	case Exact:
 		target = m.exact
 	case Suffix:
@@ -92,8 +106,58 @@ func (b *Builder) Add(src uint16, r Rule) {
 	b.idx.count++
 }
 
-// Build returns the finished index. The builder must not be used after.
-func (b *Builder) Build() *Index { return b.idx }
+func (b *Builder) addPattern(ps *patterns, s Source, r Rule) {
+	key := r.Text()
+	if i, ok := b.pats[key]; ok {
+		if ps.list[i].ref.tier < s.Tier {
+			ps.list[i].ref = ref{src: s.ID, tier: s.Tier}
+		}
+		return
+	}
+	re, err := compilePattern(r.Domain)
+	if err != nil {
+		return
+	}
+	b.pats[key] = len(ps.list)
+	ps.list = append(ps.list, newPattern(re, r, ref{src: s.ID, tier: s.Tier}))
+	b.idx.count++
+}
+
+// Build returns the finished index, after $badfilter rules have switched
+// off the rules they name. The builder must not be used after.
+func (b *Builder) Build() *Index {
+	for _, r := range b.bad {
+		m := &b.idx.block
+		if r.Allow {
+			m = &b.idx.allow
+		}
+		var target map[string]ref
+		switch r.Kind {
+		case Exact:
+			target = m.exact
+		case Suffix:
+			target = m.suffix
+		case SubOnly:
+			target = m.sub
+		case Pattern:
+			r.Bad = false
+			key := r.Text()
+			if _, ok := b.pats[key]; ok {
+				delete(b.pats, key)
+				m.pats.list = slices.DeleteFunc(m.pats.list, func(p pattern) bool { return p.rule.Text() == key })
+				b.idx.count--
+			}
+			continue
+		}
+		if _, ok := target[r.Domain]; ok {
+			delete(target, r.Domain)
+			b.idx.count--
+		}
+	}
+	b.idx.block.pats.build()
+	b.idx.allow.pats.build()
+	return b.idx
+}
 
 // Len is the number of distinct rules indexed.
 func (ix *Index) Len() int {
@@ -152,6 +216,9 @@ func (m tierMaps) find(name string) (Rule, ref, bool) {
 		if rf, ok := m.sub[d]; ok {
 			consider(Rule{Domain: d, Kind: SubOnly}, rf)
 		}
+	}
+	if p, ok := m.pats.find(name); ok {
+		consider(p.rule, p.ref)
 	}
 	return best, bestR, found
 }
