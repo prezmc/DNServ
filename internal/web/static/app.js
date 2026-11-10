@@ -1541,62 +1541,93 @@ function usualNote(cur, usual, fmt, worseIfHigher) {
   return h('span', { class: cls }, 'usually ', fmt(usual));
 }
 
-// latencyChart draws response times over time as lines on a log scale,
-// with unusual buckets shaded.
+// niceMax rounds a chart's top value up to 1, 2 or 5 × 10ⁿ steps and
+// returns the top and the step between grid lines.
+function niceMax(v, lines) {
+  const raw = Math.max(v, 1e-6) / lines;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= raw);
+  return { top: step * Math.ceil(v / step - 1e-9) || step, step };
+}
+
+// latencyChart draws response times over time in two panels that share a
+// time axis, each on its own linear scale from zero: upstream lookups on
+// top (milliseconds) and all answers below (mostly from cache, fractions
+// of a millisecond). A shared log scale made 10 ms and 100 ms look close
+// together, so each panel's height now means the same thing everywhere.
+// The time axis starts where the history starts, not at an empty start
+// of the period. Unusual buckets are shaded in both panels.
 function latencyChart(view, step, from, to, anomalies) {
-  const series = [
-    { key: 'p50_ms', label: 'Median, all queries', cls: 's3' },
-    { key: 'lookup_avg_ms', label: 'Lookups, average', cls: 's1' },
-    { key: 'lookup_p95_ms', label: 'Lookups, 95th percentile', cls: 's2' },
-  ];
   const byT = new Map(view.series.map(p => [p.t, p]));
-  const first = view.series.length ? Math.min(view.series[0].t, from - ((from % step) + step) % step) : from;
+  const align = (t) => t - ((t % step) + step) % step;
+  // Start at the first bucket with queries if that is later than the
+  // period's start, so a new server doesn't show mostly empty space.
+  const withData = view.series.filter(p => p.queries > 0);
+  if (!withData.length) return null;
+  const trimmed = withData[0].t > align(from);
   const pts = [];
-  for (let t = first; t < to; t += step) pts.push(byT.get(t) || { t, queries: 0, lookups: 0 });
+  for (let t = withData[0].t; t < to; t += step) pts.push(byT.get(t) || { t, queries: 0, lookups: 0 });
   if (!pts.length) return null;
-  const vals = [];
-  pts.forEach(p => series.forEach(s => { if (p[s.key] > 0) vals.push(p[s.key]); }));
-  if (!vals.length) return null;
-  const W = 720, H = 200, padL = 52, padB = 22, padT = 8;
-  const lo = Math.pow(10, Math.floor(Math.log10(Math.max(0.01, Math.min(...vals)))));
-  const hi = Math.pow(10, Math.ceil(Math.log10(Math.max(lo * 10, ...vals))));
-  const y = (v) => padT + (H - padT - padB) * (1 - (Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)));
-  const bw = (W - padL) / pts.length;
-  const xc = (i) => padL + i * bw + bw / 2;
+
+  const panels = [
+    { title: 'Lookups (not in cache, asked upstream)', count: 'lookups', series: [
+      { key: 'lookup_avg_ms', label: 'Average', cls: 's1' },
+      { key: 'lookup_p95_ms', label: '95th percentile', cls: 's2' }] },
+    { title: 'All answers (most come from cache)', count: 'queries', series: [
+      { key: 'p50_ms', label: 'Median', cls: 's3' }] },
+  ];
+  const W = 720, padL = 56, padR = 8, axisH = 22, gap = 30, titleH = 18;
+  const heights = [150, 70];
+  let yOff = 0;
   const g = [];
   const idx = new Map(pts.map((p, i) => [p.t, i]));
-  (anomalies || []).forEach(a => {
-    const i0 = idx.get(a.t), i1 = idx.get(a.end);
-    if (i0 === undefined) return;
-    g.push(svg('rect', { x: padL + i0 * bw, y: padT, width: ((i1 === undefined ? i0 : i1) - i0 + 1) * bw, height: H - padT - padB, class: 'anom ' + a.severity }));
-  });
-  for (let v = lo; v <= hi + 1e-9; v *= 10) {
-    g.push(svg('line', { x1: padL, x2: W, y1: y(v), y2: y(v), class: 'grid-line' }));
-    g.push(svg('text', { x: padL - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, document.createTextNode(fmtMs(v))));
-  }
-  series.forEach(s => {
-    let d = '';
-    let pen = false;
-    pts.forEach((p, i) => {
-      const v = p[s.key];
-      const ok = v > 0 && (s.key === 'p50_ms' ? p.queries >= 1 : p.lookups >= 1);
-      if (!ok) { pen = false; return; }
-      d += (pen ? 'L' : 'M') + xc(i).toFixed(1) + ' ' + y(v).toFixed(1);
-      pen = true;
+  const bw = (W - padL - padR) / pts.length;
+  const xc = (i) => padL + i * bw + bw / 2;
+  panels.forEach((pn, pi) => {
+    const top = yOff + titleH, ph = heights[pi], bottom = top + ph;
+    pn.top = top; pn.bottom = bottom;
+    const vals = [];
+    pts.forEach(p => { if (p[pn.count] >= 1) pn.series.forEach(s => { if (p[s.key] > 0) vals.push(p[s.key]); }); });
+    g.push(svg('text', { x: padL, y: yOff + 12, class: 'axis panel-title' }, document.createTextNode(pn.title)));
+    if (!vals.length) {
+      g.push(svg('text', { x: padL + (W - padL) / 2, y: top + ph / 2, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(pn.count === 'lookups' ? 'No lookups in this period' : 'No queries in this period')));
+      yOff = bottom + gap;
+      return;
+    }
+    const { top: max, step: tick } = niceMax(Math.max(...vals), pi === 0 ? 4 : 2);
+    const y = (v) => bottom - ph * Math.min(v, max) / max;
+    (anomalies || []).forEach(a => {
+      const i0 = idx.get(a.t), i1 = idx.get(a.end);
+      if (i0 === undefined) return;
+      g.push(svg('rect', { x: padL + i0 * bw, y: top, width: ((i1 === undefined ? i0 : i1) - i0 + 1) * bw, height: ph, class: 'anom ' + a.severity }));
     });
-    if (d) g.push(svg('path', { d, class: 'line ' + s.cls }));
-    // Lone points (gaps on both sides) as dots, so they show.
-    pts.forEach((p, i) => {
-      const v = p[s.key];
-      const has = (j) => j >= 0 && j < pts.length && pts[j][s.key] > 0;
-      if (v > 0 && !has(i - 1) && !has(i + 1)) g.push(svg('circle', { cx: xc(i), cy: y(v), r: 2.5, class: 'dot-' + s.cls }));
+    for (let v = 0; v <= max + tick / 1e6; v += tick) {
+      g.push(svg('line', { x1: padL, x2: W - padR, y1: y(v), y2: y(v), class: 'grid-line' + (v === 0 ? ' base' : '') }));
+      g.push(svg('text', { x: padL - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, document.createTextNode(v === 0 ? '0' : fmtMs(v))));
+    }
+    pn.series.forEach(s => {
+      const ok = (p) => p[s.key] > 0 && p[pn.count] >= 1;
+      let d = '', pen = false;
+      pts.forEach((p, i) => {
+        if (!ok(p)) { pen = false; return; }
+        d += (pen ? 'L' : 'M') + xc(i).toFixed(1) + ' ' + y(p[s.key]).toFixed(1);
+        pen = true;
+      });
+      if (d) g.push(svg('path', { d, class: 'line ' + s.cls }));
+      // Lone points (gaps on both sides) as dots, so they show.
+      pts.forEach((p, i) => {
+        const has = (j) => j >= 0 && j < pts.length && ok(pts[j]);
+        if (ok(p) && !has(i - 1) && !has(i + 1)) g.push(svg('circle', { cx: xc(i), cy: y(p[s.key]), r: 2.5, class: 'dot-' + s.cls }));
+      });
     });
+    yOff = bottom + gap;
   });
+  const H = panels[1].bottom + axisH;
   const every = Math.ceil(pts.length / 6);
   const tip = h('div', { class: 'chart-tip', hidden: true });
   pts.forEach((p, i) => {
     if (i % every === 0) g.push(svg('text', { x: xc(i), y: H - 6, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(bucketLabel(p.t, step))));
-    const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - padB, class: 'hit' });
+    const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - axisH, class: 'hit' });
     const show = () => {
       fill(tip, h('b', {}, bucketLabel(p.t, step, true)),
         p.queries ? [h('div', {}, fmtNum(p.queries), ' queries, median ', fmtMs(p.p50_ms), ', 95% under ', fmtMs(p.p95_ms)),
@@ -1610,15 +1641,26 @@ function latencyChart(view, step, from, to, anomalies) {
     hit.addEventListener('mouseleave', () => { tip.hidden = true; });
     g.push(hit);
   });
-  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Response times over time' }, g);
+  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Response times over time: lookups and all answers, each on its own scale' }, g);
   const table = h('details', { class: 'small' }, h('summary', { class: 'muted' }, 'Show as a table'),
     h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'Median'), h('th', {}, '95%'), h('th', {}, '99%'), h('th', {}, 'Lookups'), h('th', {}, 'Lookup avg'), h('th', {}, 'Lookup 95%'), h('th', {}, 'From cache'), h('th', {}, 'Failed'))),
       h('tbody', {}, pts.filter(p => p.queries).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.queries)), h('td', {}, fmtMs(p.p50_ms)), h('td', {}, fmtMs(p.p95_ms)), h('td', {}, fmtMs(p.p99_ms)),
         h('td', {}, fmtNum(p.lookups)), h('td', {}, p.lookups ? fmtMs(p.lookup_avg_ms) : '—'), h('td', {}, p.lookups ? fmtMs(p.lookup_p95_ms) : '—'), h('td', {}, fmtPct(p.cache_hit)), h('td', {}, fmtNum(p.failed))))))));
-  return h('div', {},
-    h('div', { class: 'legend small' }, series.map(s => h('span', {}, h('span', { class: 'key ' + s.cls }), s.label)),
+  // One plain sentence on the gap the two scales hide: how much longer a
+  // lookup takes than a typical answer.
+  const s = view.summary;
+  const ratio = s.lookups && s.p50_ms > 0 ? s.lookup_avg_ms / s.p50_ms : 0;
+  const story = s.lookups ? h('p', { class: 'small story' },
+    h('b', {}, fmtPct(s.cache_hit)), ' answered from cache, typically in ', h('b', {}, fmtMs(s.p50_ms)), '. ',
+    'The rest were looked up upstream, averaging ', h('b', {}, fmtMs(s.lookup_avg_ms)),
+    ratio >= 2 ? [' (about ', h('b', {}, ratio >= 10 ? fmtNum(Math.round(ratio / 10) * 10) : Math.round(ratio), '×'), ' longer)'] : null,
+    ', and 95% of them took under ', h('b', {}, fmtMs(s.lookup_p95_ms)), '.') : null;
+  return h('div', {}, story,
+    h('div', { class: 'legend small' }, panels.flatMap(pn => pn.series).map(s => h('span', {}, h('span', { class: 'key ' + s.cls }), s.label === 'Median' ? 'Median, all answers' : 'Lookups, ' + s.label.toLowerCase())),
       (anomalies || []).length ? h('span', {}, h('span', { class: 'key anom' }), 'Unusual') : null),
-    h('div', { class: 'chart-wrap' }, chart, tip), table);
+    h('div', { class: 'chart-wrap' }, chart, tip),
+    trimmed ? h('p', { class: 'muted small' }, 'No queries recorded before ', bucketLabel(pts[0].t, step, true), ', so the chart starts there.') : null,
+    table);
 }
 
 // distChart shows how many queries took how long.
