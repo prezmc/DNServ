@@ -215,3 +215,6 @@ table.top .link.mono { text-align: left; word-break: break-all; padding: 0; }
 .badge.risk-high { background: var(--bad); color: var(--panel); }
 .badge.risk-medium { background: var(--warn); color: var(--panel); }
 .risky .card { border-color: var(--warn); }
+ul.plain { list-style: none; padding: 0; margin: .25rem 0 .75rem; }
+ul.plain li { padding: .2rem 0; overflow-wrap: anywhere; }
+.actions.left { align-items: center; margin-top: .5rem; }

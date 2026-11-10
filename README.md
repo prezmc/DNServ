@@ -99,6 +99,18 @@ setup wizard and dashboard handle the rest from your browser.
   anything. Turn the feeds off, or list trusted domains, under Settings →
   Risk scoring. Each node downloads the sources itself, keeps them in
   `/data/threat` and refreshes them twice a day (about 30 MB of memory).
+  History also keeps each answer's addresses and aliases (about 33 MB a
+  day per 100,000 queries), so a harmless-looking name that answers with a
+  known botnet server (Feodo Tracker, Spamhaus DROP) or points to a risky
+  name is marked too. These checks run in the history writer, never on
+  the DNS path.
+- **Also on, and VirusTotal.** A domain's details list every enabled list
+  with a rule for it ("on your lists"), read from the saved list files
+  only when you open it, so it costs no memory. Add your own free
+  VirusTotal API key under Settings → VirusTotal to get a **Check on
+  VirusTotal** button: only the domain you click is sent, at most 4 a
+  minute, and results are kept for a day. The key is shared with your
+  other nodes, never shown again, and not part of backups.
 - **Local names.** Give names to things on your network under **Local
   names**: `nas.home → 192.168.1.20`, an alias like `files.home → nas.home`
   (or to an outside name), or a wildcard like `*.lab.home`. Every node
@@ -325,7 +337,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
 | Groups | `GET`/`POST /groups` `{name, rules, skip_blocklists, schedules: [{name, days, start, end, block_all, rules}], devices}`, `PUT`/`DELETE /groups/{id}` |
 | Recent queries | `GET /queries?client=&search=&result=&before=&limit=` (`client` is an IP or device id; `result` is `blocked`, `allowed`, `failed`, …) |
-| Analytics | `GET /analytics/summary`, `/analytics/top?by=domains\|blocked\|clients`, `/analytics/domain?name=`, `/analytics/queries?search=&result=&before=`, `/analytics/export` (CSV), `/analytics/risky`, `/analytics/intel` (sources). All take `range=1h\|24h\|7d\|30d\|90d` and `client=` (IP or device id), and merge every node's history |
+| Analytics | `GET /analytics/summary`, `/analytics/top?by=domains\|blocked\|clients`, `/analytics/domain?name=`, `/analytics/queries?search=&result=&before=`, `/analytics/export` (CSV), `/analytics/risky`, `/analytics/intel` (sources), `/analytics/alsoon?name=`, `POST /analytics/virustotal?name=`; `GET`/`PUT /virustotal` `{key}` (never returned). The history views take `range=1h\|24h\|7d\|30d\|90d` and `client=` (IP or device id), and merge every node's history |
 | Settings history | `GET /config/versions`, `GET /config/versions/{id}` (with the changes going back would make), `POST /config/versions/{id}/restore` |
 | Backups | `GET /backups`, `POST /backups/passphrase` `{passphrase, password}`, `PUT /backups/schedule` `{every: daily\|weekly\|"", at: "HH:MM", keep, offsite}`, `POST /backups/download`, `GET /backups/files/{local\|offsite}/{name}`, `POST /backups/restore` (multipart: `file`, `passphrase`, `password`) |
 | Cluster | `GET /cluster`, `POST /cluster/join-codes` `{host}`, `PUT /cluster/nodes/{id}` `{name, never_leader}`, `DELETE /cluster/nodes/{id}`, `POST /cluster/preferred` `{id}`, `POST /cluster/transfer` `{to}`, `POST /cluster/recover` `{password, accept_risk}`, `POST /cluster/join` `{join_code, host, password}` |
@@ -466,7 +478,8 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
    encrypted backups (this). Later: backups to S3-compatible storage.
 3. **Analytics.** Per-node query history merged across nodes, charts,
    top lists, "caught by", search and export, and the AdGuard Insight
-   features: threat-feed risk scores and domain types and owners (this).
+   features: threat-feed risk scores, domain types and owners, answer
+   IP and CNAME checks, "also on" lists and VirusTotal lookups (this).
 4. **Multi-server deploy and failover testing.**
 
 ## License

@@ -36,8 +36,8 @@ import (
 	"github.com/prezmc/dnserve/internal/server"
 	"github.com/prezmc/dnserve/internal/store"
 	"github.com/prezmc/dnserve/internal/threat"
-	"github.com/prezmc/dnserve/internal/virustotal"
 	"github.com/prezmc/dnserve/internal/upstream"
+	"github.com/prezmc/dnserve/internal/virustotal"
 	"github.com/prezmc/dnserve/internal/web"
 )
 

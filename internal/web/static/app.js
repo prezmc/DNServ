@@ -922,7 +922,9 @@ async function queries(main) {
       h('td', { class: 'nowrap small', title: fmtTime(e.time) }, new Date(e.time).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })),
       h('td', { class: 'small' }, names[e.client] || e.client, multi && e.node ? h('div', { class: 'muted' }, 'via ', e.node) : null),
       h('td', {}, can('dashboard.view') && useHistory ? h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(e.name, filter.range === '1h' ? '24h' : filter.range) }, e.name) : h('span', { class: 'mono' }, e.name),
-        ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name])),
+        ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name]),
+        (e.ips || []).length || (e.cnames || []).length ? h('div', { class: 'muted small mono', title: (e.cnames || []).concat(e.ips || []).join('\n') },
+          (e.cnames || []).length ? '\u2192 ' + e.cnames[e.cnames.length - 1] + ' ' : '', (e.ips || []).slice(0, 2).join(', '), (e.ips || []).length > 2 ? ' +' + ((e.ips.length) - 2) : '') : null),
       h('td', {}, h('span', { class: 'badge ' + kind, title: why || null }, label, e.allowed ? ' · allowed' : ''),
         why ? h('div', { class: 'muted small' }, why) : null),
       can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
@@ -1139,6 +1141,29 @@ async function domainDialog(name, range) {
   try { r = await api('GET', '/analytics/domain?' + new URLSearchParams({ name, range })); } catch (e) { fill(body, msg('err', e.message)); return; }
   const c = r.counts || { total: 0, blocked: 0 };
   const now = r.now || {};
+  const alsoOn = h('div', {}, h('h3', {}, 'On your lists'), h('p', { class: 'muted small' }, 'Checking your lists\u2026'));
+  api('GET', '/analytics/alsoon?' + new URLSearchParams({ name })).then(x => {
+    fill(alsoOn, h('h3', {}, 'On your lists'), !x.lists.length ? h('p', { class: 'muted small' }, 'No enabled list has a rule for this domain.')
+      : h('ul', { class: 'plain small' }, x.lists.map(l => h('li', {}, l.allowlist ? h('span', { class: 'badge ok' }, 'allow') : h('span', { class: 'badge bad' }, 'block'), ' ', l.list === 'Custom rules' ? 'Your custom rules' : l.list, ' ', h('code', {}, l.rule)))),
+      x.partial ? h('p', { class: 'muted small' }, 'Some lists took too long to check.') : null);
+  }).catch(e => fill(alsoOn, h('h3', {}, 'On your lists'), msg('err', e.message)));
+  const vtBox = h('div', {});
+  api('GET', '/virustotal').then(x => {
+    if (!x.configured) return;
+    const btn = h('button', { type: 'button', onclick: async () => {
+      btn.disabled = true;
+      try {
+        const v = (await api('POST', '/analytics/virustotal?' + new URLSearchParams({ name }))).report;
+        const bad = v.malicious + v.suspicious;
+        fill(vtBox, h('h3', {}, 'VirusTotal'), !v.found ? h('p', { class: 'muted small' }, 'VirusTotal has no report for this domain.')
+          : h('div', { class: 'msg ' + (v.malicious >= 3 ? 'err' : bad ? 'warn' : 'ok') },
+            h('b', {}, bad ? fmtNum(v.malicious) + ' engines say malicious' + (v.suspicious ? ', ' + fmtNum(v.suspicious) + ' suspicious' : '') : 'No engine flags this domain'),
+            ' (of ', fmtNum(v.malicious + v.suspicious + v.harmless + v.undetected), '). ',
+            v.analyzed ? 'Analyzed ' + ago(v.analyzed) + '. ' : '', h('a', { href: v.link, target: '_blank', rel: 'noopener noreferrer' }, 'Full report')));
+      } catch (e) { btn.disabled = false; toast(e.message, 'err'); }
+    } }, 'Check on VirusTotal');
+    fill(vtBox, h('div', { class: 'actions left' }, btn, h('span', { class: 'muted small' }, 'Sends only this domain name to VirusTotal.')));
+  }).catch(() => {});
   fill(body,
     h('p', {}, now.allowed ? ['Allowed now', now.rule ? [' by ', h('code', {}, now.rule)] : null, now.list ? [' (', now.custom ? 'your custom rules' : now.list, ')'] : null]
       : now.blocked ? ['Blocked now by ', h('code', {}, now.rule), ' on ', now.custom ? 'your custom rules' : now.list] : 'Not blocked now.', ' ', domainButton(name, now)),
@@ -1158,6 +1183,10 @@ async function domainDialog(name, range) {
       h('div', { class: 'tile' }, h('div', { class: 'label' }, 'Blocked'), h('div', { class: 'value' }, fmtNum(c.blocked)))),
     r.last_seen ? h('p', { class: 'muted small' }, 'First seen ', fmtTime(r.first_seen), ' · last seen ', fmtTime(r.last_seen)) : null,
     c.total ? queryChart(r) : h('p', { class: 'muted' }, 'No queries for this domain in this period.'),
+    r.answers && r.answers.length ? [h('h3', {}, 'Recent answers'), h('ul', { class: 'plain small' }, r.answers.map(a => h('li', { class: 'mono' },
+      (a.cnames || []).length ? [(a.cnames || []).join(' \u2192 '), ' \u2192 '] : null, (a.ips || []).join(', ') || h('span', { class: 'muted' }, 'no addresses'))))] : null,
+    alsoOn,
+    vtBox,
     r.devices && r.devices.length ? [h('h3', {}, 'Devices that asked'), h('div', { class: 'scroll' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'))),
       h('tbody', {}, r.devices.map(x => h('tr', {},
@@ -1444,6 +1473,24 @@ async function settings(main) {
       ], (f) => save({ threat_feeds: f.elements.feeds.checked, trusted_domains: lines(val(f, 'trusted')) }, { threat_feeds: ac.ThreatFeeds, trusted_domains: norm(ac.TrustedDomains) }))));
   }
 
+  if (can('lists.manage')) {
+    let vt = { configured: false };
+    try { vt = await api('GET', '/virustotal'); } catch (_) { /* unknown */ }
+    const set = async (key) => {
+      try { await api('PUT', '/virustotal', { key }); toast(key ? 'VirusTotal key saved.' : 'VirusTotal key removed.'); route(); } catch (e) { toast(e.message, 'err'); }
+    };
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'VirusTotal'),
+      form({}, [
+        h('p', { class: 'muted' }, 'Optional. With your own free VirusTotal API key, a domain\u2019s details get a \u201cCheck on VirusTotal\u201d button. Only the domain you check is sent, only when you click, at most 4 a minute. Results are kept for a day.'),
+        vt.configured ? h('p', {}, h('span', { class: 'badge ok' }, 'Key saved'), ' ', h('button', { class: 'link', type: 'button', onclick: () => set('') }, 'Remove key')) : null,
+        h('label', { for: 'vtkey' }, vt.configured ? 'Replace the key' : 'API key'),
+        h('input', { id: 'vtkey', name: 'vtkey', type: 'password', autocomplete: 'off', spellcheck: 'false' }),
+        h('p', { class: 'muted small' }, 'The key is shared with your other servers and never shown again. It isn\u2019t part of backups.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save key')),
+      ], (f) => { const k = val(f, 'vtkey').trim(); if (k) return set(k); })));
+  }
+
   if (isAdmin()) {
     const hc = eff.History;
     let hs = null;
@@ -1454,7 +1501,7 @@ async function settings(main) {
         h('p', { class: 'muted' }, 'Each server keeps its own history for Analytics and the Query log. Nothing leaves your servers. Set a number to 0 to keep none.'),
         h('label', { for: 'hdays' }, 'Keep every query for (days)'),
         h('input', { id: 'hdays', name: 'hdays', type: 'number', min: 0, max: 365, value: hc.Days }),
-        h('p', { class: 'muted small' }, 'Lets you search what each device looked up. Takes about 25 MB per day kept for every 100,000 queries a day; a typical home makes 10,000 to 50,000.'),
+        h('p', { class: 'muted small' }, 'Lets you search what each device looked up. Takes about 33 MB per day kept for every 100,000 queries a day; a typical home makes 10,000 to 50,000.'),
         h('label', { for: 'sdays' }, 'Keep hourly totals for (days)'),
         h('input', { id: 'sdays', name: 'sdays', type: 'number', min: 0, max: 730, value: hc.StatsDays }),
         h('p', { class: 'muted small' }, 'Charts and top lists. Much smaller than every query.'),
