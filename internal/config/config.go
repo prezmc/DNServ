@@ -165,6 +165,12 @@ type FilteringConfig struct {
 	// BlockBypass blocks well-known public DNS-over-HTTPS resolvers and
 	// Apple's iCloud Private Relay, so devices can't quietly skip filtering.
 	BlockBypass bool `yaml:"block_bypass"`
+	// BlockedServices are ids from the built-in service catalog (YouTube,
+	// TikTok, ...) blocked for everyone.
+	BlockedServices []string `yaml:"blocked_services"`
+	// SafeSearch forces safe search on Google, Bing and DuckDuckGo and
+	// YouTube's restricted mode.
+	SafeSearch bool `yaml:"safe_search"`
 }
 
 // ListConfig is one blocklist or allowlist.

@@ -172,6 +172,9 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("DELETE /api/v1/devices/{id}", a.authed(store.PermDevices, a.deleteDevice))
 	m.HandleFunc("GET /api/v1/queries", a.authed(store.PermQueryLog, a.queries))
 	m.HandleFunc("GET /api/v1/groups", a.authed(store.PermDashboard, a.listGroups))
+	m.HandleFunc("GET /api/v1/services", a.authed(store.PermDashboard, func(w http.ResponseWriter, r *http.Request, p *Principal) {
+		writeJSON(w, http.StatusOK, map[string]any{"services": filter.Services})
+	}))
 	m.HandleFunc("POST /api/v1/groups", a.authed(store.PermDevices, a.saveGroup))
 	m.HandleFunc("PUT /api/v1/groups/{id}", a.authed(store.PermDevices, a.saveGroup))
 	m.HandleFunc("DELETE /api/v1/groups/{id}", a.authed(store.PermDevices, a.deleteGroup))

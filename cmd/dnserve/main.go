@@ -556,7 +556,8 @@ func applySettings(ctx context.Context, cfg, next config.Config, srv *server.Ser
 	engine.SetConfig(next.Filtering)
 	f, n := cfg.Filtering, next.Filtering
 	if !slices.Equal(f.Rules, n.Rules) || !reflect.DeepEqual(f.Lists, n.Lists) ||
-		!reflect.DeepEqual(f.Allowlists, n.Allowlists) || f.BlockBypass != n.BlockBypass {
+		!reflect.DeepEqual(f.Allowlists, n.Allowlists) || f.BlockBypass != n.BlockBypass ||
+		!slices.Equal(f.BlockedServices, n.BlockedServices) {
 		if err := engine.Rebuild(ctx, false); err != nil {
 			log.Error("filter rebuild failed", "err", err)
 		}

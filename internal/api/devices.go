@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/netip"
 	"slices"
@@ -290,8 +291,21 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
 	if !check("rules", g.Rules) {
 		return
 	}
-	for _, sc := range g.Schedules {
+	var err error
+	if g.Services, err = serviceIDs(g.Services); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if g.SafeSearch != "" && g.SafeSearch != "on" && g.SafeSearch != "off" {
+		writeErr(w, http.StatusBadRequest, `safe_search must be "", "on" or "off"`)
+		return
+	}
+	for i, sc := range g.Schedules {
 		if !check(sc.Name, sc.Rules) {
+			return
+		}
+		if g.Schedules[i].Services, err = serviceIDs(sc.Services); err != nil {
+			writeErr(w, http.StatusBadRequest, sc.Name+": "+err.Error())
 			return
 		}
 	}
@@ -338,4 +352,18 @@ func (a *API) deleteGroup(w http.ResponseWriter, r *http.Request, p *Principal) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// serviceIDs checks ids against the service catalog and drops duplicates.
+func serviceIDs(ids []string) ([]string, error) {
+	out := []string{}
+	for _, id := range ids {
+		if _, ok := filter.ServiceByID(id); !ok {
+			return nil, fmt.Errorf("unknown service %q", id)
+		}
+		if !slices.Contains(out, id) {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }

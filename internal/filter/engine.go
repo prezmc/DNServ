@@ -134,6 +134,8 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 		}
 	}
 
+	AddServices(b, cfg.BlockedServices)
+
 	load := func(l config.ListConfig, allow bool) {
 		if !l.Enabled {
 			return

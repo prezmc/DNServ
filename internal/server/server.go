@@ -320,7 +320,13 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 		return s.blocked(req), OutBlocked, match
 	}
 
-	m, out := s.answer(req, name)
+	var m *dns.Msg
+	var out Outcome
+	if t := s.safeSearchFor(g, name); t != "" {
+		m, out = s.safeSearchAnswer(req, t)
+	} else {
+		m, out = s.answer(req, name)
+	}
 	// Answer checks, as AdGuard Home does: a name that is an alias (CNAME)
 	// for a blocked name is blocked too, and so is an answer with an
 	// address that a list names (a rule such as "||203.0.113.9^"). Not

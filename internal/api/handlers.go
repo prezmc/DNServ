@@ -568,6 +568,14 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 			}
 		}
 	}
+	if patch.BlockedServices != nil {
+		ids, err := serviceIDs(*patch.BlockedServices)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		patch.BlockedServices = &ids
+	}
 	if patch.TrustedDomains != nil {
 		out := []string{}
 		for _, d := range *patch.TrustedDomains {

@@ -79,8 +79,8 @@ func (g *Group) normalize() error {
 		slices.Sort(days)
 		s.Days = days
 		s.Rules = cleanRules(s.Rules)
-		if !s.BlockAll && len(s.Rules) == 0 {
-			return fmt.Errorf("%s: choose to pause the internet or list domains to block", s.Name)
+		if !s.BlockAll && len(s.Rules) == 0 && len(s.Services) == 0 {
+			return fmt.Errorf("%s: choose to pause the internet, or services or domains to block", s.Name)
 		}
 		total += len(s.Rules)
 	}
