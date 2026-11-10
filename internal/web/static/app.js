@@ -165,6 +165,7 @@ const PERMS = {
   'domains.allowblock': 'Block or allow domains',
   'rules.edit': 'Edit custom rules',
   'lists.manage': 'Manage blocklists',
+  'filtering.pause': 'Pause filtering',
   'devices.manage': 'Manage devices and groups',
   'upstream.manage': 'Change how DNS is resolved',
   'network.manage': 'Change allowed networks',
@@ -173,8 +174,8 @@ const PERMS = {
   'backups.manage': 'Manage backups (admin)',
   'audit.view': 'View the audit log (admin)',
 };
-const POWER_PERMS = ['dashboard.view', 'querylog.view', 'data.export', 'domains.allowblock', 'rules.edit', 'lists.manage', 'devices.manage', 'upstream.manage', 'network.manage'];
-const VIEWER_PERMS = ['dashboard.view', 'querylog.view'];
+const POWER_PERMS = ['dashboard.view', 'querylog.view', 'data.export', 'domains.allowblock', 'rules.edit', 'lists.manage', 'filtering.pause', 'devices.manage', 'upstream.manage', 'network.manage'];
+const VIEWER_PERMS = ['dashboard.view', 'querylog.view', 'filtering.pause'];
 
 const PROVIDERS = {
   cloudflare: { name: 'Cloudflare (1.1.1.1)', note: 'Fast, no filtering of its own.', servers: ['https://cloudflare-dns.com/dns-query', 'tls://one.one.one.one'] },
@@ -682,14 +683,17 @@ async function dashboard(main) {
   // picker at the top of a cloud DNS console.
   const range = DASH_RANGES.includes(hashParams().get('range')) ? hashParams().get('range') : '24h';
   const status = h('span', { class: 'pill' }, h('span', { class: 'dot' }), 'Checking…');
-  const head = h('div', { class: 'page-head' }, h('h1', {}, 'Dashboard'), status, h('span', { class: 'grow' }),
+  const pauseBtn = h('span');
+  const pauseBox = h('div');
+  const head = h('div', { class: 'page-head' }, h('h1', {}, 'Dashboard'), status, pauseBtn, h('span', { class: 'grow' }),
     can('dashboard.view') ? h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, DASH_RANGES.map(k =>
       h('button', { type: 'button', 'aria-pressed': String(k === range), onclick: () => {
         history.replaceState(null, '', '#/' + (k === '24h' ? '' : '?range=' + k));
         shownHash = location.hash;
         route();
       } }, k))) : null);
-  fill(main, head, h('div', { class: 'dash' }, body, chartBox, extraBox, devBox, checkDomainCard(), ver));
+  fill(main, head, h('div', { class: 'dash' }, pauseBox, body, chartBox, extraBox, devBox, checkDomainCard(), ver));
+  const pause = pauseControl(pauseBtn, pauseBox, () => load());
 
   // The tiles and upstream counts come from the saved query history (the
   // chosen period, every node) so they survive restarts and updates; the
@@ -705,7 +709,9 @@ async function dashboard(main) {
   const load = async () => {
     let s;
     if (Date.now() - hist.at > 60000) await loadHist();
-    try { s = await api('GET', '/status'); } catch (e) { body.replaceChildren(msg('err', e.message)); return; }
+    let pz;
+    try { [s, pz] = await Promise.all([api('GET', '/status'), api('GET', '/pause').catch(() => null)]); } catch (e) { body.replaceChildren(msg('err', e.message)); return; }
+    pause.show(pz, s);
     const q = s.queries || {};
     let total = ['upstream', 'cached', 'stale', 'blocked', 'local', 'error'].reduce((a, k) => a + (q[k] || 0), 0);
     let blocked = q.blocked || 0, cached = (q.cached || 0) + (q.stale || 0);
@@ -745,8 +751,10 @@ async function dashboard(main) {
     const upName = upstreamLabel;
     const bad = (s.cluster && s.cluster.nodes > 1 && !s.cluster.healthy) || (s.unbound && !s.unbound.ready) || (s.tunnel && !s.tunnel.up);
     const loading = s.filter && !s.filter.ready;
-    status.className = 'pill ' + (bad ? 'bad' : loading ? 'warn' : 'ok');
-    fill(status, h('span', { class: 'dot' }), bad ? 'Needs attention' : loading ? 'Loading lists' : 'Protecting your network');
+    const off = pz && pz.filtering_enabled === false;
+    const paused = pz && pz.paused ? (pz.pauses.some(p => p.node === '*') ? 'Filtering paused' : 'Paused on ' + pz.pauses.map(p => p.node_name).join(', ')) : '';
+    status.className = 'pill ' + (bad ? 'bad' : loading || paused || off ? 'warn' : 'ok');
+    fill(status, h('span', { class: 'dot' }), bad ? 'Needs attention' : paused || (off ? 'Filtering is off' : loading ? 'Loading lists' : 'Protecting your network'));
     fill(body,
       total === 0 ? h('div', { class: 'card highlight d-wait' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
       h('p', { class: 'muted small d-note' }, fromHist ? [RANGES[range], hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
@@ -795,6 +803,102 @@ async function dashboard(main) {
     if (++tick % 3 === 0) loadDevices();
     if (tick % 12 === 0) { dashboardChart(chartBox, range); extras(); }
   }, 5000);
+}
+
+// ---------- pause filtering ----------
+
+const PAUSE_LABELS = { 1: '1 minute', 5: '5 minutes', 15: '15 minutes', 30: '30 minutes', 60: '1 hour', 0: 'Until I turn it back on' };
+
+// fmtLeft is a countdown: 4:05, or 1:02:05 past an hour.
+function fmtLeft(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  const hr = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return hr ? hr + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s);
+}
+
+// pauseControl puts the Pause filtering button in the page head and a
+// banner for each pause in force, with a live countdown and a button to
+// turn filtering back on. reload refreshes the dashboard after a change.
+function pauseControl(btnSlot, box, reload) {
+  let state = null;
+  // Countdowns run off the server's remaining time, so a wrong clock on
+  // this computer doesn't matter.
+  let ends = [];
+  let tick = null;
+  const stop = () => { if (tick) { clearInterval(tick); tick = null; } };
+
+  const change = async (method, path, body, note) => {
+    try {
+      const v = await api(method, path, body);
+      show(v);
+      toast(note);
+      reload();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+
+  const openMenu = () => {
+    const nodes = state.nodes || [];
+    let where = '*';
+    const whereSeg = nodes.length > 1 ? h('div', { class: 'seg wrap', role: 'group', 'aria-label': 'Which servers' },
+      [{ id: '*', name: 'All servers' }].concat(nodes).map(n => h('button', { type: 'button', 'aria-pressed': String(n.id === where), onclick: (ev) => {
+        where = n.id;
+        whereSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.currentTarget)));
+      } }, n.name, n.self ? h('span', { class: 'muted small' }, ' (this one)') : null))) : null;
+    const d = dialog('Pause filtering', [
+      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'),
+      whereSeg ? [h('p', { class: 'small b' }, 'Where'), whereSeg,
+        h('p', { class: 'muted small' }, 'Pausing one server only helps devices that use it. Most devices switch between your two DNS servers on their own.')] : null,
+      h('p', { class: 'small b' }, 'For how long'),
+      h('div', { class: 'pause-opts' }, (state.options || [1, 5, 15, 30, 60, 0]).map(m => h('button', { type: 'button', class: m === 0 ? 'wide' : null, onclick: async () => {
+        d.close();
+        const name = where === '*' ? '' : nodes.find(n => n.id === where).name;
+        await change('POST', '/pause', { minutes: m, node: where }, 'Filtering paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
+      } }, PAUSE_LABELS[m] || m + ' minutes'))),
+      h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+    ]);
+  };
+
+  const render = () => {
+    const now = Date.now();
+    for (const e of ends) {
+      if (!e.at) continue;
+      const left = (e.at - now) / 1000;
+      if (left <= 0) { stop(); reload(); return; }
+      e.el.textContent = fmtLeft(left);
+    }
+  };
+
+  function show(v) {
+    state = v;
+    stop();
+    ends = [];
+    if (!v) { fill(btnSlot); fill(box); return; }
+    const many = (v.nodes || []).length > 1;
+    const allPaused = v.pauses.some(p => p.node === '*');
+    fill(btnSlot, v.can_pause && v.filtering_enabled && !allPaused
+      ? h('button', { type: 'button', class: 'small pause-btn', onclick: openMenu }, h('span', { class: 'pause-ico', 'aria-hidden': 'true' }), v.paused ? 'Pause more' : 'Pause filtering')
+      : null);
+    if (!v.paused) { fill(box); return; }
+    fill(box, h('div', { class: 'card d-pause', role: 'status' }, v.pauses.map(p => {
+      const left = h('b', { class: 'count' });
+      if (!p.indefinite) ends.push({ el: left, at: Date.now() + p.remaining_seconds * 1000 });
+      const where = p.node === '*' ? (many ? ' on all servers' : '') : ' on ' + p.node_name;
+      return h('div', { class: 'pause-row' },
+        h('span', { class: 'pause-ico big', 'aria-hidden': 'true' }),
+        h('div', { class: 'grow' },
+          h('div', { class: 'b' }, 'Filtering is paused' + where),
+          h('div', { class: 'muted small' }, p.indefinite ? 'Until someone turns it back on' : ['Back on in ', left, ' at ', new Date(Date.now() + p.remaining_seconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })],
+            ' · paused by ', p.by, ' ', ago(p.since))),
+        v.can_pause ? h('button', { type: 'button', class: 'primary', onclick: () => change('DELETE', '/pause' + (p.node === '*' ? '' : '?node=' + encodeURIComponent(p.node)), undefined, 'Filtering is back on' + (p.node === '*' ? '' : ' on ' + p.node_name) + '.') },
+          v.pauses.length > 1 && p.node === '*' ? 'Turn back on everywhere' : 'Turn filtering back on') : null);
+    })));
+    render();
+    if (ends.length) {
+      tick = setInterval(() => { if (!box.isConnected) { stop(); return; } render(); }, 1000);
+    }
+  }
+  return { show };
 }
 
 // updateListsButton downloads every list again now, instead of waiting

@@ -48,6 +48,10 @@ type State struct {
 	// VirusTotalKey is the owner's own VirusTotal API key ("": off). The
 	// API never returns it.
 	VirusTotalKey string `json:"virustotal_key,omitempty"`
+	// Pauses turn filtering off for a while, by node ID, or AllNodes for
+	// every node. They are kept apart from Settings: a pause is not a
+	// configuration change, so it isn't in settings history or backups.
+	Pauses map[string]*Pause `json:"pauses,omitempty"`
 }
 
 // Device is a named client on the network, recognized by its addresses.

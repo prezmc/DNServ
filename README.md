@@ -68,6 +68,13 @@ setup wizard and dashboard handle the rest from your browser.
   before.
 - **API tokens** for scripts and home automation, limited to the
   permissions you pick.
+- **Pause filtering** from the Dashboard for 1, 5, 15 or 30 minutes, an
+  hour, or until you turn it back on, on every server at once or just one.
+  A banner counts down and turns it back on in one click. The pause goes
+  through the cluster like any change, so every node obeys it; it's in the
+  audit log but not in settings history or backups. Admins, power users
+  with "Manage blocklists" or "Pause filtering", and viewers given "Pause
+  filtering" can use it.
 - **Devices and recent queries.** See every device using DNServe, name
   them, and browse its most recent queries (kept in memory) with one-click
   Block or Allow. "Check a domain" says whether a name is blocked and by
@@ -388,6 +395,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}` |
 | Local names | `PATCH /settings` `{records: [{name, value, note}]}` (the whole list; `value` is an IP address or another name) |
 | Lists | `POST /lists/update` (download every list again now) |
+| Pause filtering | `GET /pause`; `POST /pause` `{minutes, node}` (`minutes` 0 = until turned back on, up to 24 h; `node` omitted = every server); `DELETE /pause` (everything back on) or `DELETE /pause?node=<id>` |
 | Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}`, `GET /domains/check?name=` |
 | AdGuard Home import (admin) | `POST /import/adguard/preview` `{url, username, password, insecure}` returns `{id, plan}`; `POST /import/adguard/apply` `{id, sections, exclude}` |
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
