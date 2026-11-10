@@ -618,12 +618,40 @@ async function dashboard(main) {
   const ver = h('p', { class: 'muted small' });
   page(main, 'Dashboard', body, chartBox, extraBox, devBox, checkDomainCard(), ver);
 
+  // The tiles and upstream counts come from the saved query history (last
+  // 24 hours, every node) so they survive restarts and updates; the
+  // counters since start are only used when history is off.
+  const hist = { sum: null, perf: null, at: 0 };
+  const loadHist = async () => {
+    if (!can('dashboard.view')) return;
+    const [sum, perf] = await Promise.all([api('GET', '/analytics/summary?range=24h').catch(() => null), api('GET', '/analytics/performance?range=24h').catch(() => null)]);
+    hist.sum = sum && (sum.stats || sum.detail) ? sum : null;
+    hist.perf = perf && (perf.stats || perf.detail) ? perf : null;
+    hist.at = Date.now();
+  };
   const load = async () => {
     let s;
+    if (Date.now() - hist.at > 60000) await loadHist();
     try { s = await api('GET', '/status'); } catch (e) { body.replaceChildren(msg('err', e.message)); return; }
     const q = s.queries || {};
-    const total = ['upstream', 'cached', 'stale', 'blocked', 'local', 'error'].reduce((a, k) => a + (q[k] || 0), 0);
+    let total = ['upstream', 'cached', 'stale', 'blocked', 'local', 'error'].reduce((a, k) => a + (q[k] || 0), 0);
+    let blocked = q.blocked || 0, cached = (q.cached || 0) + (q.stale || 0);
+    const fromHist = !!hist.sum;
+    if (fromHist) {
+      const c = hist.sum.counts;
+      total = c.total; blocked = c.blocked; cached = c.cached;
+    }
     const pct = (n) => (total ? (100 * n / total).toFixed(1) + '%' : '—');
+    // Upstream tries and failures over the same 24 hours, on this server.
+    const upHist = new Map();
+    if (hist.perf) {
+      const self = s.cluster && s.cluster.name;
+      for (const u of hist.perf.view.upstreams) if (!self || u.node === self || hist.perf.view.upstreams.every(x => x.node !== self)) {
+        const cur = upHist.get(u.server) || { tries: 0, failed: 0 };
+        cur.tries += u.tries; cur.failed += u.errors + u.timeouts;
+        upHist.set(u.server, cur);
+      }
+    }
     const tile = (label, value) => h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value));
     const health = [];
     health.push(h('p', {}, 'Lookups: ', h('b', {}, { forward: 'encrypted forwarding', recursive: 'full recursion', tunnel: 'recursion through a VPN' }[s.upstream_mode] || s.upstream_mode)));
@@ -638,16 +666,21 @@ async function dashboard(main) {
     const upName = upstreamLabel;
     fill(body,
       total === 0 ? h('div', { class: 'card highlight' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
-      h('p', { class: 'muted small' }, 'Counting since DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.'),
+      h('p', { class: 'muted small' }, fromHist ? ['Last 24 hours', hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
+        : ['Counting since DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '. Turn on query history to keep counts across restarts.']),
       h('div', { class: 'grid' },
         tile('Queries', fmtNum(total)),
-        tile('Blocked', total ? fmtNum(q.blocked) + ' (' + pct(q.blocked || 0) + ')' : '0'),
-        tile('Answered from cache', pct((q.cached || 0) + (q.stale || 0))),
+        tile('Blocked', total ? fmtNum(blocked) + ' (' + pct(blocked) + ')' : '0'),
+        tile('Answered from cache', pct(cached)),
         tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0))),
       h('div', { class: 'card' }, h('h2', {}, 'Health'), health,
         (s.upstreams && s.upstreams.length) ? h('div', { class: 'scroll' }, h('table', {},
-          h('thead', {}, h('tr', {}, h('th', {}, 'Resolver'), h('th', {}, 'Latency'), h('th', {}, 'Queries'), h('th', {}, 'Failures'))),
-          h('tbody', {}, s.upstreams.map(u => h('tr', {}, h('td', { title: u.server }, upName(u.server)), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'), h('td', {}, fmtNum(u.queries)), h('td', {}, fmtNum(u.failures))))))) : null),
+          h('thead', {}, h('tr', {}, h('th', {}, 'Resolver'), h('th', {}, 'Latency'), h('th', {}, hist.perf ? 'Queries (24h)' : 'Queries'), h('th', {}, hist.perf ? 'Failures (24h)' : 'Failures'))),
+          h('tbody', {}, s.upstreams.map(u => {
+            const hu = hist.perf ? (upHist.get(u.server) || { tries: 0, failed: 0 }) : null;
+            return h('tr', {}, h('td', { title: u.server }, upName(u.server)), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'),
+              h('td', {}, fmtNum(hu ? hu.tries : u.queries)), h('td', {}, fmtNum(hu ? hu.failed : u.failures)));
+          })))) : null),
       (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), updateListsButton()), h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
