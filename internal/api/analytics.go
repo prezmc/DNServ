@@ -57,6 +57,9 @@ type nodeAnswer struct {
 	Name  string `json:"name"`
 	OK    bool   `json:"ok"`
 	Error string `json:"error,omitempty"`
+	// Counts are this server's own totals for the query, so the dashboard
+	// can show which server answered what. Set for kinds that count.
+	Counts *analytics.Counts `json:"counts,omitempty"`
 }
 
 // ranges are the presets the dashboard offers: span and bucket size.
@@ -152,7 +155,7 @@ func (a *API) ask(ctx context.Context, q analytics.Query, timeout time.Duration)
 				return
 			}
 			parts = append(parts, res)
-			nodes = append(nodes, nodeAnswer{Name: self, OK: true})
+			nodes = append(nodes, nodeAnswer{Name: self, OK: true, Counts: res.Counts})
 		}()
 	}
 	if a.Cluster != nil {
@@ -172,6 +175,7 @@ func (a *API) ask(ctx context.Context, q analytics.Query, timeout time.Duration)
 				n.Error = "sent an answer this server doesn't understand"
 			default:
 				n.OK = true
+				n.Counts = res.Counts
 				mu.Lock()
 				parts = append(parts, &res)
 				mu.Unlock()

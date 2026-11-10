@@ -1,3 +1,5 @@
+<img src="internal/web/static/logo.svg" alt="" width="72" align="left">
+
 # DNServe
 
 A self-hosted DNS server with filtering, built for homes and small businesses
