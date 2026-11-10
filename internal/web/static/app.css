@@ -151,8 +151,6 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (prefers-reduced-motion: reduce) { .pill.ok .dot { animation: none; } }
 .badge.accent { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); margin-left: .4rem; }
 .bad-text { color: var(--bad); }
-table.servers td { vertical-align: middle; }
-table.servers th.num { text-align: right; }
 
 /* dashboard: one grid, so cards sit side by side on wide screens */
 .dash { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: .75rem; align-items: start; }
@@ -181,7 +179,12 @@ table.servers th.num { text-align: right; }
   .dash .d-chart { grid-column: 1 / span 8; grid-row: span 2; }
   .dash .d-health, .dash .d-servers, .dash .d-domains, .dash .d-blocked, .dash .d-devices, .dash .d-perf, .dash .d-top, .dash .d-check { grid-column: span 4; }
 }
-.dash .d-health th, .dash .d-health td:not(:first-child), table.servers td:first-child { white-space: nowrap; }
+.dash .d-health th, .dash .d-health td:not(:first-child) { white-space: nowrap; }
+.servers .server { padding: .7rem 0; border-bottom: 1px solid var(--line); }
+.servers .server:first-child { padding-top: .2rem; }
+.servers .server .row { gap: .45rem; margin-bottom: .35rem; }
+.dash .servers .stats, .servers .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .5rem; margin-top: .5rem; }
+.servers .stat .num { font-variant-numeric: tabular-nums; font-size: 1.05rem; text-align: left; }
 .dash .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 /* forms */
@@ -384,3 +387,14 @@ td a:hover { text-decoration: underline; }
 .b { font-weight: 600; }
 .services .perms { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .services-pick summary { cursor: pointer; padding: .25rem 0; }
+
+/* combo: a select you can type into */
+.combo { position: relative; flex: 1; min-width: 160px; }
+.combo > input { width: 100%; }
+.row > .combo.dev { flex: 1.4; min-width: 200px; }
+.combo-list { position: absolute; z-index: 30; left: 0; min-width: 100%; width: max-content; max-width: min(32rem, 90vw); top: calc(100% + 4px); margin: 0; padding: .25rem 0; list-style: none;
+  max-height: 18rem; overflow-y: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgb(0 0 0 / .25); }
+.combo-list li { padding: .4rem .7rem; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combo-list li.on, .combo-list li:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.combo-list li[aria-selected="true"] { font-weight: 600; }
+.combo-list li.empty { cursor: default; }
