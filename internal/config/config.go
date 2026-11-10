@@ -84,9 +84,14 @@ type UpstreamConfig struct {
 	//   "recursive" resolve from the root servers with the bundled Unbound.
 	//   "tunnel"    recursive, with outbound traffic over a VPN tunnel.
 	Mode string `yaml:"mode"`
-	// Servers, tried in order of measured latency, failing over on error.
-	// Schemes: https:// (DoH), tls:// (DoT), udp://, tcp://.
+	// Servers, failing over on error. Schemes: https:// (DoH), tls:// (DoT),
+	// udp://, tcp://.
 	Servers []string `yaml:"servers"`
+	// Strategy is how Servers are picked: "fastest" (lowest measured
+	// answer time, the default), "in_order" (first listed, the rest as
+	// fallbacks), "round_robin" (take turns) or "parallel" (ask them all,
+	// use the first answer).
+	Strategy string `yaml:"strategy"`
 	// Bootstrap resolvers used only to look up the hostnames of DoH/DoT
 	// servers. Must be IP addresses.
 	Bootstrap []string      `yaml:"bootstrap"`
@@ -237,6 +242,7 @@ func Default() Config {
 		},
 		Upstream: UpstreamConfig{
 			Mode:      "forward",
+			Strategy:  "fastest",
 			Servers:   []string{"https://cloudflare-dns.com/dns-query", "tls://one.one.one.one"},
 			Bootstrap: []string{"1.1.1.1:53", "1.0.0.1:53"},
 			Timeout:   3 * time.Second,
@@ -321,6 +327,7 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	}
 	set("DNSERV_UPSTREAM_MODE", func(v string) error { c.Upstream.Mode = v; return nil })
 	set("DNSERV_UPSTREAM_SERVERS", func(v string) error { c.Upstream.Servers = list(v); return nil })
+	set("DNSERV_UPSTREAM_STRATEGY", func(v string) error { c.Upstream.Strategy = v; return nil })
 	set("DNSERV_TUNNEL_INTERFACE", func(v string) error { c.Upstream.Tunnel.Interface = v; return nil })
 	set("DNSERV_TUNNEL_EXPECTED_EGRESS", func(v string) error { c.Upstream.Tunnel.ExpectedEgress = list(v); return nil })
 	set("DNSERV_TUNNEL_ON_DOWN", func(v string) error { c.Upstream.Tunnel.OnDown = v; return nil })
@@ -398,6 +405,11 @@ func (c Config) Validate() error {
 		}
 	default:
 		errs = append(errs, fmt.Errorf("upstream.mode: unknown mode %q", c.Upstream.Mode))
+	}
+	switch c.Upstream.Strategy {
+	case "", "fastest", "in_order", "round_robin", "parallel":
+	default:
+		errs = append(errs, fmt.Errorf("upstream.strategy: unknown strategy %q (fastest, in_order, round_robin or parallel)", c.Upstream.Strategy))
 	}
 	if len(c.DNS.TLS.DoHListen) > 0 && !strings.HasPrefix(c.DNS.TLS.DoHPath, "/") {
 		errs = append(errs, errors.New("dns.tls.doh_path must start with /"))

@@ -61,6 +61,7 @@ Notes:
 |---|---|---|
 | `DNSERV_UPSTREAM_MODE` | `recursive` | `forward`, `recursive` or `tunnel` |
 | `DNSERV_UPSTREAM_SERVERS` | `https://dns.quad9.net/dns-query,tls://dns.quad9.net` | forwarding servers |
+| `DNSERV_UPSTREAM_STRATEGY` | `round_robin` | with several servers: `fastest` (default), `in_order`, `round_robin` or `parallel` |
 | `DNSERV_TUNNEL_INTERFACE` | `wg0` | interface that must be up in tunnel mode |
 | `DNSERV_TUNNEL_EXPECTED_EGRESS` | `185.65.0.0/16` | optional VPN exit IPs to verify |
 | `DNSERV_TUNNEL_ON_DOWN` | `block` | `forward` (encrypted fallback) or `block` |

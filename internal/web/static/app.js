@@ -1022,6 +1022,25 @@ function clearCacheButton() {
   return b;
 }
 
+// clearHistoryButton deletes performance stats ("performance") or all
+// query history ("history") on every server, after asking. Admins only.
+function clearHistoryButton(what, label, question, after) {
+  if (!isAdmin()) return null;
+  const b = h('button', { type: 'button', class: 'small', onclick: async () => {
+    if (!await ask(question, label)) return;
+    b.disabled = true;
+    try {
+      const r = await api('POST', '/analytics/clear', { what });
+      const ok = r.servers.filter(x => !x.error), bad = r.servers.filter(x => x.error);
+      toast((ok.length ? 'Cleared on ' + ok.map(x => x.server).join(', ') + '.' : 'Nothing was cleared.') +
+        (bad.length ? ' Couldn\'t clear ' + bad.map(x => x.server + ' (' + x.error + ')').join(', ') + '.' : ''), bad.length ? 'err' : undefined);
+      if (after) after();
+    } catch (e) { toast(e.message, 'err'); }
+    b.disabled = false;
+  } }, label);
+  return b;
+}
+
 // ---------- check a domain ----------
 
 function checkDomainCard() {
@@ -1858,7 +1877,9 @@ async function performancePage(main) {
       history.replaceState(null, '', '#/performance' + (k !== '24h' ? '?range=' + k : ''));
       load();
     } }, k)));
-  page(main, 'Performance', h('p', { class: 'muted' }, 'How quickly DNServ answers, how your upstream servers are doing, and anything out of the ordinary.'), h('div', { class: 'row' }, rangeBtns), body);
+  const clearBtn = clearHistoryButton('performance', 'Clear performance stats',
+    'Clear performance stats on every server? Response times, upstream timings and the warnings based on them start again from now. The query history is kept, and so are the slowest domains and device tables, which come from it.', () => load());
+  page(main, 'Performance', h('p', { class: 'muted' }, 'How quickly DNServ answers, how your upstream servers are doing, and anything out of the ordinary.'), h('div', { class: 'row spread' }, rangeBtns, clearBtn), body);
 
   const load = async () => {
     let r;
@@ -2032,8 +2053,17 @@ async function settings(main) {
       if (PROVIDERS[ev.target.value]) servers.value = PROVIDERS[ev.target.value].servers.join('\n');
     } }, Object.entries(PROVIDERS).map(([k, p]) => h('option', { value: k, selected: prov === k }, p.name + ' \u2014 ' + p.note)),
       h('option', { value: 'custom', selected: prov === 'custom' }, 'Custom servers\u2026'));
+    const strategies = {
+      fastest: 'Fastest: ask the quickest server, the others if it fails (recommended)',
+      in_order: 'In order: the first server, the others only if it fails',
+      round_robin: 'Round robin: take turns, spreading the load evenly',
+      parallel: 'All at once: ask every server, use the first answer (more traffic)',
+    };
+    const strategy = h('select', { id: 'strategy', name: 'strategy' }, Object.entries(strategies).map(([k, t]) => h('option', { value: k, selected: (u.Strategy || 'fastest') === k }, t)));
     const fwd = h('div', { class: 'indent', hidden: u.Mode === 'recursive' },
-      h('label', { for: 'provider' }, u.Mode === 'tunnel' ? 'Resolver (used only while the VPN is down)' : 'Resolver'), picker, custom);
+      h('label', { for: 'provider' }, u.Mode === 'tunnel' ? 'Resolver (used only while the VPN is down)' : 'Resolver'), picker, custom,
+      h('label', { for: 'strategy' }, 'With more than one server'), strategy,
+      h('p', { class: 'muted small' }, 'A server that fails or times out is skipped for 30 seconds, whichever you pick.'));
     const tunnelOpts = h('details', { class: 'indent', open: u.Mode === 'tunnel', hidden: u.Mode !== 'tunnel' }, h('summary', {}, 'VPN options'),
       h('label', { for: 'tif' }, 'VPN network interface'),
       h('input', { id: 'tif', name: 'tif', type: 'text', value: u.Tunnel.Interface || '' }),
@@ -2053,17 +2083,17 @@ async function settings(main) {
           disabled ? h('span', { class: 'small warn-text' }, ' Needs the VPN setup in deploy/docker-compose.tunnel.yml; no VPN connection was found.') : null));
     };
     sections.push(h('div', { class: 'card' },
-      h('h2', {}, 'Privacy ', origin('upstream_mode', 'upstream_servers', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
+      h('h2', {}, 'Privacy ', origin('upstream_mode', 'upstream_servers', 'upstream_strategy', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
       h('p', { class: 'muted' }, 'How DNServ looks up the domains it doesn\u2019t block.'),
       form({ 'data-track': true }, [
         h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
         fwd, tunnelOpts,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({
-        upstream_mode: f.querySelector('input[name=mode]:checked').value, upstream_servers: lines(servers.value),
+        upstream_mode: f.querySelector('input[name=mode]:checked').value, upstream_servers: lines(servers.value), upstream_strategy: val(f, 'strategy'),
         tunnel_interface: val(f, 'tif').trim(), tunnel_expected_egress: lines(val(f, 'egress')), tunnel_on_down: val(f, 'ondown'),
       }, {
-        upstream_mode: u.Mode, upstream_servers: norm(u.Servers),
+        upstream_mode: u.Mode, upstream_servers: norm(u.Servers), upstream_strategy: u.Strategy || 'fastest',
         tunnel_interface: u.Tunnel.Interface || '', tunnel_expected_egress: norm(u.Tunnel.ExpectedEgress), tunnel_on_down: u.Tunnel.OnDown,
       }))));
   }
@@ -2229,7 +2259,12 @@ async function settings(main) {
         h('p', { class: 'muted small' }, 'Charts and top lists. Much smaller than every query.'),
         hs ? h('p', { class: 'muted small' }, 'This server’s history uses ', fmtSize(hs.bytes), '.', hs.dropped ? ' ' + fmtNum(hs.dropped) + ' queries weren’t saved because the disk couldn’t keep up.' : '') : null,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
-      ], (f) => save({ history_days: Number(val(f, 'hdays')), stats_days: Number(val(f, 'sdays')) }, { history_days: hc.Days, stats_days: hc.StatsDays }))));
+      ], (f) => save({ history_days: Number(val(f, 'hdays')), stats_days: Number(val(f, 'sdays')) }, { history_days: hc.Days, stats_days: hc.StatsDays })),
+      h('h3', {}, 'Start over'),
+      h('p', { class: 'muted small' }, 'Deletes history on every server. This can’t be undone, and backups don’t include history.'),
+      h('div', { class: 'actions' },
+        clearHistoryButton('performance', 'Clear performance stats', 'Clear performance stats on every server? Response times, upstream timings and their warnings start again from now. The query history, Analytics and the Query log are kept.'),
+        clearHistoryButton('history', 'Delete all query history', 'Delete all query history on every server? Every saved query, the Analytics totals and the performance stats are deleted, and everything starts again from now.'))));
   }
 
   // A row of section chips at the top, so a long settings page is one

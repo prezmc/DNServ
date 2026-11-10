@@ -15,6 +15,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}` |
 | Local names | `PATCH /settings` `{records: [{name, value, note}]}` (the whole list; `value` is an IP address or another name) |
 | Lists | `POST /lists/update` (download every list again now) |
+| Clear history (admin) | `POST /analytics/clear` `{what: performance\|history}` deletes performance stats, or all query history, on every server |
 | Pause filtering | `GET /pause`; `POST /pause` `{minutes, node}` (`minutes` 0 = until turned back on, up to 24 h; `node` omitted = every server); `DELETE /pause` (everything back on) or `DELETE /pause?node=<id>` |
 | Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}`, `GET /domains/check?name=` |
 | AdGuard Home import (admin) | `POST /import/adguard/preview` `{url, username, password, insecure}` returns `{id, plan}`; `POST /import/adguard/apply` `{id, sections, exclude}` |

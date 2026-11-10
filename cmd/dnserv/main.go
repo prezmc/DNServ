@@ -286,6 +286,37 @@ func run() error {
 		}
 		return out
 	}
+	if hist != nil {
+		clearHist := func(ctx context.Context, what string) error {
+			cctx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			return hist.Clear(cctx, what)
+		}
+		cl.Handle(peerHistoryClear, func(ctx context.Context, body json.RawMessage) (any, error) {
+			var what string
+			if err := json.Unmarshal(body, &what); err != nil {
+				return nil, err
+			}
+			return nil, clearHist(ctx, what)
+		})
+		adm.ClearHistory = func(ctx context.Context, what string) []api.HistoryCleared {
+			res := api.HistoryCleared{Server: cl.Name()}
+			if err := clearHist(ctx, what); err != nil {
+				res.Error = err.Error()
+			}
+			out := []api.HistoryCleared{res}
+			pctx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			for _, r := range cl.AskPeers(pctx, peerHistoryClear, what) {
+				res := api.HistoryCleared{Server: r.Name}
+				if r.Err != nil {
+					res.Error = r.Err.Error()
+				}
+				out = append(out, res)
+			}
+			return out
+		}
+	}
 	var updating atomic.Bool
 	cl.Handle(peerListsUpdate, func(context.Context, json.RawMessage) (any, error) {
 		adm.UpdateLists()
@@ -822,6 +853,7 @@ func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger, reu
 	forward := func() (*upstream.Group, error) {
 		g, err := upstream.NewGroup(u.Servers, u.Bootstrap, u.Timeout, log)
 		if err == nil {
+			g.SetStrategy(upstream.Strategy(u.Strategy))
 			observe(g)
 			set.groups = append(set.groups, g)
 		}
@@ -907,6 +939,7 @@ const (
 	peerListsChanged = "lists.changed"  // the leader has new list contents
 	peerListsUpdate  = "lists.update"   // download lists now (sent to the leader)
 	peerCacheClear   = "cache.clear"    // empty the answer cache
+	peerHistoryClear = "history.clear"  // delete performance stats or all query history
 )
 
 // syncLists makes every node in a cluster filter with exactly the same

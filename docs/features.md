@@ -24,7 +24,11 @@ Everything DNServ does today, in more detail than the README.
   well-known public DoH resolvers and iCloud Private Relay.
 - **Encrypted upstreams by default.** DNS over HTTPS to Cloudflare
   (`1.1.1.1`), with DNS over TLS as a fallback. Plain UDP/TCP upstreams are
-  also supported. Upstreams are tried fastest-first with automatic failover.
+  also supported. With several servers, choose how they are used under
+  Settings → Privacy: fastest first (the default; the others are timed in
+  the background now and then so a server that was slow once can win
+  again), in order, round robin, or all at once with the first answer
+  used. A server that fails is skipped for 30 seconds.
 - **Fast cache.** Sharded in-memory cache with prefetch of popular entries
   before they expire, serve-stale when upstream is down (RFC 8767), and
   persistence: the cache is saved on shutdown and reloaded on start.
@@ -97,6 +101,8 @@ Everything DNServ does today, in more detail than the README.
   percentiles merge exactly across nodes and nothing is added to the
   query path. Kept as long as the hourly totals. On first start after
   updating, response times are rebuilt from the existing query history.
+  Admins can clear the performance stats (Performance page) or all query
+  history (Settings → Query history) on every server.
 - **Risk scores and domain types.** Analytics marks risky domains (0-100)
   from public threat feeds (URLhaus and ThreatFox from abuse.ch, Phishing
   Army, HaGeZi's Threat Intelligence Feeds) plus a few signs in the name

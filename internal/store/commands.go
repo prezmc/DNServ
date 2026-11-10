@@ -110,6 +110,7 @@ const (
 	OpVirusTotalKey  = "virustotal.key"      // VirusTotalKey
 	OpFilterPause    = "filtering.pause"     // FilterPause
 	OpFilterResume   = "filtering.resume"    // FilterResume
+	OpHistoryClear   = "history.clear"       // HistoryClear (audit record only)
 )
 
 // VirusTotalKey sets (or, empty, removes) the VirusTotal API key. It is
@@ -117,6 +118,20 @@ const (
 // or the audit log.
 type VirusTotalKey struct {
 	Key string `json:"key"`
+}
+
+// HistoryClear records that query history was deleted on some servers.
+// The deleting itself happens on each node, outside the replicated state;
+// this only puts it in the audit log.
+type HistoryClear struct {
+	What    string   `json:"what"` // a key of HistoryClearWhat
+	Servers []string `json:"servers"`
+}
+
+// HistoryClearWhat names what can be cleared, for the audit log.
+var HistoryClearWhat = map[string]string{
+	"performance": "performance stats",
+	"history":     "all query history and stats",
 }
 
 type UserCreate struct {
@@ -518,6 +533,17 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		}
 		return applyResume(st, c, d)
 
+	case OpHistoryClear:
+		var d HistoryClear
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		what, ok := HistoryClearWhat[d.What]
+		if !ok {
+			return nil, nil, fmt.Errorf("unknown history %q", d.What)
+		}
+		return nil, audit("cleared "+what+" on "+strings.Join(d.Servers, ", "), nil, d), nil
+
 	case OpVirusTotalKey:
 		var d VirusTotalKey
 		if err := dec(&d); err != nil {
@@ -625,6 +651,8 @@ func clearField(s *Settings, f string) error {
 		s.UpstreamMode = nil
 	case "upstream_servers":
 		s.UpstreamServers = nil
+	case "upstream_strategy":
+		s.UpstreamStrategy = nil
 	case "tunnel_interface":
 		s.TunnelInterface = nil
 	case "tunnel_expected_egress":

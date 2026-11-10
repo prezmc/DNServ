@@ -566,12 +566,23 @@ func (b *builder) upstream() {
 		return
 	}
 	mode := "forward"
-	b.p.patches[KeyUpstream] = store.Settings{UpstreamMode: &mode, UpstreamServers: kept}
+	patch := store.Settings{UpstreamMode: &mode, UpstreamServers: kept}
+	// AdGuard Home's "parallel requests" and "fastest IP address" both ask
+	// every server at once; its default load balancing is closest to
+	// DNServ's fastest-first, which is the default here too.
+	if d := b.s.DNS; d.UpstreamMode == "parallel" || d.UpstreamMode == "fastest_addr" || d.ParallelRequests {
+		strategy := "parallel"
+		patch.UpstreamStrategy = &strategy
+	}
+	b.p.patches[KeyUpstream] = patch
 	now := strings.Join(cur.Servers, ", ")
 	if cur.Mode != "forward" {
 		now = map[string]string{"recursive": "full recursion", "tunnel": "recursion through a VPN"}[cur.Mode]
 	}
 	sec.Note = "Replaces DNServ's upstream (now " + now + ")."
+	if patch.UpstreamStrategy != nil {
+		sec.Note += " Every server is asked at once and the first answer is used, as AdGuard Home does now."
+	}
 	unchanged := b.st.Settings.UpstreamMode == nil && b.st.Settings.UpstreamServers == nil
 	sec.Default = encrypted && unchanged
 	if !encrypted {
