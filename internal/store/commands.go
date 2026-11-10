@@ -28,6 +28,7 @@ const (
 	PermAllowBlock = "domains.allowblock" // one-click block/allow of a domain
 	PermRules      = "rules.edit"         // edit custom rules
 	PermLists      = "lists.manage"       // blocklists, allowlists, block mode, bypass
+	PermPause      = "filtering.pause"    // pause filtering for a while (implied by lists.manage)
 	PermDevices    = "devices.manage"     // devices and groups (step 1d)
 	PermUpstream   = "upstream.manage"    // resolution mode, servers, tunnel
 	PermNetwork    = "network.manage"     // allowed client networks
@@ -38,13 +39,13 @@ const (
 )
 
 // AllPerms lists every permission.
-var AllPerms = []string{PermDashboard, PermQueryLog, PermExport, PermAllowBlock, PermRules, PermLists, PermDevices, PermUpstream, PermNetwork, PermUsers, PermCluster, PermBackups, PermAudit}
+var AllPerms = []string{PermDashboard, PermQueryLog, PermExport, PermAllowBlock, PermRules, PermLists, PermPause, PermDevices, PermUpstream, PermNetwork, PermUsers, PermCluster, PermBackups, PermAudit}
 
 // PowerPerms are the permissions an admin may grant a power user.
-var PowerPerms = []string{PermDashboard, PermQueryLog, PermExport, PermAllowBlock, PermRules, PermLists, PermDevices, PermUpstream, PermNetwork}
+var PowerPerms = []string{PermDashboard, PermQueryLog, PermExport, PermAllowBlock, PermRules, PermLists, PermPause, PermDevices, PermUpstream, PermNetwork}
 
 // ViewerPerms are the permissions a viewer may have.
-var ViewerPerms = []string{PermDashboard, PermQueryLog}
+var ViewerPerms = []string{PermDashboard, PermQueryLog, PermPause}
 
 // Has reports whether u holds perm.
 func (u *User) Has(perm string) bool {
@@ -57,7 +58,16 @@ func (u *User) Has(perm string) bool {
 	if perm == PermDashboard {
 		return true
 	}
-	return slices.Contains(u.Perms, perm)
+	return HasPerm(u.Perms, perm)
+}
+
+// HasPerm reports whether a list of granted permissions covers perm.
+// Whoever manages the blocklists can also pause filtering.
+func HasPerm(perms []string, perm string) bool {
+	if slices.Contains(perms, perm) {
+		return true
+	}
+	return perm == PermPause && slices.Contains(perms, PermLists)
 }
 
 // Command is one change to the state.
@@ -98,6 +108,8 @@ const (
 	OpGroupSave      = "group.save"          // Group (creates or replaces)
 	OpGroupDelete    = "group.delete"        // IDOnly
 	OpVirusTotalKey  = "virustotal.key"      // VirusTotalKey
+	OpFilterPause    = "filtering.pause"     // FilterPause
+	OpFilterResume   = "filtering.resume"    // FilterResume
 )
 
 // VirusTotalKey sets (or, empty, removes) the VirusTotal API key. It is
@@ -491,6 +503,20 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		return applyConfigRestore(st, c, dec)
 	case OpBackupConfig, OpBackupRestore:
 		return applyBackup(st, c, dec)
+
+	case OpFilterPause:
+		var d FilterPause
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		return applyPause(st, c, d)
+
+	case OpFilterResume:
+		var d FilterResume
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		return applyResume(st, c, d)
 
 	case OpVirusTotalKey:
 		var d VirusTotalKey

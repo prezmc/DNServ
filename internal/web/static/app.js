@@ -165,6 +165,7 @@ const PERMS = {
   'domains.allowblock': 'Block or allow domains',
   'rules.edit': 'Edit custom rules',
   'lists.manage': 'Manage blocklists',
+  'filtering.pause': 'Pause filtering',
   'devices.manage': 'Manage devices and groups',
   'upstream.manage': 'Change how DNS is resolved',
   'network.manage': 'Change allowed networks',
@@ -173,8 +174,8 @@ const PERMS = {
   'backups.manage': 'Manage backups (admin)',
   'audit.view': 'View the audit log (admin)',
 };
-const POWER_PERMS = ['dashboard.view', 'querylog.view', 'data.export', 'domains.allowblock', 'rules.edit', 'lists.manage', 'devices.manage', 'upstream.manage', 'network.manage'];
-const VIEWER_PERMS = ['dashboard.view', 'querylog.view'];
+const POWER_PERMS = ['dashboard.view', 'querylog.view', 'data.export', 'domains.allowblock', 'rules.edit', 'lists.manage', 'filtering.pause', 'devices.manage', 'upstream.manage', 'network.manage'];
+const VIEWER_PERMS = ['dashboard.view', 'querylog.view', 'filtering.pause'];
 
 const PROVIDERS = {
   cloudflare: { name: 'Cloudflare (1.1.1.1)', note: 'Fast, no filtering of its own.', servers: ['https://cloudflare-dns.com/dns-query', 'tls://one.one.one.one'] },
@@ -592,11 +593,11 @@ function route() {
     menu.setAttribute('aria-expanded', String(open));
   } }, r.title + ' \u25be');
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
-    h('div', { class: 'brand' }, 'DNServe', menu),
+    h('div', { class: 'brand' }, h('a', { href: '#/', class: 'logo' }, h('img', { src: 'logo.svg', alt: '', width: 26, height: 26 }), h('span', {}, 'DN', h('b', {}, 'Serve'))), menu),
     h('div', { id: 'navlinks', class: 'links' },
-      ROUTES.filter(x => x.show() && !x.hidden).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, x.title))),
+      ROUTES.filter(x => x.show() && !x.hidden).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, navIcon(x.path), x.title))),
     h('div', { class: 'spacer' }),
-    h('div', { class: 'who' }, ME.user.username, ' · ', ME.user.role),
+    h('div', { class: 'who' }, h('span', { class: 'avatar', 'aria-hidden': 'true' }, (ME.user.username || '?').slice(0, 1).toUpperCase()), h('span', {}, ME.user.username, h('span', { class: 'role' }, ME.user.role))),
     h('button', { class: 'link', onclick: async () => { try { await api('POST', '/auth/logout'); } catch (_) { /* ignore */ } csrf = ''; ME = null; boot(); } }, 'Sign out'));
   const main = h('main', {});
   shownHash = location.hash;
@@ -605,26 +606,102 @@ function route() {
   r.page(main);
 }
 
+// navIcon is a small line icon for a menu entry (24px grid, drawn in
+// the text colour so it follows the theme).
+const NAV_ICONS = {
+  '': 'M4 13h6V4H4zM14 20h6v-9h-6zM14 8h6V4h-6zM4 20h6v-3H4z',
+  devices: 'M3 5h18v11H3zM8 20h8M12 16v4',
+  analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  performance: 'M13 3 4 14h7l-1 7 9-11h-7z',
+  queries: 'M4 6h16M4 12h16M4 18h10',
+  names: 'M4 4h10l6 6v10H4zM14 4v6h6M8 14h8M8 17h5',
+  settings: 'M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6',
+  users: 'M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM2 21c0-4 3-6 7-6s7 2 7 6M17 4a4 4 0 0 1 0 7M22 21c0-3-1.5-5-4-5.6',
+  cluster: 'M10 5a2 2 0 1 0 4 0 2 2 0 1 0-4 0M3 19a2 2 0 1 0 4 0 2 2 0 1 0-4 0M17 19a2 2 0 1 0 4 0 2 2 0 1 0-4 0M12 7v4M12 11l-6 6M12 11l6 6',
+  backups: 'M4 7c0-2 16-2 16 0v10c0 2-16 2-16 0zM4 7c0 2 16 2 16 0M4 12c0 2 16 2 16 0',
+  audit: 'M9 4h6v3H9zM6 6H5v15h14V6h-1M9 12h6M9 16h4',
+  account: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 4-6 8-6s8 2 8 6',
+};
+function navIcon(path) {
+  const d = NAV_ICONS[path];
+  return d ? svg('svg', { viewBox: '0 0 24 24', class: 'ico', 'aria-hidden': 'true' }, svg('path', { d })) : null;
+}
+
 function fill(el, ...kids) { el.replaceChildren(...kids.flat(Infinity).filter(k => k !== null && k !== undefined && k !== false)); }
 function page(main, title, ...kids) { fill(main, h('h1', {}, title), kids); }
 
 // ---------- dashboard ----------
+
+const DASH_RANGES = ['24h', '7d', '30d'];
+
+// sparkline is a tiny trend line for a dashboard tile.
+function sparkline(values) {
+  const max = Math.max(...values), n = values.length;
+  if (!(max > 0)) return null;
+  const pts = values.map((v, i) => (100 * i / (n - 1)).toFixed(1) + ',' + (30 - 27 * v / max).toFixed(1));
+  return svg('svg', { viewBox: '0 0 100 32', preserveAspectRatio: 'none', class: 'spark', 'aria-hidden': 'true' },
+    svg('path', { d: 'M0,32L' + pts.join('L') + 'L100,32Z', class: 'area' }),
+    svg('path', { d: 'M' + pts.join('L'), class: 'stroke' }));
+}
+
+// serversCard shows which server answered what: each one's share of the
+// queries, blocks, cache answers and response time, so a cluster's split
+// of the work (and a server that has gone quiet) is easy to see.
+function serversCard(sum, s) {
+  const nodes = (sum.nodes || []).filter(n => n.name);
+  if (!nodes.length) return null;
+  const total = nodes.reduce((a, n) => a + (n.counts ? n.counts.total : 0), 0);
+  const leader = s.cluster && s.cluster.nodes > 1 ? s.cluster.leader : '';
+  const self = s.cluster && s.cluster.name;
+  const pct = (a, b) => (b ? fmtPct(a / b) : '—');
+  return h('div', { class: 'card d-servers' },
+    h('div', { class: 'row spread' }, h('h2', {}, nodes.length > 1 ? 'Servers' : 'Server'), can('cluster.manage') ? h('a', { href: '#/cluster', class: 'small' }, 'Cluster') : null),
+    h('table', { class: 'top servers' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Server'), h('th', { class: 'num' }, 'Queries'), h('th', { class: 'num' }, 'Blocked'), h('th', { class: 'num' }, 'Cache'), h('th', { class: 'num' }, 'Avg'))),
+      h('tbody', {}, nodes.map(n => {
+        const c = n.counts || { total: 0, blocked: 0, cached: 0, ms_sum: 0 };
+        return h('tr', {},
+          h('td', {}, h('div', {}, h('span', { class: 'dot ' + (n.ok ? 'ok' : 'bad') }), n.name,
+            n.name === leader ? h('span', { class: 'badge accent' }, 'leader') : null,
+            n.name === self && nodes.length > 1 ? h('span', { class: 'muted small' }, ' this one') : null),
+          n.ok ? bar(c.total, Math.max(...nodes.map(x => (x.counts ? x.counts.total : 0)))) : h('div', { class: 'small bad-text' }, n.error || 'not answering')),
+          h('td', { class: 'num' }, n.ok ? [fmtNum(c.total), h('div', { class: 'muted small' }, pct(c.total, total))] : '—'),
+          h('td', { class: 'num' }, n.ok ? pct(c.blocked, c.total) : '—'),
+          h('td', { class: 'num' }, n.ok ? pct(c.cached, c.total) : '—'),
+          h('td', { class: 'num' }, n.ok && c.total ? fmtMs(c.ms_sum / c.total) : '—'));
+      }))),
+    h('p', { class: 'muted small' }, 'Answers each server gave its devices. Devices pick a server themselves, so an even split is not expected.'));
+}
 
 async function dashboard(main) {
   const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
   const devBox = h('div');
   const chartBox = h('div');
   const extraBox = h('div');
-  const ver = h('p', { class: 'muted small' });
-  page(main, 'Dashboard', body, chartBox, extraBox, devBox, checkDomainCard(), ver);
+  const ver = h('p', { class: 'muted small d-ver' });
+  // The period applies to the tiles, chart and top lists, like the time
+  // picker at the top of a cloud DNS console.
+  const range = DASH_RANGES.includes(hashParams().get('range')) ? hashParams().get('range') : '24h';
+  const status = h('span', { class: 'pill' }, h('span', { class: 'dot' }), 'Checking…');
+  const pauseBtn = h('span');
+  const pauseBox = h('div');
+  const head = h('div', { class: 'page-head' }, h('h1', {}, 'Dashboard'), status, pauseBtn, h('span', { class: 'grow' }),
+    can('dashboard.view') ? h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, DASH_RANGES.map(k =>
+      h('button', { type: 'button', 'aria-pressed': String(k === range), onclick: () => {
+        history.replaceState(null, '', '#/' + (k === '24h' ? '' : '?range=' + k));
+        shownHash = location.hash;
+        route();
+      } }, k))) : null);
+  fill(main, head, h('div', { class: 'dash' }, pauseBox, body, chartBox, extraBox, devBox, checkDomainCard(), ver));
+  const pause = pauseControl(pauseBtn, pauseBox, () => load());
 
-  // The tiles and upstream counts come from the saved query history (last
-  // 24 hours, every node) so they survive restarts and updates; the
+  // The tiles and upstream counts come from the saved query history (the
+  // chosen period, every node) so they survive restarts and updates; the
   // counters since start are only used when history is off.
   const hist = { sum: null, perf: null, at: 0 };
   const loadHist = async () => {
     if (!can('dashboard.view')) return;
-    const [sum, perf] = await Promise.all([api('GET', '/analytics/summary?range=24h').catch(() => null), api('GET', '/analytics/performance?range=24h').catch(() => null)]);
+    const [sum, perf] = await Promise.all([api('GET', '/analytics/summary?range=' + range).catch(() => null), api('GET', '/analytics/performance?range=' + range).catch(() => null)]);
     hist.sum = sum && (sum.stats || sum.detail) ? sum : null;
     hist.perf = perf && (perf.stats || perf.detail) ? perf : null;
     hist.at = Date.now();
@@ -632,7 +709,9 @@ async function dashboard(main) {
   const load = async () => {
     let s;
     if (Date.now() - hist.at > 60000) await loadHist();
-    try { s = await api('GET', '/status'); } catch (e) { body.replaceChildren(msg('err', e.message)); return; }
+    let pz;
+    try { [s, pz] = await Promise.all([api('GET', '/status'), api('GET', '/pause').catch(() => null)]); } catch (e) { body.replaceChildren(msg('err', e.message)); return; }
+    pause.show(pz, s);
     const q = s.queries || {};
     let total = ['upstream', 'cached', 'stale', 'blocked', 'local', 'error'].reduce((a, k) => a + (q[k] || 0), 0);
     let blocked = q.blocked || 0, cached = (q.cached || 0) + (q.stale || 0);
@@ -652,7 +731,13 @@ async function dashboard(main) {
         upHist.set(u.server, cur);
       }
     }
-    const tile = (label, value) => h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value));
+    // Each tile opens the page with the detail behind it, and shows its
+    // trend over the period when history is on.
+    const series = fromHist ? hist.sum.series || [] : [];
+    const rq = range === '24h' ? '' : 'range=' + range;
+    const tile = (label, value, sub, href, values) => h(href ? 'a' : 'div', { class: 'tile', href },
+      h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), sub ? h('div', { class: 'sub muted' }, sub) : null,
+      values && values.length > 1 ? sparkline(values) : null);
     const health = [];
     health.push(h('p', {}, 'Lookups: ', h('b', {}, { forward: 'encrypted forwarding', recursive: 'full recursion', tunnel: 'recursion through a VPN' }[s.upstream_mode] || s.upstream_mode)));
     if (s.unbound) health.push(h('p', {}, h('span', { class: 'dot ' + (s.unbound.ready ? 'ok' : 'bad') }), 'Unbound ', s.unbound.ready ? 'running' : 'not answering', s.unbound.restarts ? ' (restarted ' + s.unbound.restarts + '×)' : ''));
@@ -664,24 +749,35 @@ async function dashboard(main) {
         can('cluster.manage') ? h('a', { href: '#/cluster' }, 'Details') : null));
     }
     const upName = upstreamLabel;
+    const bad = (s.cluster && s.cluster.nodes > 1 && !s.cluster.healthy) || (s.unbound && !s.unbound.ready) || (s.tunnel && !s.tunnel.up);
+    const loading = s.filter && !s.filter.ready;
+    const off = pz && pz.filtering_enabled === false;
+    const paused = pz && pz.paused ? (pz.pauses.some(p => p.node === '*') ? 'Filtering paused' : 'Paused on ' + pz.pauses.map(p => p.node_name).join(', ')) : '';
+    status.className = 'pill ' + (bad ? 'bad' : loading || paused || off ? 'warn' : 'ok');
+    fill(status, h('span', { class: 'dot' }), bad ? 'Needs attention' : paused || (off ? 'Filtering is off' : loading ? 'Loading lists' : 'Protecting your network'));
     fill(body,
-      total === 0 ? h('div', { class: 'card highlight' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
-      h('p', { class: 'muted small' }, fromHist ? ['Last 24 hours', hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
+      total === 0 ? h('div', { class: 'card highlight d-wait' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
+      h('p', { class: 'muted small d-note' }, fromHist ? [RANGES[range], hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
         : ['Counting since DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '. Turn on query history to keep counts across restarts.']),
-      h('div', { class: 'grid' },
-        tile('Queries', fmtNum(total)),
-        tile('Blocked', total ? fmtNum(blocked) + ' (' + pct(blocked) + ')' : '0'),
-        tile('Answered from cache', pct(cached)),
-        tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0))),
-      h('div', { class: 'card' }, h('h2', {}, 'Health'), health,
+      h('div', { class: 'grid d-tiles' },
+        tile('Queries', fmtNum(total), fromHist ? fmtNum(hist.sum.devices || 0) + ' devices' : null,
+          can('querylog.view') ? '#/queries' + (rq ? '?' + rq : '') : null, series.map(p => p.total)),
+        tile('Blocked', total ? fmtNum(blocked) : '0', total ? pct(blocked) + ' of queries' : null,
+          can('querylog.view') ? '#/queries?result=blocked' + (rq ? '&' + rq : '') : null, series.map(p => p.blocked)),
+        tile('Answered from cache', pct(cached), total ? fmtNum(cached) + ' answers' : null,
+          can('dashboard.view') ? '#/performance' + (rq ? '?' + rq : '') : null, series.map(p => (p.total ? p.cached / p.total : 0))),
+        tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0), s.filter && s.filter.lists ? s.filter.lists.filter(l => !l.allowlist).length + ' lists' : null,
+          ['lists.manage', 'rules.edit'].some(can) ? '#/settings' : null)),
+      fromHist ? serversCard(hist.sum, s) : null,
+      h('div', { class: 'card d-health' }, h('h2', {}, 'Health'), health,
         (s.upstreams && s.upstreams.length) ? h('div', { class: 'scroll' }, h('table', {},
-          h('thead', {}, h('tr', {}, h('th', {}, 'Resolver'), h('th', {}, 'Latency'), h('th', {}, hist.perf ? 'Queries (24h)' : 'Queries'), h('th', {}, hist.perf ? 'Failures (24h)' : 'Failures'))),
+          h('thead', {}, h('tr', {}, h('th', {}, 'Resolver'), h('th', {}, 'Latency'), h('th', {}, 'Queries'), h('th', {}, 'Failures'))),
           h('tbody', {}, s.upstreams.map(u => {
             const hu = hist.perf ? (upHist.get(u.server) || { tries: 0, failed: 0 }) : null;
             return h('tr', {}, h('td', { title: u.server }, upName(u.server)), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'),
               h('td', {}, fmtNum(hu ? hu.tries : u.queries)), h('td', {}, fmtNum(hu ? hu.failed : u.failures)));
           })))) : null),
-      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), updateListsButton()), h('div', { class: 'scroll' }, h('table', {},
+      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card d-lists' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), updateListsButton()), h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
@@ -693,20 +789,116 @@ async function dashboard(main) {
     try { ds = await api('GET', '/devices'); } catch (_) { return; }
     const seen = ds.filter(d => d.queries > 0);
     if (!seen.length) { devBox.replaceChildren(); return; }
-    devBox.replaceChildren(h('div', { class: 'card' },
+    devBox.replaceChildren(h('div', { class: 'card d-devices' },
       h('h2', {}, 'Devices ', h('span', { class: 'muted small' }, seen.length + ' seen')),
       deviceTable(seen.slice(0, 5), { compact: true }),
       seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null));
   };
-  const extras = () => (can('dashboard.view') ? dashboardExtras(extraBox) : null);
-  await Promise.all([load(), loadDevices(), dashboardChart(chartBox), extras()]);
+  const extras = () => (can('dashboard.view') ? dashboardExtras(extraBox, range) : null);
+  await Promise.all([load(), loadDevices(), dashboardChart(chartBox, range), extras()]);
   let tick = 0;
   timer = setInterval(() => {
     if (document.hidden) return;
     load();
     if (++tick % 3 === 0) loadDevices();
-    if (tick % 12 === 0) { dashboardChart(chartBox); extras(); }
+    if (tick % 12 === 0) { dashboardChart(chartBox, range); extras(); }
   }, 5000);
+}
+
+// ---------- pause filtering ----------
+
+const PAUSE_LABELS = { 1: '1 minute', 5: '5 minutes', 15: '15 minutes', 30: '30 minutes', 60: '1 hour', 0: 'Until I turn it back on' };
+
+// fmtLeft is a countdown: 4:05, or 1:02:05 past an hour.
+function fmtLeft(sec) {
+  sec = Math.max(0, Math.ceil(sec));
+  const hr = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return hr ? hr + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s);
+}
+
+// pauseControl puts the Pause filtering button in the page head and a
+// banner for each pause in force, with a live countdown and a button to
+// turn filtering back on. reload refreshes the dashboard after a change.
+function pauseControl(btnSlot, box, reload) {
+  let state = null;
+  // Countdowns run off the server's remaining time, so a wrong clock on
+  // this computer doesn't matter.
+  let ends = [];
+  let tick = null;
+  const stop = () => { if (tick) { clearInterval(tick); tick = null; } };
+
+  const change = async (method, path, body, note) => {
+    try {
+      const v = await api(method, path, body);
+      show(v);
+      toast(note);
+      reload();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+
+  const openMenu = () => {
+    const nodes = state.nodes || [];
+    let where = '*';
+    const whereSeg = nodes.length > 1 ? h('div', { class: 'seg wrap', role: 'group', 'aria-label': 'Which servers' },
+      [{ id: '*', name: 'All servers' }].concat(nodes).map(n => h('button', { type: 'button', 'aria-pressed': String(n.id === where), onclick: (ev) => {
+        where = n.id;
+        whereSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.currentTarget)));
+      } }, n.name, n.self ? h('span', { class: 'muted small' }, ' (this one)') : null))) : null;
+    const d = dialog('Pause filtering', [
+      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'),
+      whereSeg ? [h('p', { class: 'small b' }, 'Where'), whereSeg,
+        h('p', { class: 'muted small' }, 'Pausing one server only helps devices that use it. Most devices switch between your two DNS servers on their own.')] : null,
+      h('p', { class: 'small b' }, 'For how long'),
+      h('div', { class: 'pause-opts' }, (state.options || [1, 5, 15, 30, 60, 0]).map(m => h('button', { type: 'button', class: m === 0 ? 'wide' : null, onclick: async () => {
+        d.close();
+        const name = where === '*' ? '' : nodes.find(n => n.id === where).name;
+        await change('POST', '/pause', { minutes: m, node: where }, 'Filtering paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
+      } }, PAUSE_LABELS[m] || m + ' minutes'))),
+      h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+    ]);
+  };
+
+  const render = () => {
+    const now = Date.now();
+    for (const e of ends) {
+      if (!e.at) continue;
+      const left = (e.at - now) / 1000;
+      if (left <= 0) { stop(); reload(); return; }
+      e.el.textContent = fmtLeft(left);
+    }
+  };
+
+  function show(v) {
+    state = v;
+    stop();
+    ends = [];
+    if (!v) { fill(btnSlot); fill(box); return; }
+    const many = (v.nodes || []).length > 1;
+    const allPaused = v.pauses.some(p => p.node === '*');
+    fill(btnSlot, v.can_pause && v.filtering_enabled && !allPaused
+      ? h('button', { type: 'button', class: 'small pause-btn', onclick: openMenu }, h('span', { class: 'pause-ico', 'aria-hidden': 'true' }), v.paused ? 'Pause more' : 'Pause filtering')
+      : null);
+    if (!v.paused) { fill(box); return; }
+    fill(box, h('div', { class: 'card d-pause', role: 'status' }, v.pauses.map(p => {
+      const left = h('b', { class: 'count' });
+      if (!p.indefinite) ends.push({ el: left, at: Date.now() + p.remaining_seconds * 1000 });
+      const where = p.node === '*' ? (many ? ' on all servers' : '') : ' on ' + p.node_name;
+      return h('div', { class: 'pause-row' },
+        h('span', { class: 'pause-ico big', 'aria-hidden': 'true' }),
+        h('div', { class: 'grow' },
+          h('div', { class: 'b' }, 'Filtering is paused' + where),
+          h('div', { class: 'muted small' }, p.indefinite ? 'Until someone turns it back on' : ['Back on in ', left, ' at ', new Date(Date.now() + p.remaining_seconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })],
+            ' · paused by ', p.by, ' ', ago(p.since))),
+        v.can_pause ? h('button', { type: 'button', class: 'primary', onclick: () => change('DELETE', '/pause' + (p.node === '*' ? '' : '?node=' + encodeURIComponent(p.node)), undefined, 'Filtering is back on' + (p.node === '*' ? '' : ' on ' + p.node_name) + '.') },
+          v.pauses.length > 1 && p.node === '*' ? 'Turn back on everywhere' : 'Turn filtering back on') : null);
+    })));
+    render();
+    if (ends.length) {
+      tick = setInterval(() => { if (!box.isConnected) { stop(); return; } render(); }, 1000);
+    }
+  }
+  return { show };
 }
 
 // updateListsButton downloads every list again now, instead of waiting
@@ -728,7 +920,7 @@ function updateListsButton() {
 
 function checkDomainCard() {
   const edit = can('domains.allowblock');
-  return h('div', { class: 'card' },
+  return h('div', { class: 'card d-check' },
     h('h2', {}, edit ? 'Check, block or allow a domain' : 'Check a domain'),
     form({}, [
       h('div', { class: 'row' },
@@ -1165,10 +1357,10 @@ function typeLine(t) {
   return h('div', { class: 'muted small' }, other && t.company ? t.company : [t.category, t.company ? ' \u00b7 ' + t.company : '']);
 }
 
-function bar(part, top) {
+function bar(part, top, blocked) {
   const s = h('span');
   s.style.width = (top ? Math.max(1, 100 * part / top) : 0) + '%';
-  return h('div', { class: 'meter', 'aria-hidden': 'true' }, s);
+  return h('div', { class: 'meter' + (blocked ? ' blocked' : ''), 'aria-hidden': 'true' }, s);
 }
 
 async function domainDialog(name, range) {
@@ -1299,6 +1491,7 @@ async function analyticsPage(main) {
         h('p', { class: 'muted small' }, 'Scored from malware and phishing feeds and how the name looks. Scores never block anything; use Block, or add the feeds as blocklists. ',
           risky.domains > risky.rows.length ? 'Showing the ' + risky.rows.length + ' riskiest of ' + fmtNum(risky.domains) + '.' : '')) : null,
       h('div', { class: 'card' }, h('h2', {}, 'Queries over time'), c.total ? queryChart(sum) : h('p', { class: 'muted' }, 'No queries in this period.')),
+      (sum.nodes || []).length > 1 ? serversCard(sum, {}) : null,
       h('div', { class: 'cols' }, topList('Top domains', dom.rows, 'domains'), topList('Top blocked', blk.rows, 'blocked')),
       h('div', { class: 'cols' }, cli ? topList('Busiest devices', cli.rows, 'clients') : null, topListsCard(lists.rows, st.range, false)),
       perDevice && st.client ? h('p', {}, h('a', { href: '#/queries?client=' + encodeURIComponent(st.client) }, 'See every query from this device')) : null);
@@ -1307,13 +1500,14 @@ async function analyticsPage(main) {
   timer = setInterval(() => { if (!document.hidden && !document.querySelector('dialog[open]')) load(); }, 30000);
 }
 
-// dashboardChart is the dashboard's last-24-hours card.
-async function dashboardChart(box) {
+// dashboardChart is the dashboard's queries-over-time card.
+async function dashboardChart(box, range) {
+  range = range || '24h';
   let sum;
-  try { sum = await api('GET', '/analytics/summary?range=24h'); } catch (_) { return; }
+  try { sum = await api('GET', '/analytics/summary?range=' + range); } catch (_) { return; }
   if (!sum.counts || !sum.counts.total) { box.replaceChildren(); return; }
-  box.replaceChildren(h('div', { class: 'card' },
-    h('div', { class: 'row spread' }, h('h2', {}, 'Last 24 hours'), h('a', { href: '#/analytics', class: 'small' }, 'Analytics')),
+  box.replaceChildren(h('div', { class: 'card d-chart' },
+    h('div', { class: 'row spread' }, h('h2', {}, RANGES[range]), h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range), class: 'small' }, 'Analytics')),
     h('p', { class: 'muted small' }, fmtNum(sum.counts.total), ' queries, ', fmtNum(sum.counts.blocked), ' blocked, from ', fmtNum(sum.devices), sum.devices === 1 ? ' device.' : ' devices.'),
     queryChart(sum)));
 }
@@ -1347,62 +1541,93 @@ function usualNote(cur, usual, fmt, worseIfHigher) {
   return h('span', { class: cls }, 'usually ', fmt(usual));
 }
 
-// latencyChart draws response times over time as lines on a log scale,
-// with unusual buckets shaded.
+// niceMax rounds a chart's top value up to 1, 2 or 5 × 10ⁿ steps and
+// returns the top and the step between grid lines.
+function niceMax(v, lines) {
+  const raw = Math.max(v, 1e-6) / lines;
+  const p = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * p).find(s => s >= raw);
+  return { top: step * Math.ceil(v / step - 1e-9) || step, step };
+}
+
+// latencyChart draws response times over time in two panels that share a
+// time axis, each on its own linear scale from zero: upstream lookups on
+// top (milliseconds) and all answers below (mostly from cache, fractions
+// of a millisecond). A shared log scale made 10 ms and 100 ms look close
+// together, so each panel's height now means the same thing everywhere.
+// The time axis starts where the history starts, not at an empty start
+// of the period. Unusual buckets are shaded in both panels.
 function latencyChart(view, step, from, to, anomalies) {
-  const series = [
-    { key: 'p50_ms', label: 'Median, all queries', cls: 's3' },
-    { key: 'lookup_avg_ms', label: 'Lookups, average', cls: 's1' },
-    { key: 'lookup_p95_ms', label: 'Lookups, 95th percentile', cls: 's2' },
-  ];
   const byT = new Map(view.series.map(p => [p.t, p]));
-  const first = view.series.length ? Math.min(view.series[0].t, from - ((from % step) + step) % step) : from;
+  const align = (t) => t - ((t % step) + step) % step;
+  // Start at the first bucket with queries if that is later than the
+  // period's start, so a new server doesn't show mostly empty space.
+  const withData = view.series.filter(p => p.queries > 0);
+  if (!withData.length) return null;
+  const trimmed = withData[0].t > align(from);
   const pts = [];
-  for (let t = first; t < to; t += step) pts.push(byT.get(t) || { t, queries: 0, lookups: 0 });
+  for (let t = withData[0].t; t < to; t += step) pts.push(byT.get(t) || { t, queries: 0, lookups: 0 });
   if (!pts.length) return null;
-  const vals = [];
-  pts.forEach(p => series.forEach(s => { if (p[s.key] > 0) vals.push(p[s.key]); }));
-  if (!vals.length) return null;
-  const W = 720, H = 200, padL = 52, padB = 22, padT = 8;
-  const lo = Math.pow(10, Math.floor(Math.log10(Math.max(0.01, Math.min(...vals)))));
-  const hi = Math.pow(10, Math.ceil(Math.log10(Math.max(lo * 10, ...vals))));
-  const y = (v) => padT + (H - padT - padB) * (1 - (Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)));
-  const bw = (W - padL) / pts.length;
-  const xc = (i) => padL + i * bw + bw / 2;
+
+  const panels = [
+    { title: 'Lookups (not in cache, asked upstream)', count: 'lookups', series: [
+      { key: 'lookup_avg_ms', label: 'Average', cls: 's1' },
+      { key: 'lookup_p95_ms', label: '95th percentile', cls: 's2' }] },
+    { title: 'All answers (most come from cache)', count: 'queries', series: [
+      { key: 'p50_ms', label: 'Median', cls: 's3' }] },
+  ];
+  const W = 720, padL = 56, padR = 8, axisH = 22, gap = 30, titleH = 18;
+  const heights = [150, 70];
+  let yOff = 0;
   const g = [];
   const idx = new Map(pts.map((p, i) => [p.t, i]));
-  (anomalies || []).forEach(a => {
-    const i0 = idx.get(a.t), i1 = idx.get(a.end);
-    if (i0 === undefined) return;
-    g.push(svg('rect', { x: padL + i0 * bw, y: padT, width: ((i1 === undefined ? i0 : i1) - i0 + 1) * bw, height: H - padT - padB, class: 'anom ' + a.severity }));
-  });
-  for (let v = lo; v <= hi + 1e-9; v *= 10) {
-    g.push(svg('line', { x1: padL, x2: W, y1: y(v), y2: y(v), class: 'grid-line' }));
-    g.push(svg('text', { x: padL - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, document.createTextNode(fmtMs(v))));
-  }
-  series.forEach(s => {
-    let d = '';
-    let pen = false;
-    pts.forEach((p, i) => {
-      const v = p[s.key];
-      const ok = v > 0 && (s.key === 'p50_ms' ? p.queries >= 1 : p.lookups >= 1);
-      if (!ok) { pen = false; return; }
-      d += (pen ? 'L' : 'M') + xc(i).toFixed(1) + ' ' + y(v).toFixed(1);
-      pen = true;
+  const bw = (W - padL - padR) / pts.length;
+  const xc = (i) => padL + i * bw + bw / 2;
+  panels.forEach((pn, pi) => {
+    const top = yOff + titleH, ph = heights[pi], bottom = top + ph;
+    pn.top = top; pn.bottom = bottom;
+    const vals = [];
+    pts.forEach(p => { if (p[pn.count] >= 1) pn.series.forEach(s => { if (p[s.key] > 0) vals.push(p[s.key]); }); });
+    g.push(svg('text', { x: padL, y: yOff + 12, class: 'axis panel-title' }, document.createTextNode(pn.title)));
+    if (!vals.length) {
+      g.push(svg('text', { x: padL + (W - padL) / 2, y: top + ph / 2, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(pn.count === 'lookups' ? 'No lookups in this period' : 'No queries in this period')));
+      yOff = bottom + gap;
+      return;
+    }
+    const { top: max, step: tick } = niceMax(Math.max(...vals), pi === 0 ? 4 : 2);
+    const y = (v) => bottom - ph * Math.min(v, max) / max;
+    (anomalies || []).forEach(a => {
+      const i0 = idx.get(a.t), i1 = idx.get(a.end);
+      if (i0 === undefined) return;
+      g.push(svg('rect', { x: padL + i0 * bw, y: top, width: ((i1 === undefined ? i0 : i1) - i0 + 1) * bw, height: ph, class: 'anom ' + a.severity }));
     });
-    if (d) g.push(svg('path', { d, class: 'line ' + s.cls }));
-    // Lone points (gaps on both sides) as dots, so they show.
-    pts.forEach((p, i) => {
-      const v = p[s.key];
-      const has = (j) => j >= 0 && j < pts.length && pts[j][s.key] > 0;
-      if (v > 0 && !has(i - 1) && !has(i + 1)) g.push(svg('circle', { cx: xc(i), cy: y(v), r: 2.5, class: 'dot-' + s.cls }));
+    for (let v = 0; v <= max + tick / 1e6; v += tick) {
+      g.push(svg('line', { x1: padL, x2: W - padR, y1: y(v), y2: y(v), class: 'grid-line' + (v === 0 ? ' base' : '') }));
+      g.push(svg('text', { x: padL - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, document.createTextNode(v === 0 ? '0' : fmtMs(v))));
+    }
+    pn.series.forEach(s => {
+      const ok = (p) => p[s.key] > 0 && p[pn.count] >= 1;
+      let d = '', pen = false;
+      pts.forEach((p, i) => {
+        if (!ok(p)) { pen = false; return; }
+        d += (pen ? 'L' : 'M') + xc(i).toFixed(1) + ' ' + y(p[s.key]).toFixed(1);
+        pen = true;
+      });
+      if (d) g.push(svg('path', { d, class: 'line ' + s.cls }));
+      // Lone points (gaps on both sides) as dots, so they show.
+      pts.forEach((p, i) => {
+        const has = (j) => j >= 0 && j < pts.length && ok(pts[j]);
+        if (ok(p) && !has(i - 1) && !has(i + 1)) g.push(svg('circle', { cx: xc(i), cy: y(p[s.key]), r: 2.5, class: 'dot-' + s.cls }));
+      });
     });
+    yOff = bottom + gap;
   });
+  const H = panels[1].bottom + axisH;
   const every = Math.ceil(pts.length / 6);
   const tip = h('div', { class: 'chart-tip', hidden: true });
   pts.forEach((p, i) => {
     if (i % every === 0) g.push(svg('text', { x: xc(i), y: H - 6, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(bucketLabel(p.t, step))));
-    const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - padB, class: 'hit' });
+    const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - axisH, class: 'hit' });
     const show = () => {
       fill(tip, h('b', {}, bucketLabel(p.t, step, true)),
         p.queries ? [h('div', {}, fmtNum(p.queries), ' queries, median ', fmtMs(p.p50_ms), ', 95% under ', fmtMs(p.p95_ms)),
@@ -1416,15 +1641,26 @@ function latencyChart(view, step, from, to, anomalies) {
     hit.addEventListener('mouseleave', () => { tip.hidden = true; });
     g.push(hit);
   });
-  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Response times over time' }, g);
+  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Response times over time: lookups and all answers, each on its own scale' }, g);
   const table = h('details', { class: 'small' }, h('summary', { class: 'muted' }, 'Show as a table'),
     h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'Median'), h('th', {}, '95%'), h('th', {}, '99%'), h('th', {}, 'Lookups'), h('th', {}, 'Lookup avg'), h('th', {}, 'Lookup 95%'), h('th', {}, 'From cache'), h('th', {}, 'Failed'))),
       h('tbody', {}, pts.filter(p => p.queries).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.queries)), h('td', {}, fmtMs(p.p50_ms)), h('td', {}, fmtMs(p.p95_ms)), h('td', {}, fmtMs(p.p99_ms)),
         h('td', {}, fmtNum(p.lookups)), h('td', {}, p.lookups ? fmtMs(p.lookup_avg_ms) : '—'), h('td', {}, p.lookups ? fmtMs(p.lookup_p95_ms) : '—'), h('td', {}, fmtPct(p.cache_hit)), h('td', {}, fmtNum(p.failed))))))));
-  return h('div', {},
-    h('div', { class: 'legend small' }, series.map(s => h('span', {}, h('span', { class: 'key ' + s.cls }), s.label)),
+  // One plain sentence on the gap the two scales hide: how much longer a
+  // lookup takes than a typical answer.
+  const s = view.summary;
+  const ratio = s.lookups && s.p50_ms > 0 ? s.lookup_avg_ms / s.p50_ms : 0;
+  const story = s.lookups ? h('p', { class: 'small story' },
+    h('b', {}, fmtPct(s.cache_hit)), ' answered from cache, typically in ', h('b', {}, fmtMs(s.p50_ms)), '. ',
+    'The rest were looked up upstream, averaging ', h('b', {}, fmtMs(s.lookup_avg_ms)),
+    ratio >= 2 ? [' (about ', h('b', {}, ratio >= 10 ? fmtNum(Math.round(ratio / 10) * 10) : Math.round(ratio), '×'), ' longer)'] : null,
+    ', and 95% of them took under ', h('b', {}, fmtMs(s.lookup_p95_ms)), '.') : null;
+  return h('div', {}, story,
+    h('div', { class: 'legend small' }, panels.flatMap(pn => pn.series).map(s => h('span', {}, h('span', { class: 'key ' + s.cls }), s.label === 'Median' ? 'Median, all answers' : 'Lookups, ' + s.label.toLowerCase())),
       (anomalies || []).length ? h('span', {}, h('span', { class: 'key anom' }), 'Unusual') : null),
-    h('div', { class: 'chart-wrap' }, chart, tip), table);
+    h('div', { class: 'chart-wrap' }, chart, tip),
+    trimmed ? h('p', { class: 'muted small' }, 'No queries recorded before ', bucketLabel(pts[0].t, step, true), ', so the chart starts there.') : null,
+    table);
 }
 
 // distChart shows how many queries took how long.
@@ -1531,7 +1767,7 @@ function listLabel(k) { return k === 'Custom rules' ? 'Your custom rules' : k ||
 function topListsCard(rows, range, link) {
   if (!rows || !rows.length) return null;
   const total = rows.reduce((a, r) => a + r.total, 0);
-  return h('div', { class: 'card' },
+  return h('div', { class: 'card d-top' },
     h('div', { class: 'row spread' }, h('h2', {}, 'Top blocking lists'), link ? h('a', { href: '#/analytics', class: 'small' }, 'Analytics') : null),
     h('table', { class: 'top' }, h('tbody', {}, rows.map(r => h('tr', {},
       h('td', {}, listLabel(r.key), bar(r.total, rows[0].total)),
@@ -1541,21 +1777,36 @@ function topListsCard(rows, range, link) {
 
 // dashboardExtras adds the last hour's response times and the top
 // blocking lists to the dashboard.
-async function dashboardExtras(box) {
-  const [perf, lists] = await Promise.all([
+async function dashboardExtras(box, range) {
+  range = range || '24h';
+  const [perf, lists, doms, blk] = await Promise.all([
     api('GET', '/analytics/performance?range=1h').catch(() => null),
-    api('GET', '/analytics/top?by=lists&range=24h&limit=6').catch(() => null)]);
+    api('GET', '/analytics/top?by=lists&range=' + range + '&limit=6').catch(() => null),
+    api('GET', '/analytics/top?by=domains&range=' + range + '&limit=6').catch(() => null),
+    api('GET', '/analytics/top?by=blocked&range=' + range + '&limit=6').catch(() => null)]);
   const cards = [];
+  // Top domains and top blocked side by side, as AdGuard Home and NextDNS
+  // show them; a name opens the same domain details as on Analytics.
+  const topCard = (cls, title, rows, blocked) => (rows && rows.length ? h('div', { class: 'card ' + cls },
+    h('div', { class: 'row spread' }, h('h2', {}, title), h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range), class: 'small' }, 'More')),
+    h('table', { class: 'top' }, h('tbody', {}, rows.map(r => h('tr', {},
+      h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(r.key, range) }, r.key), ' ', riskBadge(r.risk),
+        blocked && r.list ? h('div', { class: 'muted small' }, listLabel(r.list)) : null, bar(r.total, rows[0].total, blocked)),
+      h('td', { class: 'num' }, fmtNum(r.total))))))) : null);
+  const dc = topCard('d-domains', 'Top domains', doms && doms.rows, false);
+  const bc = topCard('d-blocked', 'Top blocked', blk && blk.rows, true);
+  if (dc) cards.push(dc);
+  if (bc) cards.push(bc);
   if (perf && perf.view.summary.queries) {
     const s = perf.view.summary, an = perf.view.anomalies;
     const stat = (label, value) => h('div', {}, h('div', { class: 'muted small' }, label), h('div', { class: 'big' }, value));
-    cards.push(h('div', { class: 'card' },
+    cards.push(h('div', { class: 'card d-perf' },
       h('div', { class: 'row spread' }, h('h2', {}, 'Response times, last hour'), h('a', { href: '#/performance', class: 'small' }, 'Performance')),
       h('div', { class: 'stats' }, stat('Median', fmtMs(s.p50_ms)), stat('95% within', fmtMs(s.p95_ms)), stat('Lookups, average', s.lookups ? fmtMs(s.lookup_avg_ms) : '—'), stat('From cache', fmtPct(s.cache_hit))),
       an.length ? h('div', { class: 'msg ' + (an.some(a => a.severity === 'bad') ? 'err' : 'warn') }, h('b', {}, an[0].title), ' ', an[0].detail, an.length > 1 ? [' ', h('a', { href: '#/performance?range=1h' }, '+', an.length - 1, ' more')] : null)
         : h('p', { class: 'muted small' }, 'Nothing unusual.')));
   }
-  const lc = lists ? topListsCard(lists.rows, '24h', true) : null;
+  const lc = lists ? topListsCard(lists.rows, range, true) : null;
   if (lc) cards.push(lc);
   box.replaceChildren(cards.length > 1 ? h('div', { class: 'cols' }, cards) : cards);
 }
@@ -1797,7 +2048,14 @@ async function settings(main) {
       ], (f) => save({ history_days: Number(val(f, 'hdays')), stats_days: Number(val(f, 'sdays')) }, { history_days: hc.Days, stats_days: hc.StatsDays }))));
   }
 
-  page(main, 'Settings', sections);
+  // A row of section chips at the top, so a long settings page is one
+  // click from any section (buttons, not links, to keep the #/ routes).
+  const secs = sections.flat(Infinity).filter(x => x instanceof Element);
+  const jump = secs.length > 3 ? h('nav', { class: 'jump', 'aria-label': 'Sections' }, secs.map(sec => {
+    const t = sec.querySelector('h2');
+    return t ? h('button', { type: 'button', onclick: () => sec.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, t.firstChild ? t.firstChild.textContent : t.textContent) : null;
+  })) : null;
+  page(main, 'Settings', jump, sections);
 }
 
 // ---------- import from AdGuard Home ----------

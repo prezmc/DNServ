@@ -70,7 +70,7 @@ func TestAnalytics(t *testing.T) {
 			t.Fatalf("%s summary = %+v", rg, sum)
 		}
 	}
-	if len(sum.Nodes) != 1 || !sum.Nodes[0].OK {
+	if len(sum.Nodes) != 1 || !sum.Nodes[0].OK || sum.Nodes[0].Counts == nil || sum.Nodes[0].Counts.Total != 10 || sum.Nodes[0].Counts.Blocked != 6 {
 		t.Fatalf("nodes = %+v", sum.Nodes)
 	}
 	admin.want(400, "GET", "/api/v1/analytics/summary?range=1y", nil, nil)
