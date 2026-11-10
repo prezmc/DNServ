@@ -46,3 +46,28 @@ jobs:
           context: .
           push: false
           tags: dnserve:ci
+
+  failover:
+    # Real containers: two nodes and a witness, broken on purpose while a
+    # client sends DNS nonstop. See test/failover.
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Build image
+        run: docker build -t dnserve:failover-test .
+      - name: Failover tests
+        env:
+          DNSERVE_IMAGE: dnserve:failover-test
+          FAILOVER_REPORT: ${{ runner.temp }}/failover.md
+        run: go test -tags failover -v -timeout 25m ./test/failover/
+      - name: Results
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/failover.md" ]; then
+            { echo "## Failover tests"; cat "$RUNNER_TEMP/failover.md"; } >> "$GITHUB_STEP_SUMMARY"
+          fi

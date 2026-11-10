@@ -312,7 +312,25 @@ func run() error {
 	// Apply saved settings live. Changes are queued and applied one at a
 	// time off the request path (starting Unbound can take seconds).
 	reload := make(chan struct{}, 1)
-	st.Subscribe(func(old, new *store.State) {
+	// While a node that was in a cluster joins another one, its state is
+	// briefly empty until the new cluster's copy arrives. Devices keep
+	// getting answers from the settings in force until then, so changes
+	// are compared with what DNS last used, not with the state before.
+	var (
+		subMu   sync.Mutex
+		shown   = st.State()
+		holding atomic.Bool
+	)
+	st.Subscribe(func(_, new *store.State) {
+		subMu.Lock()
+		defer subMu.Unlock()
+		if new.Cluster.ID == "" && shown.Cluster.ID != "" {
+			holding.Store(true)
+			return
+		}
+		holding.Store(false)
+		old := shown
+		shown = new
 		// Groups are cheap to compile, so apply them right here.
 		if !reflect.DeepEqual(old.Groups, new.Groups) || !reflect.DeepEqual(old.Devices, new.Devices) {
 			srv.SetPolicy(policy.Build(new))
@@ -340,6 +358,9 @@ func run() error {
 			case <-ctx.Done():
 				return
 			case <-reload:
+			}
+			if holding.Load() {
+				continue
 			}
 			next := adm.Effective()
 			if err := next.Validate(); err != nil {

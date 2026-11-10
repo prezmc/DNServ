@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -224,9 +225,14 @@ func TestForceRecoverTwoNodes(t *testing.T) {
 		t.Fatal("b lost its copy of the state")
 	}
 
-	// With two voters, the lost node can't have a majority alone, so
-	// recovery needs no extra confirmation.
-	if err := b.c.ForceRecover(context.Background(), "admin", false); err != nil {
+	// With two voters, the lost node can't have a majority alone, but b
+	// can't tell it from a broken link: if a is still running it could
+	// be recovered too. b asks first.
+	var risk *RiskError
+	if err := b.c.ForceRecover(context.Background(), "admin", false); !errors.As(err, &risk) || !risk.CutOff {
+		t.Fatalf("want a cut-off warning, got %v", err)
+	}
+	if err := b.c.ForceRecover(context.Background(), "admin", true); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, "b leads", b.leading)
@@ -248,6 +254,12 @@ func TestForceRecoverTwoNodes(t *testing.T) {
 	}
 	if !b.leading() {
 		t.Fatal("b lost leadership to the node left behind")
+	}
+	// It can see that it was left out, and recovering it too (which would
+	// make a second cluster) is refused even when the risk is accepted.
+	waitFor(t, "a sees it was left out", func() bool { return a.c.Status(context.Background()).LeftOut })
+	if err := a.c.ForceRecover(context.Background(), "admin", true); err == nil || !strings.Contains(err.Error(), "no longer counts this node") {
+		t.Fatalf("recovering the node left behind: %v", err)
 	}
 	// It can rejoin with a new code (its state is replaced).
 	code, _, err := b.c.CreateJoinCode("admin")
@@ -404,5 +416,30 @@ func TestAskPeers(t *testing.T) {
 	defer cancel()
 	if reps := a.c.AskPeers(ctx, "echo", nil); len(reps) != 1 || reps[0].Err == nil {
 		t.Fatalf("stopped peer: %+v", reps)
+	}
+}
+
+// A change made the moment a brand-new node first leads, before its run
+// loop has set up the cluster, must survive cluster.init.
+func TestChangeBeforeInitSurvives(t *testing.T) {
+	for i := 0; i < 5; i++ {
+		n := startNode(t, "fresh")
+		waitFor(t, "leading", func() bool { return n.leading() })
+		code, _, err := n.c.CreateJoinCode("admin")
+		if err != nil {
+			t.Fatal(err)
+		}
+		jc, err := parseJoinCode(code)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := n.st.State()
+		if st.Cluster.ID == "" {
+			t.Fatal("cluster not set up after the first change")
+		}
+		if st.Cluster.JoinCodes[jc.ID] == nil {
+			t.Fatalf("round %d: the join code made before cluster.init was lost", i)
+		}
+		n.close()
 	}
 }

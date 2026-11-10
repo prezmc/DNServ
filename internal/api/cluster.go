@@ -141,7 +141,7 @@ func (a *API) forceRecover(w http.ResponseWriter, r *http.Request, p *Principal)
 	var risk *cluster.RiskError
 	switch {
 	case errors.As(err, &risk):
-		writeJSON(w, http.StatusConflict, map[string]any{"error": risk.Error(), "risk": true, "nodes": risk.Nodes})
+		writeJSON(w, http.StatusConflict, map[string]any{"error": risk.Error(), "risk": true, "nodes": risk.Nodes, "cut_off": risk.CutOff})
 	case err != nil:
 		writeErr(w, http.StatusConflict, err.Error())
 	default:

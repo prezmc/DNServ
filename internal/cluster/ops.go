@@ -260,11 +260,20 @@ func (c *Cluster) transferLocal(to string) error {
 // --- forced recovery ---
 
 // RiskError says forced recovery could leave two clusters running: the
-// nodes left out could still have a majority between them.
-type RiskError struct{ Nodes []string }
+// nodes left out could still have a majority between them, or (CutOff) a
+// full node left out may only be cut off from this one, and could be
+// recovered on its own too.
+type RiskError struct {
+	Nodes  []string
+	CutOff bool `json:"cut_off,omitempty"`
+}
 
 func (e *RiskError) Error() string {
-	return fmt.Sprintf("%s could still be running the cluster without this node. Only continue if they are switched off or broken for good", strings.Join(e.Nodes, " and "))
+	names := strings.Join(e.Nodes, " and ")
+	if e.CutOff {
+		return fmt.Sprintf("%s may only be cut off from this node rather than down, so it could still be running. If it is recovered on its own too, you'll have two separate DNServes with different settings. Only continue if it is switched off or broken for good", names)
+	}
+	return fmt.Sprintf("%s could still be running the cluster without this node. Only continue if they are switched off or broken for good", names)
 }
 
 // ForceRecover makes this node a cluster of one, keeping its copy of the
@@ -307,32 +316,56 @@ func (c *Cluster) ForceRecover(ctx context.Context, actor string, acceptRisk boo
 	// Anyone answering means the cluster isn't lost: refuse.
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var up []string
+	var up, lockedOut []string
 	for _, s := range others {
 		wg.Add(1)
 		go func(s raft.Server) {
 			defer wg.Done()
-			if _, err := c.peerStatus(ctx, string(s.ID), 2*time.Second); err == nil {
-				mu.Lock()
+			_, err := c.peerStatus(ctx, string(s.ID), 2*time.Second)
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err == nil:
 				up = append(up, st.Cluster.NodeName(string(s.ID)))
-				mu.Unlock()
+			case errors.Is(err, errNotMember):
+				lockedOut = append(lockedOut, st.Cluster.NodeName(string(s.ID)))
 			}
 		}(s)
 	}
 	wg.Wait()
+	if len(lockedOut) > 0 {
+		// This node is the one that was lost: the others carried on
+		// without it. Recovering it too would make a second cluster.
+		sort.Strings(lockedOut)
+		return fmt.Errorf("%s is running and no longer counts this node as a member (the cluster was recovered without it, or it was removed). Make a join code there and use \"Join another DNServe\" on this node instead", strings.Join(lockedOut, " and "))
+	}
 	if len(up) > 0 {
 		sort.Strings(up)
 		return fmt.Errorf("%s still answers, so the cluster isn't lost; check the network between the nodes instead", strings.Join(up, " and "))
 	}
-	if otherVoters >= voters/2+1 && !acceptRisk {
-		var names []string
+	if !acceptRisk {
+		// This node can't tell a server that is down from a broken link
+		// to it. A full node on the far side of a broken link could be
+		// recovered too, and then two clusters would run at once, so ask
+		// first. (A witness can't be recovered on its own.)
+		var names, full []string
 		for _, s := range others {
-			if s.Suffrage == raft.Voter {
-				names = append(names, st.Cluster.NodeName(string(s.ID)))
+			if s.Suffrage != raft.Voter {
+				continue
+			}
+			names = append(names, st.Cluster.NodeName(string(s.ID)))
+			if n := st.Cluster.Nodes[string(s.ID)]; n == nil || !n.Witness {
+				full = append(full, st.Cluster.NodeName(string(s.ID)))
 			}
 		}
 		sort.Strings(names)
-		return &RiskError{Nodes: names}
+		sort.Strings(full)
+		switch {
+		case otherVoters >= voters/2+1:
+			return &RiskError{Nodes: names}
+		case len(full) > 0:
+			return &RiskError{Nodes: full, CutOff: true}
+		}
 	}
 
 	conf := raft.Configuration{Servers: []raft.Server{{Suffrage: raft.Voter, ID: raft.ServerID(self), Address: raft.ServerAddress(c.advertise())}}}
@@ -479,13 +512,18 @@ func (c *Cluster) Status(ctx context.Context) Status {
 		wg.Add(1)
 		go func(m MemberStatus) {
 			defer wg.Done()
-			if ps, err := c.peerStatus(ctx, m.ID, 1500*time.Millisecond); err == nil {
+			ps, err := c.peerStatus(ctx, m.ID, 1500*time.Millisecond)
+			if err == nil {
 				m.Reachable, m.Version = true, ps.Version
 				if self.AppliedIndex > ps.AppliedIndex {
 					m.Behind = self.AppliedIndex - ps.AppliedIndex
 				}
 			}
 			mu.Lock()
+			if errors.Is(err, errNotMember) && self.LeaderID == "" {
+				// A peer is up but has dropped this node.
+				out.LeftOut = true
+			}
 			out.Nodes = append(out.Nodes, m)
 			mu.Unlock()
 		}(m)
