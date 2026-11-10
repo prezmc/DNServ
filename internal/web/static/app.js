@@ -544,7 +544,8 @@ function setupDone() {
     h('p', {}, 'Last step: send your devices to DNServe.'),
     routerHelp(),
     seen,
-    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { location.hash = '#/'; boot(); } }, 'Open the dashboard')),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { location.hash = '#/'; boot(); } }, 'Open the dashboard'),
+      isAdmin() ? h('button', { onclick: () => { location.hash = '#/import'; boot(); } }, 'Import from AdGuard Home') : null),
   ));
   // Show devices as they arrive, so it's clear the router change worked.
   const poll = async () => {
@@ -571,6 +572,7 @@ const ROUTES = [
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
   { path: 'cluster', title: 'Cluster', page: clusterPage, show: () => can('cluster.manage') },
   { path: 'backups', title: 'Backups & history', page: backupsPage, show: () => can('backups.manage') },
+  { path: 'import', title: 'Import from AdGuard Home', page: importPage, show: isAdmin, hidden: true },
   { path: 'audit', title: 'Audit log', page: audit, show: () => can('audit.view') },
   { path: 'account', title: 'Your account', page: account, show: () => true },
 ];
@@ -591,7 +593,7 @@ function route() {
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, 'DNServe', menu),
     h('div', { id: 'navlinks', class: 'links' },
-      ROUTES.filter(x => x.show()).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, x.title))),
+      ROUTES.filter(x => x.show() && !x.hidden).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, x.title))),
     h('div', { class: 'spacer' }),
     h('div', { class: 'who' }, ME.user.username, ' · ', ME.user.role),
     h('button', { class: 'link', onclick: async () => { try { await api('POST', '/auth/logout'); } catch (_) { /* ignore */ } csrf = ''; ME = null; boot(); } }, 'Sign out'));
@@ -1313,6 +1315,13 @@ async function settings(main) {
   };
   const norm = (a) => (a || []);
 
+  if (isAdmin()) {
+    sections.push(h('div', { class: 'card' }, h('div', { class: 'row spread' },
+      h('div', {}, h('h2', { class: 'm0' }, 'Moving from AdGuard Home?'),
+        h('p', { class: 'muted small m0' }, 'Bring across its blocklists, rules, DNS rewrites, devices and upstream servers.')),
+      h('a', { href: '#/import' }, 'Import from AdGuard Home'))));
+  }
+
   if (can('upstream.manage')) {
     const u = eff.Upstream;
     let tunnelOK = true;
@@ -1511,6 +1520,92 @@ async function settings(main) {
   }
 
   page(main, 'Settings', sections);
+}
+
+// ---------- import from AdGuard Home ----------
+
+async function importPage(main) {
+  const result = h('div');
+  const connect = form({}, [
+    h('p', { class: 'muted' }, 'DNServe reads your blocklists, custom rules, DNS rewrites, devices and upstream servers from AdGuard Home, shows you what it found, and adds what you choose. Nothing changes in AdGuard Home, and the password is used once and not saved.'),
+    h('label', { for: 'agurl' }, 'AdGuard Home address'),
+    h('input', { id: 'agurl', name: 'url', type: 'text', placeholder: 'http://192.168.1.2:3000', autofocus: true, autocomplete: 'off', spellcheck: 'false', required: true }),
+    h('p', { class: 'muted small' }, 'The address you open AdGuard Home’s dashboard at.'),
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('label', { for: 'aguser' }, 'Username'), h('input', { id: 'aguser', name: 'username', type: 'text', autocomplete: 'off' })),
+      h('div', { class: 'grow' }, h('label', { for: 'agpass' }, 'Password'), h('input', { id: 'agpass', name: 'password', type: 'password', autocomplete: 'off' }))),
+    h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'insecure' }), h('span', {}, 'Accept a self-signed certificate (only for https:// addresses)')),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Read settings')),
+  ], async (f) => {
+    fill(result, h('div', { class: 'card' }, h('div', { class: 'spinner' }), h('p', { class: 'muted small tc' }, 'Reading AdGuard Home…')));
+    let res;
+    try {
+      res = await api('POST', '/import/adguard/preview', { url: val(f, 'url'), username: val(f, 'username'), password: val(f, 'password'), insecure: f.elements.insecure.checked });
+    } catch (e) { fill(result); throw e; }
+    f.elements.password.value = '';
+    importPreview(result, res.id, res.plan);
+  });
+  page(main, 'Import from AdGuard Home', h('div', { class: 'import' }, h('div', { class: 'card' }, connect), result));
+}
+
+function importPreview(box, id, plan) {
+  const pick = [];
+  const exclude = new Set();
+  const list = (items, title, open, withBoxes) => {
+    if (!items || !items.length) return null;
+    const shown = items.slice(0, 500);
+    return h('details', { open: open || null }, h('summary', {}, title),
+      h('ul', { class: 'plain small' }, shown.map(it => h('li', {},
+        withBoxes && it.id ? h('label', { class: 'inline' },
+          h('input', { type: 'checkbox', checked: true, onchange: (ev) => { if (ev.target.checked) exclude.delete(it.id); else exclude.add(it.id); } }),
+          h('span', {}, h('span', { class: 'mono' }, it.text), it.detail ? h('span', { class: 'muted' }, ' · ' + it.detail) : null))
+          : h('span', {}, h('span', { class: 'mono' }, it.text), it.detail ? h('span', { class: 'muted' }, ' — ' + it.detail) : null))),
+        items.length > shown.length ? h('li', { class: 'muted' }, 'and ' + fmtNum(items.length - shown.length) + ' more') : null));
+  };
+  const cards = plan.sections.map(s => {
+    if (s.info) {
+      return h('div', { class: 'card' }, h('h2', {}, s.title),
+        h('ul', { class: 'plain small' }, (s.skipped || []).map(it => h('li', {}, h('b', {}, it.text), h('span', { class: 'muted' }, ' — ' + it.detail)))));
+    }
+    const n = s.items.length, have = (s.have || []).length, skipped = (s.skipped || []).length;
+    const counts = [n ? fmtNum(n) + ' to add' : 'Nothing new', have ? fmtNum(have) + ' already in DNServe' : null, skipped ? fmtNum(skipped) + ' can’t move' : null].filter(Boolean).join(' · ');
+    let tick = null;
+    if (n) {
+      tick = h('input', { type: 'checkbox', checked: s.default });
+      pick.push({ key: s.key, box: tick });
+    }
+    return h('div', { class: 'card' },
+      n ? h('label', { class: 'inline m0' }, tick, h('h2', { class: 'm0' }, s.title)) : h('h2', { class: 'm0' }, s.title),
+      h('p', { class: 'muted small mt-s' }, counts),
+      s.note ? h('p', { class: 'small' + (s.default || !n ? '' : ' warn-text') }, s.note) : null,
+      list(s.items, 'What will be added', n <= 12, true),
+      list(s.have, 'Already in DNServe', false, false),
+      list(s.skipped, 'Can’t be moved, and why', skipped <= 6, false));
+  });
+  const done = h('div');
+  const go = h('button', { class: 'primary', type: 'button', onclick: async () => {
+    const sections = pick.filter(p => p.box.checked).map(p => p.key);
+    if (!sections.length) { fill(done, msg('err', 'Tick at least one section to import.')); return; }
+    go.disabled = true;
+    try {
+      const r = await api('POST', '/import/adguard/apply', { id, sections, exclude: [...exclude] });
+      fill(box, h('div', { class: 'card highlight' },
+        h('h2', {}, 'Imported from AdGuard Home'),
+        h('p', {}, r.summary ? 'Added ' + r.summary + '.' : 'Everything was already in DNServe.'),
+        r.lists ? h('p', { class: 'muted small' }, 'New lists download in the background and start blocking within a minute.') : null,
+        h('p', {}, 'Next: check ', h('a', { href: '#/settings' }, 'Settings'), ', ', h('a', { href: '#/names' }, 'Local names'), ' and ', h('a', { href: '#/devices' }, 'Devices'),
+          ', then point your router’s DNS at DNServe. Keep AdGuard Home running until devices have moved across.')));
+    } catch (e) {
+      fill(done, msg('err', e.message));
+      go.disabled = false;
+    }
+  } }, 'Import selected');
+  fill(box,
+    h('p', { class: 'muted' }, 'Found AdGuard Home ', plan.version || '', ' at ', h('code', {}, plan.source), '. Tick what to bring across; open a section to leave single items out.'),
+    cards,
+    pick.length ? h('div', { class: 'card' }, h('div', { class: 'actions m0' }, go, h('button', { type: 'button', onclick: () => fill(box) }, 'Cancel')), done)
+      : h('div', { class: 'card' }, h('p', {}, 'Everything DNServe can import is already here.')));
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 // ---------- users ----------
