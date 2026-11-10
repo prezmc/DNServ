@@ -30,6 +30,8 @@ func (r Rule) Matches(name string) bool {
 		return name == r.Domain || strings.HasSuffix(name, "."+r.Domain)
 	case SubOnly:
 		return strings.HasSuffix(name, "."+r.Domain)
+	case Pattern:
+		return r.patternMatches(name)
 	}
 	return false
 }
@@ -45,7 +47,7 @@ func (e *Engine) AlsoOn(ctx context.Context, name string) []ListHit {
 	for _, line := range cfg.Rules {
 		rules, ok, _ := ParseLine(line)
 		for _, r := range rules {
-			if ok && r.Matches(name) {
+			if ok && !r.Bad && r.Matches(name) {
 				out = append(out, ListHit{List: "Custom rules", Rule: r.Text(), Allowlist: r.Allow})
 			}
 		}
@@ -101,14 +103,17 @@ func (e *Engine) AlsoOn(ctx context.Context, name string) []ListHit {
 				if n%65536 == 0 && ctx.Err() != nil {
 					return
 				}
+				// Pattern rules need not contain the name, so lines that
+				// look like one ("*", "/", "$", "|...") are always parsed.
 				if line := sc.Bytes(); !bytes.Contains(line, needle) &&
-					(!hasUpper(line) || !bytes.Contains(bytes.ToLower(line), needle)) {
+					(!hasUpper(line) || !bytes.Contains(bytes.ToLower(line), needle)) &&
+					!maybePattern(line) {
 					continue
 				}
 				rules, ok, _ := ParseLine(sc.Text())
 				for _, r := range rules {
 					r.Allow = r.Allow || j.allow
-					if ok && r.Matches(name) && !seen[r.Text()] {
+					if ok && !r.Bad && r.Matches(name) && !seen[r.Text()] {
 						seen[r.Text()] = true
 						hits[i] = append(hits[i], ListHit{List: label, Rule: r.Text(), Allowlist: r.Allow})
 					}
@@ -140,4 +145,14 @@ func hasUpper(b []byte) bool {
 		}
 	}
 	return false
+}
+
+func maybePattern(b []byte) bool {
+	if bytes.IndexAny(b, "*/$") >= 0 {
+		return true
+	}
+	if len(b) > 0 && b[0] == '@' {
+		b = bytes.TrimLeft(b, "@")
+	}
+	return len(b) > 1 && b[0] == '|' && b[1] != '|'
 }

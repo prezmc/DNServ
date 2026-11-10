@@ -19,6 +19,9 @@ const (
 	Suffix
 	// SubOnly matches subdomains but not the domain itself (*.domain).
 	SubOnly
+	// Pattern is a wildcard or regex rule (ad-*.example.com, /regex/),
+	// or any rule with $denyallow. Domain then holds the pattern as written.
+	Pattern
 )
 
 func (k Kind) String() string {
@@ -29,6 +32,8 @@ func (k Kind) String() string {
 		return "suffix"
 	case SubOnly:
 		return "subdomains"
+	case Pattern:
+		return "pattern"
 	}
 	return "unknown"
 }
@@ -38,6 +43,12 @@ type Rule struct {
 	Domain string
 	Kind   Kind
 	Allow  bool
+	// Except lists domains ($denyallow) the rule does not apply to, with
+	// their subdomains, separated by "|".
+	Except string
+	// Bad marks a $badfilter rule: it switches off the same rule in every
+	// list instead of adding one.
+	Bad bool
 }
 
 // Text renders the rule back in AdBlock syntax.
@@ -54,6 +65,16 @@ func (r Rule) Text() string {
 	if r.Allow {
 		s = "@@" + s
 	}
+	var mods []string
+	if r.Except != "" {
+		mods = append(mods, "denyallow="+r.Except)
+	}
+	if r.Bad {
+		mods = append(mods, "badfilter")
+	}
+	if len(mods) > 0 {
+		s += "$" + strings.Join(mods, ",")
+	}
 	return s
 }
 
@@ -68,7 +89,7 @@ type ParseStats struct {
 // rules this engine does not support (regex, cosmetic, most modifiers);
 // those are counted as skipped by ParseList when they are not comments.
 func ParseLine(line string) (rules []Rule, ok bool, comment bool) {
-	line = strings.TrimSpace(line)
+	line = strings.TrimSpace(strings.TrimPrefix(line, "\ufeff"))
 	if line == "" || line[0] == '!' || line[0] == '#' || strings.HasPrefix(line, "[Adblock") {
 		return nil, false, true
 	}
@@ -86,39 +107,60 @@ func ParseLine(line string) (rules []Rule, ok bool, comment bool) {
 		line = line[2:]
 	}
 
-	// Modifiers: only $important is accepted (treated as a plain rule).
-	if i := strings.IndexByte(line, '$'); i >= 0 {
-		if line[i+1:] != "important" {
-			return nil, false, false
+	line, except, bad, ok := splitModifiers(line)
+	if !ok {
+		return nil, false, false
+	}
+	mark := func(r Rule) ([]Rule, bool, bool) {
+		r.Allow, r.Except, r.Bad = allow, except, bad
+		if except != "" && r.Kind != Pattern {
+			// $denyallow needs the pattern matcher, which checks exceptions.
+			switch r.Kind {
+			case Suffix:
+				r.Domain = "||" + r.Domain + "^"
+			case SubOnly:
+				r.Domain = "*." + r.Domain
+			default:
+				r.Domain = "|" + r.Domain + "^"
+			}
+			r.Kind = Pattern
 		}
-		line = line[:i]
+		return []Rule{r}, true, false
 	}
 
-	if strings.HasPrefix(line, "/") && strings.HasSuffix(line, "/") && len(line) > 1 {
-		return nil, false, false // regex
+	if isRegexRule(line) {
+		if re, err := compilePattern(line); err != nil {
+			return nil, false, false
+		} else if _, possible := hostLiterals(re); !possible {
+			return nil, false, false
+		}
+		return mark(Rule{Domain: line, Kind: Pattern})
 	}
 
 	if strings.HasPrefix(line, "||") {
 		d := strings.TrimPrefix(line, "||")
-		d = strings.TrimSuffix(d, "^")
 		d = strings.TrimSuffix(d, "^|")
+		d = strings.TrimSuffix(d, "^")
 		if d2, ok := normalize(d); ok {
-			return []Rule{{Domain: d2, Kind: Suffix, Allow: allow}}, true, false
+			return mark(Rule{Domain: d2, Kind: Suffix})
 		}
-		return nil, false, false
+		return parsePattern(line, mark)
 	}
 
 	if strings.HasPrefix(line, "*.") {
 		if d, ok := normalize(line[2:]); ok {
-			return []Rule{{Domain: d, Kind: SubOnly, Allow: allow}}, true, false
+			return mark(Rule{Domain: d, Kind: SubOnly})
 		}
-		return nil, false, false
+		return parsePattern(line, mark)
 	}
 
 	fields := strings.Fields(line)
 	if len(fields) >= 2 {
 		// Hosts format: IP followed by one or more names.
 		if _, err := netip.ParseAddr(fields[0]); err != nil {
+			return nil, false, false
+		}
+		if except != "" || bad {
 			return nil, false, false
 		}
 		for _, f := range fields[1:] {
@@ -132,9 +174,74 @@ func ParseLine(line string) (rules []Rule, ok bool, comment bool) {
 	}
 
 	if d, ok := normalize(strings.TrimSuffix(line, "^")); ok {
-		return []Rule{{Domain: d, Kind: Exact, Allow: allow}}, true, false
+		return mark(Rule{Domain: d, Kind: Exact})
 	}
-	return nil, false, false
+	return parsePattern(line, mark)
+}
+
+// splitModifiers removes a $modifier list. Only modifiers that make sense
+// for every client and query type are accepted: $important (treated as a
+// plain rule), $badfilter and $denyallow. Rules with others ($client,
+// $dnstype, $dnsrewrite, browser-only ones) are skipped.
+func splitModifiers(line string) (body, except string, bad, ok bool) {
+	i := strings.LastIndexByte(line, '$')
+	if i < 0 || (isRegexRule(line) && strings.HasSuffix(line, "/")) {
+		return line, "", false, true
+	}
+	if strings.HasPrefix(line, "/") && strings.LastIndexByte(line, '/') > i {
+		return line, "", false, true // a "$" inside a regex
+	}
+	body = line[:i]
+	for _, m := range strings.Split(line[i+1:], ",") {
+		switch {
+		case m == "important":
+		case m == "badfilter":
+			bad = true
+		case strings.HasPrefix(m, "denyallow="):
+			var ds []string
+			for _, d := range strings.Split(m[len("denyallow="):], "|") {
+				d, ok := normalize(d)
+				if !ok {
+					return "", "", false, false
+				}
+				ds = append(ds, d)
+			}
+			except = strings.Join(ds, "|")
+		default:
+			return "", "", false, false
+		}
+	}
+	return body, except, bad, body != ""
+}
+
+func isRegexRule(s string) bool {
+	return len(s) > 2 && s[0] == '/' && s[len(s)-1] == '/'
+}
+
+// parsePattern accepts AdBlock-style host patterns: "*" wildcards, "||"
+// (start of a label), "|" or "://" (start of the name), "^" at the end
+// (end of the name). Paths and other URL parts cannot match a DNS name and
+// are skipped.
+func parsePattern(line string, mark func(Rule) ([]Rule, bool, bool)) ([]Rule, bool, bool) {
+	p := strings.ToLower(line)
+	inner := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(p, "||"), "://"), "|")
+	inner = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(inner, "^|"), "^"), "|")
+	if inner == "" || strings.Trim(inner, "*.") == "" {
+		return nil, false, false
+	}
+	for i := 0; i < len(inner); i++ {
+		switch c := inner[i]; {
+		case c >= 'a' && c <= 'z', c >= '0' && c <= '9', c == '-', c == '.', c == '_', c == '*':
+		default:
+			return nil, false, false
+		}
+	}
+	if re, err := compilePattern(p); err != nil {
+		return nil, false, false
+	} else if _, possible := hostLiterals(re); !possible {
+		return nil, false, false
+	}
+	return mark(Rule{Domain: p, Kind: Pattern})
 }
 
 // ParseList parses a whole list, calling fn for each rule.

@@ -46,7 +46,8 @@ setup wizard and dashboard handle the rest from your browser.
   before they expire, serve-stale when upstream is down (RFC 8767), and
   persistence: the cache is saved on shutdown and reloaded on start.
 - **Blocklists and custom rules.** Hosts files, plain domain lists and AdBlock
-  syntax (`||domain^`, `@@||domain^`, `*.domain`). Lists download on a
+  syntax (`||domain^`, `@@||domain^`, `*.domain`, wildcards, regex,
+  `$denyallow`, `$badfilter`). Lists download on a
   schedule and are cached on disk, so a restart works offline. A refresh
   builds a new index off to the side and swaps it in without pausing DNS.
 - **Private by default.** Local names (`.lan`, `.local`, `.home.arpa`,
@@ -349,7 +350,7 @@ tick what to import. Running it again adds only what's missing.
 | Persistent clients with IP addresses, or MACs that have a DHCP reservation; DHCP reservations | Device names |
 | Clients with filtering off, or their own blocked services | A group each, holding that device |
 
-Not moved, and listed as such in the preview: regex and `$client`/`$ctag`
+Not moved, and listed as such in the preview: `$client`/`$ctag`
 rules, DNS-over-QUIC and DNS stamp upstreams, client IDs and CIDR clients,
 schedules, safe browsing, parental control, safe search, DHCP serving and
 query history. If AdGuard Home hands out addresses, turn DHCP back on in
@@ -481,6 +482,11 @@ the household setting is.
 | `*.ads.example` | subdomains only, not `ads.example` itself |
 | `ads.example` or `0.0.0.0 ads.example` | exactly that name |
 | `@@\|\|cdn.example^` | never blocks it or its subdomains |
+| `\|\|ad-*.cdn.example^` | `*` matches any text: `ad-1.cdn.example`, `x.ad-eu.cdn.example` |
+| `\|piwik.` | names that start with `piwik.` (`\|` is the start of the name, `^` the end) |
+| `/^[a-z]{5}-[a-z]{5}\.xyz$/` | a regular expression (Go's RE2 syntax, case-insensitive) over the name |
+| `\|\|top^$denyallow=good.top` | `top` and its subdomains, except `good.top` and its subdomains |
+| `\|\|ads.example^$badfilter` | switches off `\|\|ads.example^` in every list |
 
 Custom rules beat lists. At the same level, an allow rule beats a block.
 
@@ -489,8 +495,16 @@ Answers are checked too, as in AdGuard Home. A name that is an alias
 address has a rule of its own (`||203.0.113.9^` or `203.0.113.9`). A name
 you allow keeps its answer whatever it points to. The query log shows the
 rule that matched, so a block "by CNAME" shows the alias's rule.
-Regex rules, cosmetic rules and modifiers other than `$important` are skipped
-and counted, so the index never claims to block something it doesn't.
+Rules that can't apply to a DNS name are skipped and counted, so the index
+never claims to block something it doesn't: cosmetic rules, URL rules with a
+path or port, regexes RE2 can't run (lookaheads, backreferences), and
+modifiers other than `$important`, `$denyallow` and `$badfilter` (`$client`,
+`$dnstype` and `$dnsrewrite` among them).
+
+Wildcard and regex rules are indexed by three letters of the text each one
+needs, so a lookup only tries the few whose letters the name contains: the
+AdGuard DNS filter and Dandelion Sprout's anti-malware list (about 700 such
+rules together) add well under a microsecond per lookup.
 
 ## Performance
 
@@ -499,8 +513,8 @@ Micro-benchmarks from `go test -bench` on a 4-core VM:
 | Operation | Time |
 |---|---|
 | Blocklist check against 1,000,000 rules | about 0.1 µs |
+| The same with 1,000 wildcard and regex rules added | about 0.25 µs |
 | Cache hit (parallel) | about 0.5 µs |
-
 | Whole query path in process, cached answer, query log on | about 1.1 µs |
 | Whole query path, blocked name | about 0.7 µs |
 
