@@ -320,3 +320,24 @@ func TestMigrateOldDatabase(t *testing.T) {
 		t.Fatalf("after migration: %+v %v", r, err)
 	}
 }
+
+func TestTopLists(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		days, stats int
+	}{{"queries", 30, 90}, {"hourly", 0, 90}} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := open(t, tc.days, tc.stats)
+			s.now = func() time.Time { return base.Add(time.Hour) }
+			fill(s)
+			e := entry(80, "192.168.1.10", "bad.example", querylog.Blocked)
+			e.List = "Custom rules"
+			s.Record(e)
+			s.Flush()
+			r := run(t, s, Query{Kind: KindTop, By: TopLists, From: base.Add(-time.Hour), To: base.Add(23 * time.Hour)})
+			if len(r.Rows) != 2 || r.Rows[0].Key != "HaGeZi Pro" || r.Rows[0].Total != 11 || r.Rows[1].Key != "Custom rules" || r.Rows[1].Total != 1 {
+				t.Fatalf("rows = %+v", r.Rows)
+			}
+		})
+	}
+}

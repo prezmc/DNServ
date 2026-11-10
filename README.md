@@ -88,6 +88,22 @@ setup wizard and dashboard handle the rest from your browser.
   up they are counted and dropped rather than waited on. People with only
   `dashboard.view` see totals and top domains; devices, the query log and
   exports need `querylog.view` (and `data.export`).
+- **Performance.** The **Performance** page shows how quickly DNServe
+  answers: median, 95th and 99th percentile response times, how long
+  lookups the cache couldn't answer took, cache hit rate and SERVFAILs,
+  over time and by record type, plus each upstream server's speed,
+  timeouts and errors (per node, since each has its own path out), the
+  slowest domains to look up and each device's cache hits. It flags
+  anything unusual against the 7 days before (or the typical bucket for
+  longer periods): slow lookups, failure surges, upstream servers timing
+  out or slowing down, query surges and cache hit drops. The Dashboard
+  shows the last hour and any warnings, and the **Top blocking lists**
+  (Dashboard and Analytics) say which lists block the most. Response
+  times come from what each node already measures; they are rolled up
+  into 5-minute slots with latency histograms by the history writer, so
+  percentiles merge exactly across nodes and nothing is added to the
+  query path. Kept as long as the hourly totals. On first start after
+  updating, response times are rebuilt from the existing query history.
 - **Risk scores and domain types.** Analytics marks risky domains (0-100)
   from public threat feeds (URLhaus and ThreatFox from abuse.ch, Phishing
   Army, HaGeZi's Threat Intelligence Feeds) plus a few signs in the name
@@ -375,7 +391,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
 | Groups | `GET`/`POST /groups` `{name, rules, skip_blocklists, schedules: [{name, days, start, end, block_all, rules}], devices}`, `PUT`/`DELETE /groups/{id}` |
 | Recent queries | `GET /queries?client=&search=&result=&before=&limit=` (`client` is an IP or device id; `result` is `blocked`, `allowed`, `failed`, …) |
-| Analytics | `GET /analytics/summary`, `/analytics/top?by=domains\|blocked\|clients`, `/analytics/domain?name=`, `/analytics/queries?search=&result=&before=`, `/analytics/export` (CSV), `/analytics/risky`, `/analytics/intel` (sources), `/analytics/alsoon?name=`, `POST /analytics/virustotal?name=`; `GET`/`PUT /virustotal` `{key}` (never returned). The history views take `range=1h\|24h\|7d\|30d\|90d` and `client=` (IP or device id), and merge every node's history |
+| Analytics | `GET /analytics/summary`, `/analytics/top?by=domains\|blocked\|clients\|lists`, `/analytics/performance`, `/analytics/domain?name=`, `/analytics/queries?search=&result=&before=`, `/analytics/export` (CSV), `/analytics/risky`, `/analytics/intel` (sources), `/analytics/alsoon?name=`, `POST /analytics/virustotal?name=`; `GET`/`PUT /virustotal` `{key}` (never returned). The history views take `range=1h\|24h\|7d\|30d\|90d` and `client=` (IP or device id), and merge every node's history |
 | Settings history | `GET /config/versions`, `GET /config/versions/{id}` (with the changes going back would make), `POST /config/versions/{id}/restore` |
 | Backups | `GET /backups`, `POST /backups/passphrase` `{passphrase, password}`, `PUT /backups/schedule` `{every: daily\|weekly\|"", at: "HH:MM", keep, offsite}`, `POST /backups/download`, `GET /backups/files/{local\|offsite}/{name}`, `POST /backups/restore` (multipart: `file`, `passphrase`, `password`) |
 | Cluster | `GET /cluster`, `POST /cluster/join-codes` `{host}`, `PUT /cluster/nodes/{id}` `{name, never_leader}`, `DELETE /cluster/nodes/{id}`, `POST /cluster/preferred` `{id}`, `POST /cluster/transfer` `{to}`, `POST /cluster/recover` `{password, accept_risk}`, `POST /cluster/join` `{join_code, host, password}` |

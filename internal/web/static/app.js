@@ -566,6 +566,7 @@ const ROUTES = [
   { path: '', title: 'Dashboard', page: dashboard, show: () => true },
   { path: 'devices', title: 'Devices', page: devices, show: () => true },
   { path: 'analytics', title: 'Analytics', page: analyticsPage, show: () => can('dashboard.view') },
+  { path: 'performance', title: 'Performance', page: performancePage, show: () => can('dashboard.view') },
   { path: 'queries', title: 'Query log', page: queries, show: () => can('querylog.view') },
   { path: 'names', title: 'Local names', page: localNames, show: () => can('network.manage') },
   { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
@@ -613,8 +614,9 @@ async function dashboard(main) {
   const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
   const devBox = h('div');
   const chartBox = h('div');
+  const extraBox = h('div');
   const ver = h('p', { class: 'muted small' });
-  page(main, 'Dashboard', body, chartBox, devBox, checkDomainCard(), ver);
+  page(main, 'Dashboard', body, chartBox, extraBox, devBox, checkDomainCard(), ver);
 
   const load = async () => {
     let s;
@@ -633,7 +635,7 @@ async function dashboard(main) {
         s.cluster.healthy ? s.cluster.leader + ' leading' : 'no leader, changes paused', ' ',
         can('cluster.manage') ? h('a', { href: '#/cluster' }, 'Details') : null));
     }
-    const upName = (u) => (/^udp:\/\/127\.0\.0\.1:/.test(u) ? 'Unbound (built in)' : u.replace(/^https:\/\/([^/]+).*/, '$1 (HTTPS)').replace(/^tls:\/\/([^:]+).*/, '$1 (TLS)'));
+    const upName = upstreamLabel;
     fill(body,
       total === 0 ? h('div', { class: 'card highlight' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
       h('p', { class: 'muted small' }, 'Counting since DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.'),
@@ -663,13 +665,14 @@ async function dashboard(main) {
       deviceTable(seen.slice(0, 5), { compact: true }),
       seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null));
   };
-  await Promise.all([load(), loadDevices(), dashboardChart(chartBox)]);
+  const extras = () => (can('dashboard.view') ? dashboardExtras(extraBox) : null);
+  await Promise.all([load(), loadDevices(), dashboardChart(chartBox), extras()]);
   let tick = 0;
   timer = setInterval(() => {
     if (document.hidden) return;
     load();
     if (++tick % 3 === 0) loadDevices();
-    if (tick % 12 === 0) dashboardChart(chartBox);
+    if (tick % 12 === 0) { dashboardChart(chartBox); extras(); }
   }, 5000);
 }
 
@@ -1241,10 +1244,10 @@ async function analyticsPage(main) {
     })))); };
 
   const load = async () => {
-    let sum, dom, blk, cli, risky;
+    let sum, dom, blk, cli, risky, lists;
     try {
-      [sum, dom, blk, cli, risky] = await Promise.all([q('summary'), q('top', { by: 'domains', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
-        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '10' })]);
+      [sum, dom, blk, cli, risky, lists] = await Promise.all([q('summary'), q('top', { by: 'domains', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
+        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '10' }), q('top', { by: 'lists', limit: '10' })]);
     } catch (e) { fill(body, msg('err', e.message)); return; }
     const c = sum.counts;
     const pct = (n) => (c.total ? (100 * n / c.total).toFixed(1) + '%' : '—');
@@ -1264,7 +1267,7 @@ async function analyticsPage(main) {
           risky.domains > risky.rows.length ? 'Showing the ' + risky.rows.length + ' riskiest of ' + fmtNum(risky.domains) + '.' : '')) : null,
       h('div', { class: 'card' }, h('h2', {}, 'Queries over time'), c.total ? queryChart(sum) : h('p', { class: 'muted' }, 'No queries in this period.')),
       h('div', { class: 'cols' }, topList('Top domains', dom.rows, 'domains'), topList('Top blocked', blk.rows, 'blocked')),
-      cli ? topList('Busiest devices', cli.rows, 'clients') : null,
+      h('div', { class: 'cols' }, cli ? topList('Busiest devices', cli.rows, 'clients') : null, topListsCard(lists.rows, st.range, false)),
       perDevice && st.client ? h('p', {}, h('a', { href: '#/queries?client=' + encodeURIComponent(st.client) }, 'See every query from this device')) : null);
   };
   await load();
@@ -1280,6 +1283,248 @@ async function dashboardChart(box) {
     h('div', { class: 'row spread' }, h('h2', {}, 'Last 24 hours'), h('a', { href: '#/analytics', class: 'small' }, 'Analytics')),
     h('p', { class: 'muted small' }, fmtNum(sum.counts.total), ' queries, ', fmtNum(sum.counts.blocked), ' blocked, from ', fmtNum(sum.devices), sum.devices === 1 ? ' device.' : ' devices.'),
     queryChart(sum)));
+}
+
+// ---------- performance ----------
+
+// upstreamLabel names an upstream server the way people know it.
+function upstreamLabel(u) {
+  return /^udp:\/\/127\.0\.0\.1:/.test(u) ? 'Unbound (built in)' : u.replace(/^https:\/\/([^/]+).*/, '$1 (HTTPS)').replace(/^tls:\/\/([^:]+).*/, '$1 (TLS)');
+}
+
+function fmtMs(ms) {
+  if (ms === null || ms === undefined || !isFinite(ms)) return '—';
+  if (ms >= 1000) return (ms / 1000).toFixed(1) + ' s';
+  if (ms >= 10) return ms.toFixed(0) + ' ms';
+  if (ms >= 1) return ms.toFixed(1) + ' ms';
+  return ms.toFixed(2) + ' ms';
+}
+
+function fmtPct(f) { return f > 0 && f < 0.001 ? '<0.1%' : (100 * (f || 0)).toFixed(1) + '%'; }
+
+// usualNote compares a value with what is usual: "usually 12 ms".
+function usualNote(cur, usual, fmt, worseIfHigher) {
+  if (usual === null || usual === undefined || !isFinite(usual)) return null;
+  let cls = 'muted';
+  if (usual > 0) {
+    const r = cur / usual;
+    if (worseIfHigher ? r > 1.5 : r < 0.67) cls = 'worse';
+    else if (worseIfHigher ? r < 0.8 : r > 1.2) cls = 'better';
+  }
+  return h('span', { class: cls }, 'usually ', fmt(usual));
+}
+
+// latencyChart draws response times over time as lines on a log scale,
+// with unusual buckets shaded.
+function latencyChart(view, step, from, to, anomalies) {
+  const series = [
+    { key: 'p50_ms', label: 'Median, all queries', cls: 's3' },
+    { key: 'lookup_avg_ms', label: 'Lookups, average', cls: 's1' },
+    { key: 'lookup_p95_ms', label: 'Lookups, 95th percentile', cls: 's2' },
+  ];
+  const byT = new Map(view.series.map(p => [p.t, p]));
+  const first = view.series.length ? Math.min(view.series[0].t, from - ((from % step) + step) % step) : from;
+  const pts = [];
+  for (let t = first; t < to; t += step) pts.push(byT.get(t) || { t, queries: 0, lookups: 0 });
+  if (!pts.length) return null;
+  const vals = [];
+  pts.forEach(p => series.forEach(s => { if (p[s.key] > 0) vals.push(p[s.key]); }));
+  if (!vals.length) return null;
+  const W = 720, H = 200, padL = 52, padB = 22, padT = 8;
+  const lo = Math.pow(10, Math.floor(Math.log10(Math.max(0.01, Math.min(...vals)))));
+  const hi = Math.pow(10, Math.ceil(Math.log10(Math.max(lo * 10, ...vals))));
+  const y = (v) => padT + (H - padT - padB) * (1 - (Math.log10(Math.max(v, lo)) - Math.log10(lo)) / (Math.log10(hi) - Math.log10(lo)));
+  const bw = (W - padL) / pts.length;
+  const xc = (i) => padL + i * bw + bw / 2;
+  const g = [];
+  const idx = new Map(pts.map((p, i) => [p.t, i]));
+  (anomalies || []).forEach(a => {
+    const i0 = idx.get(a.t), i1 = idx.get(a.end);
+    if (i0 === undefined) return;
+    g.push(svg('rect', { x: padL + i0 * bw, y: padT, width: ((i1 === undefined ? i0 : i1) - i0 + 1) * bw, height: H - padT - padB, class: 'anom ' + a.severity }));
+  });
+  for (let v = lo; v <= hi + 1e-9; v *= 10) {
+    g.push(svg('line', { x1: padL, x2: W, y1: y(v), y2: y(v), class: 'grid-line' }));
+    g.push(svg('text', { x: padL - 6, y: y(v) + 4, 'text-anchor': 'end', class: 'axis' }, document.createTextNode(fmtMs(v))));
+  }
+  series.forEach(s => {
+    let d = '';
+    let pen = false;
+    pts.forEach((p, i) => {
+      const v = p[s.key];
+      const ok = v > 0 && (s.key === 'p50_ms' ? p.queries >= 1 : p.lookups >= 1);
+      if (!ok) { pen = false; return; }
+      d += (pen ? 'L' : 'M') + xc(i).toFixed(1) + ' ' + y(v).toFixed(1);
+      pen = true;
+    });
+    if (d) g.push(svg('path', { d, class: 'line ' + s.cls }));
+    // Lone points (gaps on both sides) as dots, so they show.
+    pts.forEach((p, i) => {
+      const v = p[s.key];
+      const has = (j) => j >= 0 && j < pts.length && pts[j][s.key] > 0;
+      if (v > 0 && !has(i - 1) && !has(i + 1)) g.push(svg('circle', { cx: xc(i), cy: y(v), r: 2.5, class: 'dot-' + s.cls }));
+    });
+  });
+  const every = Math.ceil(pts.length / 6);
+  const tip = h('div', { class: 'chart-tip', hidden: true });
+  pts.forEach((p, i) => {
+    if (i % every === 0) g.push(svg('text', { x: xc(i), y: H - 6, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(bucketLabel(p.t, step))));
+    const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - padB, class: 'hit' });
+    const show = () => {
+      fill(tip, h('b', {}, bucketLabel(p.t, step, true)),
+        p.queries ? [h('div', {}, fmtNum(p.queries), ' queries, median ', fmtMs(p.p50_ms), ', 95% under ', fmtMs(p.p95_ms)),
+          p.lookups ? h('div', {}, fmtNum(p.lookups), ' lookups: ', fmtMs(p.lookup_avg_ms), ' average, 95% under ', fmtMs(p.lookup_p95_ms)) : null,
+          h('div', { class: 'muted' }, fmtPct(p.cache_hit), ' from cache', p.failed ? ', ' + fmtNum(p.failed) + ' failed' : '')]
+          : h('div', { class: 'muted' }, 'No queries'));
+      tip.hidden = false;
+      tip.style.left = Math.min(80, Math.max(12, (xc(i) / W) * 100)) + '%';
+    };
+    hit.addEventListener('mouseenter', show);
+    hit.addEventListener('mouseleave', () => { tip.hidden = true; });
+    g.push(hit);
+  });
+  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Response times over time' }, g);
+  const table = h('details', { class: 'small' }, h('summary', { class: 'muted' }, 'Show as a table'),
+    h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'Median'), h('th', {}, '95%'), h('th', {}, '99%'), h('th', {}, 'Lookups'), h('th', {}, 'Lookup avg'), h('th', {}, 'Lookup 95%'), h('th', {}, 'From cache'), h('th', {}, 'Failed'))),
+      h('tbody', {}, pts.filter(p => p.queries).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.queries)), h('td', {}, fmtMs(p.p50_ms)), h('td', {}, fmtMs(p.p95_ms)), h('td', {}, fmtMs(p.p99_ms)),
+        h('td', {}, fmtNum(p.lookups)), h('td', {}, p.lookups ? fmtMs(p.lookup_avg_ms) : '—'), h('td', {}, p.lookups ? fmtMs(p.lookup_p95_ms) : '—'), h('td', {}, fmtPct(p.cache_hit)), h('td', {}, fmtNum(p.failed))))))));
+  return h('div', {},
+    h('div', { class: 'legend small' }, series.map(s => h('span', {}, h('span', { class: 'key ' + s.cls }), s.label)),
+      (anomalies || []).length ? h('span', {}, h('span', { class: 'key anom' }), 'Unusual') : null),
+    h('div', { class: 'chart-wrap' }, chart, tip), table);
+}
+
+// distChart shows how many queries took how long.
+function distChart(dist) {
+  const rows = dist.map((d, i) => ({ ...d, lo: i ? dist[i - 1].le : 0 }));
+  const total = rows.reduce((a, r) => a + r.all, 0);
+  if (!total) return null;
+  // Trim empty buckets at both ends.
+  let a = 0, b = rows.length - 1;
+  while (a < b && !rows[a].all) a++;
+  while (b > a && !rows[b].all) b--;
+  const shown = rows.slice(a, b + 1);
+  const top = Math.max(...shown.map(r => r.all));
+  const label = (r) => r.le ? (r.lo ? fmtMs(r.lo) + '–' : 'under ') + fmtMs(r.le) : 'over ' + fmtMs(r.lo);
+  let cum = 0;
+  shown.forEach(r => { cum += r.all; r.cum = cum; });
+  return h('div', { class: 'scroll' }, h('table', { class: 'top dist' }, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', { class: 'num' }, 'Queries'), h('th', { class: 'num' }, 'Of which lookups'), h('th', { class: 'num' }, 'Answered by now'))),
+    h('tbody', {}, shown.filter(r => r.all).map(r => h('tr', {}, h('td', { class: 'nowrap' }, label(r), bar(r.all, top)), h('td', { class: 'num' }, fmtNum(r.all)), h('td', { class: 'num' }, fmtNum(r.lookups)), h('td', { class: 'num' }, fmtPct(r.cum / total)))))));
+}
+
+async function performancePage(main) {
+  const params = hashParams();
+  const st = { range: RANGES[params.get('range')] ? params.get('range') : '24h' };
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
+  const rangeBtns = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, Object.keys(RANGES).map(k =>
+    h('button', { type: 'button', 'aria-pressed': String(k === st.range), onclick: (ev) => {
+      st.range = k; rangeBtns.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.target)));
+      history.replaceState(null, '', '#/performance' + (k !== '24h' ? '?range=' + k : ''));
+      load();
+    } }, k)));
+  page(main, 'Performance', h('p', { class: 'muted' }, 'How quickly DNServe answers, how your upstream servers are doing, and anything out of the ordinary.'), h('div', { class: 'row' }, rangeBtns), body);
+
+  const load = async () => {
+    let r;
+    try { r = await api('GET', '/analytics/performance?' + new URLSearchParams({ range: st.range })); } catch (e) { fill(body, msg('err', e.message)); return; }
+    // Only compare tiles with the week before, not with this period itself.
+    const v = r.view, s = v.summary, u = v.usual_from === 'before' ? v.usual : null;
+    const from = Math.floor(new Date(r.from).getTime() / 1000), to = Math.floor(new Date(r.to).getTime() / 1000);
+    const tile = (label, value, note, title) => h('div', { class: 'tile', title }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), note ? h('div', { class: 'small' }, note) : null);
+    const multiNode = (r.nodes || []).length > 1;
+    const usualWhat = v.usual_from === 'before' ? 'Compared with the 7 days before.' : v.usual_from === 'period' ? 'Compared with a typical ' + (r.step >= 86400 ? 'day' : r.step >= 3600 ? (r.step > 3600 ? r.step / 3600 + ' hours' : 'hour') : (r.step / 60) + ' minutes') + ' in this period.' : 'Not enough history yet to say what is usual.';
+    fill(body,
+      !r.stats && !r.detail ? msg('warn', 'Query history is turned off, so there is nothing to show. ' + (isAdmin() ? 'Turn it on under Settings → Query history.' : 'An admin can turn it on.')) : null,
+      coverage(r.nodes),
+      v.anomalies.length ? h('div', { class: 'card' }, h('h2', {}, 'Unusual ', h('span', { class: 'muted small' }, v.anomalies.length === 1 ? '1 thing' : v.anomalies.length + ' things')),
+        h('ul', { class: 'plain anomalies' }, v.anomalies.slice(0, 20).map(a => h('li', {},
+          h('span', { class: 'badge ' + (a.severity === 'bad' ? 'bad' : 'warn') }, a.title), ' ',
+          h('span', { class: 'muted small' }, bucketLabel(a.t, r.step, true), a.end !== a.t ? ' – ' + bucketLabel(a.end + r.step, r.step, true) : ''),
+          a.server ? h('span', { class: 'small' }, ' · ', upstreamLabel(a.server)) : null,
+          multiNode && a.node ? h('span', { class: 'muted small' }, ' · from ', a.node) : null,
+          h('div', { class: 'small' }, a.detail)))),
+        v.anomalies.length > 20 ? h('p', { class: 'muted small' }, 'And ', v.anomalies.length - 20, ' more.') : null)
+        : s.queries ? msg('ok', 'Nothing unusual in this period. ' + usualWhat) : null,
+      h('div', { class: 'grid' },
+        tile('Median response', fmtMs(s.p50_ms), u ? usualNote(s.p50_ms, u.p50_ms, fmtMs, true) : null, 'Half of all queries were answered faster than this.'),
+        tile('95% answered within', fmtMs(s.p95_ms), u ? usualNote(s.p95_ms, u.p95_ms, fmtMs, true) : null, '1 in 20 queries took longer than this.'),
+        tile('Average response', fmtMs(s.avg_ms), [fmtNum(s.queries), ' queries'], 'Includes cached and blocked answers.'),
+        tile('Lookups (not cached)', s.lookups ? fmtMs(s.lookup_avg_ms) : '—', s.lookups ? ['95% within ', fmtMs(s.lookup_p95_ms), u && u.lookups ? [' · ', usualNote(s.lookup_p95_ms, u.lookup_p95_ms, fmtMs, true)] : null] : 'none', 'Queries DNServe had to ask an upstream server about.'),
+        tile('Answered from cache', fmtPct(s.cache_hit), u ? usualNote(s.cache_hit, u.cache_hit, fmtPct, false) : null, 'Of the queries that weren’t blocked or local names.'),
+        tile('Failed (SERVFAIL)', fmtNum(s.failed), [fmtPct(s.fail_rate), u ? [' · ', usualNote(s.fail_rate, u.fail_rate, fmtPct, true)] : null])),
+      h('div', { class: 'card' }, h('h2', {}, 'Response times'), s.queries ? latencyChart(v, r.step, from, to, v.anomalies.filter(a => !a.server)) : h('p', { class: 'muted' }, 'No queries in this period.'),
+        s.queries ? h('p', { class: 'muted small' }, 'Times are measured inside DNServe, from receiving a query to having the answer ready. ', usualWhat) : null),
+      h('div', { class: 'card' }, h('h2', {}, 'Upstream servers'),
+        !v.upstreams.length ? h('p', { class: 'muted' }, 'No upstream lookups in this period.') : h('div', { class: 'scroll' }, h('table', {},
+          h('thead', {}, h('tr', {}, multiNode ? h('th', {}, 'Server') : null, h('th', {}, 'Upstream'), h('th', { class: 'num' }, 'Tries'), h('th', { class: 'num' }, 'Average'), h('th', { class: 'num' }, 'Median'), h('th', { class: 'num' }, '95%'), h('th', { class: 'num' }, 'Slowest'), h('th', { class: 'num' }, 'Timeouts'), h('th', { class: 'num' }, 'Errors'))),
+          h('tbody', {}, v.upstreams.map(x => h('tr', {},
+            multiNode ? h('td', {}, x.node) : null,
+            h('td', { title: x.server }, upstreamLabel(x.server), x.servfail ? h('div', { class: 'muted small' }, fmtNum(x.servfail), ' SERVFAIL answers') : null),
+            h('td', { class: 'num' }, fmtNum(x.tries)),
+            h('td', { class: 'num' }, x.answered ? fmtMs(x.avg_ms) : '—', x.usual_avg_ms ? h('div', { class: 'small' }, usualNote(x.avg_ms, x.usual_avg_ms, fmtMs, true)) : null),
+            h('td', { class: 'num' }, x.answered ? fmtMs(x.p50_ms) : '—'),
+            h('td', { class: 'num' }, x.answered ? fmtMs(x.p95_ms) : '—'),
+            h('td', { class: 'num' }, x.answered ? fmtMs(x.max_ms) : '—'),
+            h('td', { class: 'num' + (x.timeouts ? ' worse' : '') }, fmtNum(x.timeouts)),
+            h('td', { class: 'num' + (x.errors ? ' worse' : '') }, fmtNum(x.errors))))))),
+        v.upstreams.length ? h('p', { class: 'muted small' }, 'Each server measures its own path to the upstream. Prefetches of popular names count here too.') : null),
+      h('div', { class: 'cols' },
+        h('div', { class: 'card' }, h('h2', {}, 'How long queries took'), distChart(v.dist) || h('p', { class: 'muted' }, 'No queries in this period.')),
+        h('div', { class: 'card' }, h('h2', {}, 'By record type'), !v.types.length ? h('p', { class: 'muted' }, 'No queries in this period.') : h('table', { class: 'top' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Type'), h('th', { class: 'num' }, 'Queries'), h('th', { class: 'num' }, 'Average'), h('th', { class: 'num' }, '95%'))),
+          h('tbody', {}, v.types.slice(0, 12).map(t => h('tr', {}, h('td', { class: 'mono' }, t.type), h('td', { class: 'num' }, fmtNum(t.queries)), h('td', { class: 'num' }, fmtMs(t.avg_ms)), h('td', { class: 'num' }, fmtMs(t.p95_ms)))))))),
+      h('div', { class: 'cols' },
+        h('div', { class: 'card' }, h('h2', {}, 'Slowest domains to look up'), !r.domains.length ? h('p', { class: 'muted' }, r.stats ? 'Nothing yet.' : 'Needs hourly history (Settings → Query history).') : h('table', { class: 'top' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Domain'), h('th', { class: 'num' }, 'Average'), h('th', { class: 'num' }, 'Lookups'))),
+          h('tbody', {}, r.domains.map(d => h('tr', {}, h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(d.key, st.range) }, d.key)),
+            h('td', { class: 'num' }, fmtMs(d.lookup_avg_ms)), h('td', { class: 'num' }, fmtNum(d.lookups)))))),
+          r.domains.length ? h('p', { class: 'muted small' }, 'Average time to look up each domain when it wasn’t cached (3 lookups or more). Slow ones are often far away or have slow name servers.') : null),
+        r.devices ? h('div', { class: 'card' }, h('h2', {}, 'Devices'), !r.devices.length ? h('p', { class: 'muted' }, 'Nothing yet.') : h('div', { class: 'scroll' }, h('table', { class: 'top' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', { class: 'num' }, 'Queries'), h('th', { class: 'num' }, 'From cache'), h('th', { class: 'num' }, 'Lookup avg'), h('th', { class: 'num' }, 'Failed'))),
+          h('tbody', {}, r.devices.slice(0, 20).map(d => h('tr', {},
+            h('td', {}, h('a', { href: '#/analytics?' + new URLSearchParams({ client: d.device || d.addrs[0], range: st.range }) }, d.label || d.addrs[0]), d.label ? h('div', { class: 'muted small' }, d.addrs.join(', ')) : null),
+            h('td', { class: 'num' }, fmtNum(d.queries)), h('td', { class: 'num' }, fmtPct(d.cache_hit)), h('td', { class: 'num' }, d.lookups ? fmtMs(d.lookup_avg_ms) : '—'),
+            h('td', { class: 'num' + (d.failed ? ' worse' : '') }, fmtNum(d.failed))))))),
+          h('p', { class: 'muted small' }, 'A device with few cache hits is asking for many different names, which makes its browsing feel slower.')) : null));
+  };
+  await load();
+  timer = setInterval(() => { if (!document.hidden && !document.querySelector('dialog[open]')) load(); }, 30000);
+}
+
+// listLabel names where a block came from.
+function listLabel(k) { return k === 'Custom rules' ? 'Your custom rules' : k || 'Other (device group rules)'; }
+
+// topListsCard shows which lists blocked the most.
+function topListsCard(rows, range, link) {
+  if (!rows || !rows.length) return null;
+  const total = rows.reduce((a, r) => a + r.total, 0);
+  return h('div', { class: 'card' },
+    h('div', { class: 'row spread' }, h('h2', {}, 'Top blocking lists'), link ? h('a', { href: '#/analytics', class: 'small' }, 'Analytics') : null),
+    h('table', { class: 'top' }, h('tbody', {}, rows.map(r => h('tr', {},
+      h('td', {}, listLabel(r.key), bar(r.total, rows[0].total)),
+      h('td', { class: 'num' }, fmtNum(r.total), h('div', { class: 'muted small' }, fmtPct(r.total / total))))))),
+    h('p', { class: 'muted small' }, RANGES[range], '. Each block counts for the list whose rule matched first.'));
+}
+
+// dashboardExtras adds the last hour's response times and the top
+// blocking lists to the dashboard.
+async function dashboardExtras(box) {
+  const [perf, lists] = await Promise.all([
+    api('GET', '/analytics/performance?range=1h').catch(() => null),
+    api('GET', '/analytics/top?by=lists&range=24h&limit=6').catch(() => null)]);
+  const cards = [];
+  if (perf && perf.view.summary.queries) {
+    const s = perf.view.summary, an = perf.view.anomalies;
+    const stat = (label, value) => h('div', {}, h('div', { class: 'muted small' }, label), h('div', { class: 'big' }, value));
+    cards.push(h('div', { class: 'card' },
+      h('div', { class: 'row spread' }, h('h2', {}, 'Response times, last hour'), h('a', { href: '#/performance', class: 'small' }, 'Performance')),
+      h('div', { class: 'stats' }, stat('Median', fmtMs(s.p50_ms)), stat('95% within', fmtMs(s.p95_ms)), stat('Lookups, average', s.lookups ? fmtMs(s.lookup_avg_ms) : '—'), stat('From cache', fmtPct(s.cache_hit))),
+      an.length ? h('div', { class: 'msg ' + (an.some(a => a.severity === 'bad') ? 'err' : 'warn') }, h('b', {}, an[0].title), ' ', an[0].detail, an.length > 1 ? [' ', h('a', { href: '#/performance?range=1h' }, '+', an.length - 1, ' more')] : null)
+        : h('p', { class: 'muted small' }, 'Nothing unusual.')));
+  }
+  const lc = lists ? topListsCard(lists.rows, '24h', true) : null;
+  if (lc) cards.push(lc);
+  box.replaceChildren(cards.length > 1 ? h('div', { class: 'cols' }, cards) : cards);
 }
 
 // ---------- settings ----------

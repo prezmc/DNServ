@@ -182,6 +182,12 @@ func run() error {
 	} else {
 		srv.SetHistory(hist)
 		defer hist.Close()
+		// Upstream response times and failures, for the Performance page.
+		obs := upstream.Observer(hist.ObserveUpstream)
+		upstreamObserver.Store(&obs)
+		for _, g := range first.groups {
+			g.SetObserver(obs)
+		}
 	}
 	srv.SetPolicy(policy.Build(st.State()))
 	if loc, err := cfg.Location(); err == nil {
@@ -714,6 +720,16 @@ func b2i(b bool) int {
 	return 0
 }
 
+// upstreamObserver, once history is open, is given every upstream group
+// built, so upstream timings reach the history.
+var upstreamObserver atomic.Pointer[upstream.Observer]
+
+func observe(g *upstream.Group) {
+	if o := upstreamObserver.Load(); o != nil {
+		g.SetObserver(*o)
+	}
+}
+
 // resolverSet is the upstream path for the configured mode plus the parts
 // health and metrics report on.
 type resolverSet struct {
@@ -760,6 +776,7 @@ func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger, reu
 	forward := func() (*upstream.Group, error) {
 		g, err := upstream.NewGroup(u.Servers, u.Bootstrap, u.Timeout, log)
 		if err == nil {
+			observe(g)
 			set.groups = append(set.groups, g)
 		}
 		return g, err
@@ -805,6 +822,7 @@ func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger, reu
 	if err != nil {
 		return fail(err)
 	}
+	observe(local)
 	set.groups = append(set.groups, local)
 	if u.Mode == "recursive" {
 		set.resolver = local

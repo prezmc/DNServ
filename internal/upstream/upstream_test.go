@@ -117,3 +117,64 @@ func TestBootstrapResolves(t *testing.T) {
 		t.Fatal("IP literals must pass through")
 	}
 }
+
+func TestObserver(t *testing.T) {
+	good := startUDP(t, answerA)
+	g, err := NewGroup([]string{"udp://127.0.0.1:1", "udp://" + good}, nil, 300*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type call struct {
+		server string
+		rcode  int
+		err    bool
+	}
+	var calls []call
+	g.SetObserver(func(server string, _ time.Time, d time.Duration, rcode int, err error) {
+		calls = append(calls, call{server, rcode, err != nil})
+	})
+	q := new(dns.Msg)
+	q.SetQuestion("example.com.", dns.TypeA)
+	if _, err := g.Exchange(context.Background(), q); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 2 || !calls[0].err || calls[0].rcode != -1 || calls[1].err || calls[1].server != "udp://"+good || calls[1].rcode != dns.RcodeSuccess {
+		t.Fatalf("calls = %+v", calls)
+	}
+}
+
+type instant struct{ resp *dns.Msg }
+
+func (i instant) Exchange(context.Context, *dns.Msg) (*dns.Msg, error) { return i.resp, nil }
+func (instant) String() string                                         { return "udp://192.0.2.1:53" }
+
+// BenchmarkGroupExchange measures the group's own overhead per exchange,
+// with and without an observer, against an upstream that answers at once.
+func BenchmarkGroupExchange(b *testing.B) {
+	q := new(dns.Msg)
+	q.SetQuestion("example.com.", dns.TypeA)
+	resp := new(dns.Msg)
+	resp.SetReply(q)
+	for _, obs := range []bool{false, true} {
+		name := "plain"
+		if obs {
+			name = "observed"
+		}
+		b.Run(name, func(b *testing.B) {
+			g := &Group{members: []*member{{ex: instant{resp}}}}
+			if obs {
+				ch := make(chan time.Duration, 1024)
+				g.SetObserver(func(_ string, _ time.Time, d time.Duration, _ int, _ error) {
+					select {
+					case ch <- d:
+					default:
+					}
+				})
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				g.Exchange(context.Background(), q)
+			}
+		})
+	}
+}

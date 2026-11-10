@@ -15,6 +15,7 @@ const (
 	KindTop     = "top"     // top domains, blocked domains or devices
 	KindSearch  = "search"  // individual queries, newest first
 	KindDomain  = "domain"  // one domain: totals, series, devices, caught by
+	KindPerf    = "perf"    // response times, upstream health
 )
 
 // Top list kinds.
@@ -22,6 +23,7 @@ const (
 	TopDomains = "domains"
 	TopBlocked = "blocked"
 	TopClients = "clients"
+	TopLists   = "lists" // the lists (or custom rules) behind blocks
 )
 
 // Query asks one node about its history. It is sent as JSON to peers, so
@@ -49,6 +51,11 @@ type Query struct {
 	// Flags adds (to top lists) every domain whose answers were flagged
 	// in the period.
 	Flags bool `json:"flags,omitempty"`
+	// Baseline (perf) also returns hourly response times for this many
+	// seconds before From, to judge what is usual.
+	Baseline int64 `json:"baseline,omitempty"`
+	// Devices (perf) adds each device's response times.
+	Devices bool `json:"devices,omitempty"`
 }
 
 // Counts are query totals.
@@ -149,6 +156,9 @@ type Result struct {
 	List    string   `json:"list,omitempty"`
 	First   int64    `json:"first,omitempty"` // unix seconds
 	Last    int64    `json:"last,omitempty"`
+
+	// Perf only.
+	Perf *Perf `json:"perf,omitempty"`
 }
 
 // Validate fills defaults and checks a query.
@@ -174,9 +184,13 @@ func (q *Query) Validate() error {
 	}
 	switch q.Kind {
 	case KindSummary, KindSearch:
+	case KindPerf:
+		if q.Baseline < 0 || q.Baseline > 30*86400 {
+			return fmt.Errorf("%w: baseline must be at most 30 days", ErrBadQuery)
+		}
 	case KindTop:
-		if q.By != TopDomains && q.By != TopBlocked && q.By != TopClients {
-			return fmt.Errorf("%w: by must be domains, blocked or clients", ErrBadQuery)
+		if q.By != TopDomains && q.By != TopBlocked && q.By != TopClients && q.By != TopLists {
+			return fmt.Errorf("%w: by must be domains, blocked, clients or lists", ErrBadQuery)
 		}
 	case KindDomain:
 		if q.Name == "" {
@@ -248,6 +262,8 @@ func (s *Store) Run(ctx context.Context, q Query) (*Result, error) {
 		err = s.search(ctx, &q, res)
 	case KindDomain:
 		err = s.domain(ctx, &q, res)
+	case KindPerf:
+		err = s.perf(ctx, &q, res)
 	}
 	if err != nil {
 		return nil, err
@@ -303,6 +319,9 @@ func (s *Store) summary(ctx context.Context, q *Query, res *Result) error {
 }
 
 func (s *Store) top(ctx context.Context, q *Query, res *Result) error {
+	if q.By == TopLists {
+		return s.topLists(ctx, q, res)
+	}
 	src, args, ok := s.source(q)
 	if !ok {
 		return nil
@@ -518,9 +537,13 @@ func Merge(q Query, parts []*Result) *Result {
 	clients := map[string]bool{}
 	rows := map[string]*Row{}
 	flags := map[string]Flag{}
+	var perfs []*Perf
 	for _, p := range parts {
 		if p == nil {
 			continue
+		}
+		if p.Perf != nil {
+			perfs = append(perfs, p.Perf)
 		}
 		out.Detail = out.Detail || p.Detail
 		out.Stats = out.Stats || p.Stats
@@ -572,6 +595,9 @@ func Merge(q Query, parts []*Result) *Result {
 		}
 		out.Last = max(out.Last, p.Last)
 	}
+	if q.Kind == KindPerf {
+		out.Perf = mergePerf(q, perfs)
+	}
 	for _, pt := range series {
 		out.Series = append(out.Series, *pt)
 	}
@@ -612,4 +638,42 @@ func Merge(q Query, parts []*Result) *Result {
 		out.Entries = out.Entries[:q.Limit]
 	}
 	return out
+}
+
+// topLists counts blocks per list. Each block counts for the list whose
+// rule matched it. Individual queries say exactly which list that was;
+// beyond them, the hourly totals are matched with the list that last
+// blocked each domain.
+func (s *Store) topLists(ctx context.Context, q *Query, res *Result) error {
+	days, statsDays := s.Retention()
+	var query string
+	var args []any
+	clients := func(col string) string {
+		if len(q.Clients) == 0 {
+			return ""
+		}
+		for _, c := range q.Clients {
+			args = append(args, c)
+		}
+		return " AND " + col + " IN (" + placeholders(len(q.Clients)) + ")"
+	}
+	kept := s.now().AddDate(0, 0, -days)
+	switch {
+	case days > 0 && (!q.From.Before(kept) || statsDays == 0):
+		args = []any{q.From.UnixMicro(), q.To.UnixMicro(), codeBlocked}
+		query = `SELECT COALESCE(list, ''), COUNT(*) FROM queries WHERE t >= ? AND t < ? AND result = ?` + clients("client")
+	case statsDays > 0:
+		args = []any{q.From.Unix() / 3600, (q.To.Unix() + 3599) / 3600, codeBlocked}
+		query = `SELECT COALESCE(c.list, ''), SUM(h.n) FROM hourly h LEFT JOIN caught c ON c.name = h.name
+			WHERE h.hour >= ? AND h.hour < ? AND h.result = ?` + clients("h.client")
+	default:
+		return nil
+	}
+	return collect(ctx, s.db, query+` GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT ?`, append(args, q.Limit), func(r *sql.Rows) error {
+		var row Row
+		err := r.Scan(&row.Key, &row.Total)
+		row.Blocked = row.Total
+		res.Rows = append(res.Rows, row)
+		return err
+	})
 }

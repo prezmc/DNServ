@@ -42,6 +42,21 @@ func New(raw string, boot *Bootstrap, timeout time.Duration) (Exchanger, error) 
 type Group struct {
 	members []*member
 	log     *slog.Logger
+	obs     atomic.Pointer[Observer]
+}
+
+// Observer is told about every exchange with an upstream server: which
+// one, when it started, how long it took, the answer's rcode and the
+// error, if any. It runs on the exchange's goroutine, so it must not block.
+type Observer func(server string, start time.Time, d time.Duration, rcode int, err error)
+
+// SetObserver sets (or with nil, clears) the group's observer.
+func (g *Group) SetObserver(o Observer) {
+	if o == nil {
+		g.obs.Store(nil)
+		return
+	}
+	g.obs.Store(&o)
 }
 
 type member struct {
@@ -83,14 +98,22 @@ func (g *Group) Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, error) {
 		}
 		start := time.Now()
 		resp, err := m.ex.Exchange(ctx, q)
+		took := time.Since(start)
 		m.queries.Add(1)
+		if o := g.obs.Load(); o != nil {
+			rcode := -1
+			if resp != nil {
+				rcode = resp.Rcode
+			}
+			(*o)(m.ex.String(), start, took, rcode, err)
+		}
 		if err != nil {
 			m.failures.Add(1)
 			m.observe(failurePenalty)
 			errs = append(errs, fmt.Errorf("%s: %w", m.ex, err))
 			continue
 		}
-		m.observe(int64(time.Since(start) / time.Microsecond))
+		m.observe(int64(took / time.Microsecond))
 		return resp, nil
 	}
 	if ctx.Err() != nil {
