@@ -190,6 +190,8 @@ func run() error {
 		}
 	}
 	srv.SetPolicy(policy.Build(st.State()))
+	selfID := cl.ID() // fixed for the life of the node
+	setPause(srv, st.State(), selfID)
 	if loc, err := cfg.Location(); err == nil {
 		srv.SetTimeZone(loc)
 	}
@@ -340,6 +342,9 @@ func run() error {
 		// Groups are cheap to compile, so apply them right here.
 		if !reflect.DeepEqual(old.Groups, new.Groups) || !reflect.DeepEqual(old.Devices, new.Devices) {
 			srv.SetPolicy(policy.Build(new))
+		}
+		if !reflect.DeepEqual(old.Pauses, new.Pauses) || old.Cluster.ID != new.Cluster.ID {
+			setPause(srv, new, selfID)
 		}
 		if hist != nil && (!reflect.DeepEqual(old.Settings.HistoryDays, new.Settings.HistoryDays) || !reflect.DeepEqual(old.Settings.StatsDays, new.Settings.StatsDays)) {
 			h := new.Settings.Overlay(base).History
@@ -853,4 +858,11 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// setPause passes the pause on filtering in force on this node (its own,
+// or the one for every node) to the DNS server.
+func setPause(srv *server.Server, st *store.State, self string) {
+	p, ok := st.PauseFor(self, time.Now())
+	srv.SetPause(ok, p.Until)
 }

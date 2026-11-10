@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/netip"
@@ -57,6 +58,9 @@ type Server struct {
 	// policy holds device groups (nil: everyone gets the shared filter).
 	policy atomic.Pointer[policy.Set]
 	loc    atomic.Pointer[time.Location] // for schedules; nil = time.Local
+	// pauseUntil is when a cluster-wide pause on filtering ends, in Unix
+	// nanoseconds: 0 is not paused, math.MaxInt64 is until turned back on.
+	pauseUntil atomic.Int64
 
 	mu       sync.Mutex
 	servers  []*dns.Server
@@ -287,6 +291,13 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 		return m, OutLocal, filter.Match{}
 	}
 
+	// Paused: answer everything as if there were no filtering. One atomic
+	// load when not paused; the clock is read only while a pause is set.
+	if s.Paused() {
+		m, out := s.answer(req, name)
+		return m, out, filter.Match{}
+	}
+
 	// Firefox's canary domain: NXDOMAIN tells it not to switch on its own
 	// DNS over HTTPS and bypass this server's filtering.
 	if s.live.Load().filtering.Enabled && (name == "use-application-dns.net" || strings.HasSuffix(name, ".use-application-dns.net")) {
@@ -319,6 +330,13 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 		}
 	}
 
+	m, out := s.answer(req, name)
+	return m, out, match
+}
+
+// answer gets the real answer for name, from the cache or upstream.
+func (s *Server) answer(req *dns.Msg, name string) (*dns.Msg, Outcome) {
+	q := req.Question[0]
 	key := ""
 	if s.cache != nil {
 		key = cache.Key(req)
@@ -329,21 +347,21 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 			res.Msg.Id = req.Id
 			res.Msg.Question = req.Question
 			if res.State == cache.Stale {
-				return res.Msg, OutStale, match
+				return res.Msg, OutStale
 			}
-			return res.Msg, OutCached, match
+			return res.Msg, OutCached
 		}
 	}
 
 	resp, err := s.fetch(key, req)
 	if err != nil {
 		s.log.Debug("upstream failed", "name", name, "type", dns.TypeToString[q.Qtype], "err", err)
-		return rcodeMsg(req, dns.RcodeServerFailure), OutError, match
+		return rcodeMsg(req, dns.RcodeServerFailure), OutError
 	}
 	out := resp.Copy()
 	out.Id = req.Id
 	out.Question = req.Question
-	return out, OutUpstream, match
+	return out, OutUpstream
 }
 
 // fetch asks upstream, collapsing identical concurrent queries into one.
@@ -562,6 +580,25 @@ func (s *Server) localAnswer(req *dns.Msg, name string) (*dns.Msg, bool) {
 
 // SetPolicy replaces the device groups.
 func (s *Server) SetPolicy(p *policy.Set) { s.policy.Store(p) }
+
+// SetPause sets when a pause on filtering ends: the zero time pauses
+// until turned back on, and paused false lifts the pause.
+func (s *Server) SetPause(paused bool, until time.Time) {
+	switch {
+	case !paused:
+		s.pauseUntil.Store(0)
+	case until.IsZero():
+		s.pauseUntil.Store(math.MaxInt64)
+	default:
+		s.pauseUntil.Store(until.UnixNano())
+	}
+}
+
+// Paused reports whether filtering is paused right now.
+func (s *Server) Paused() bool {
+	u := s.pauseUntil.Load()
+	return u != 0 && (u == math.MaxInt64 || time.Now().UnixNano() < u)
+}
 
 // SetTimeZone sets the time zone schedules run in.
 func (s *Server) SetTimeZone(l *time.Location) { s.loc.Store(l) }

@@ -334,3 +334,30 @@ func isBlocked(r *dns.Msg) bool {
 	}
 	return false
 }
+
+func TestPauseFiltering(t *testing.T) {
+	up := &fakeResolver{}
+	s, addr := newTestServer(t, nil, up)
+	if r := query(t, addr, "tracker.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatal("want blocked before the pause")
+	}
+	s.SetPause(true, time.Time{})
+	if r := query(t, addr, "tracker.ads.example", dns.TypeA, "udp"); isBlocked(r) || up.calls.Load() != 1 {
+		t.Fatalf("paused: want a real answer, got %v", r)
+	}
+	if r := query(t, addr, "use-application-dns.net", dns.TypeA, "udp"); r.Rcode == dns.RcodeNameError {
+		t.Fatal("paused: Firefox canary still blocked")
+	}
+	s.SetPause(true, time.Now().Add(-time.Second)) // already over
+	if r := query(t, addr, "tracker.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatal("expired pause still lets blocked names through")
+	}
+	s.SetPause(true, time.Now().Add(time.Minute))
+	if r := query(t, addr, "x.ads.example", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatal("timed pause not applied")
+	}
+	s.SetPause(false, time.Time{})
+	if r := query(t, addr, "x.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatal("want blocked after resume")
+	}
+}

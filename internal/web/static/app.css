@@ -158,6 +158,7 @@ table.servers th.num { text-align: right; }
 .dash { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: .75rem; align-items: start; }
 .dash > div:not(.card), .dash .cols { display: contents; }
 .dash > *, .dash > div > *, .dash .cols > * { grid-column: 1 / -1; margin: 0; }
+.dash .d-pause { order: -1; }
 .dash .d-note { order: 0; margin-top: -.4rem; }
 .dash .d-tiles { order: 1; }
 .dash .d-wait { order: 2; }
@@ -359,3 +360,22 @@ main .card { scroll-margin-top: 3.5rem; }
 @media (max-width: 760px) { nav.jump { position: static; flex-wrap: nowrap; overflow-x: auto; } nav.jump button { flex: none; } }
 td a { text-decoration: none; }
 td a:hover { text-decoration: underline; }
+
+/* Pause filtering */
+.pause-ico { display: inline-block; width: .7em; height: .8em; margin-right: .4rem; vertical-align: -.05em;
+  background: linear-gradient(90deg, currentColor 0 35%, transparent 35% 65%, currentColor 65%); }
+.pause-ico.big { width: 1.1rem; height: 1.25rem; margin: 0; color: var(--s-blocked); flex: none; }
+.pause-btn { color: var(--text); font-weight: 600; }
+.pause-btn .pause-ico { color: var(--s-blocked); }
+.card.d-pause { border-color: color-mix(in srgb, var(--s-blocked) 55%, var(--line));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--s-blocked) 10%, var(--panel)), var(--panel) 70%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--s-blocked) 12%, transparent); padding: .7rem 1rem; }
+.pause-row { display: flex; align-items: center; gap: .85rem; flex-wrap: wrap; }
+.pause-row + .pause-row { border-top: 1px solid var(--line); margin-top: .6rem; padding-top: .6rem; }
+.pause-row .grow { flex: 1 1 14rem; min-width: 0; }
+.pause-row .count { font-variant-numeric: tabular-nums; color: var(--text); }
+.pause-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: .45rem; margin: .3rem 0 .4rem; }
+.pause-opts button { padding: .55rem .5rem; font-weight: 600; }
+.pause-opts button.wide { grid-column: 1 / -1; }
+.seg.wrap { flex-wrap: wrap; }
+.b { font-weight: 600; }

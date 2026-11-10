@@ -183,6 +183,7 @@ func (a *API) Handler() http.Handler {
 	a.importRoutes(m)
 
 	// Status and audit.
+	a.pauseRoutes(m)
 	m.HandleFunc("GET /api/v1/status", a.authed(store.PermDashboard, a.status))
 	m.HandleFunc("GET /api/v1/audit", a.authed(store.PermAudit, a.audit))
 
@@ -206,7 +207,7 @@ func (p *Principal) Can(perm string) bool {
 		return false
 	}
 	if p.Token != nil {
-		return slices.Contains(p.Token.Perms, perm)
+		return store.HasPerm(p.Token.Perms, perm)
 	}
 	return true
 }
