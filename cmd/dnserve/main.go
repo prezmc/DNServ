@@ -262,6 +262,30 @@ func run() error {
 	adm.AlsoOn = engine.AlsoOn
 	adm.VirusTotal = virustotal.New(func() string { return st.State().VirusTotalKey })
 	adm.LookupName = srv.LookupName
+	clearLocal := func() int {
+		if c == nil {
+			return 0
+		}
+		n := c.Len()
+		c.Flush()
+		return n
+	}
+	cl.Handle(peerCacheClear, func(context.Context, json.RawMessage) (any, error) { return clearLocal(), nil })
+	adm.ClearCache = func(ctx context.Context) []api.CacheCleared {
+		out := []api.CacheCleared{{Server: cl.Name(), Entries: clearLocal()}}
+		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		for _, r := range cl.AskPeers(pctx, peerCacheClear, nil) {
+			res := api.CacheCleared{Server: r.Name}
+			if r.Err != nil {
+				res.Error = r.Err.Error()
+			} else {
+				json.Unmarshal(r.Body, &res.Entries)
+			}
+			out = append(out, res)
+		}
+		return out
+	}
 	var updating atomic.Bool
 	cl.Handle(peerListsUpdate, func(context.Context, json.RawMessage) (any, error) {
 		adm.UpdateLists()
@@ -882,6 +906,7 @@ const (
 	peerListVersions = "lists.versions" // the leader's list versions, by URL
 	peerListsChanged = "lists.changed"  // the leader has new list contents
 	peerListsUpdate  = "lists.update"   // download lists now (sent to the leader)
+	peerCacheClear   = "cache.clear"    // empty the answer cache
 )
 
 // syncLists makes every node in a cluster filter with exactly the same

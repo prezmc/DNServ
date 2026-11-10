@@ -751,3 +751,20 @@ func (a *API) updateLists(w http.ResponseWriter, r *http.Request, p *Principal) 
 	a.UpdateLists()
 	w.WriteHeader(http.StatusAccepted)
 }
+
+// CacheCleared is one server's answer to "clear the cache".
+type CacheCleared struct {
+	Server  string `json:"server"`
+	Entries int    `json:"entries"`
+	Error   string `json:"error,omitempty"`
+}
+
+func (a *API) clearCache(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if a.ClearCache == nil {
+		writeErr(w, http.StatusServiceUnavailable, "the cache can't be cleared on this node")
+		return
+	}
+	out := a.ClearCache(r.Context())
+	a.Log.Info("answer cache cleared", "by", p.Actor(), "servers", len(out))
+	writeJSON(w, http.StatusOK, map[string]any{"servers": out})
+}

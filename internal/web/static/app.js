@@ -777,7 +777,7 @@ async function dashboard(main) {
             return h('tr', {}, h('td', { title: u.server }, upName(u.server)), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'),
               h('td', {}, fmtNum(hu ? hu.tries : u.queries)), h('td', {}, fmtNum(hu ? hu.failed : u.failures)));
           })))) : null),
-      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card d-lists' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), updateListsButton()), h('div', { class: 'scroll' }, h('table', {},
+      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card d-lists' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), h('div', { class: 'row' }, clearCacheButton(), updateListsButton())), h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
@@ -913,6 +913,23 @@ function updateListsButton() {
     } catch (e) { toast(e.message, 'err'); }
     setTimeout(() => { b.disabled = false; }, 10000);
   } }, 'Update lists now');
+  return b;
+}
+
+// clearCacheButton empties the answer cache on every server, so the next
+// question for each name goes upstream again.
+function clearCacheButton() {
+  if (!can('lists.manage')) return null;
+  const b = h('button', { type: 'button', class: 'small', onclick: async () => {
+    b.disabled = true;
+    try {
+      const r = await api('POST', '/cache/clear');
+      const ok = r.servers.filter(x => !x.error), bad = r.servers.filter(x => x.error);
+      toast('Cache cleared: ' + ok.map(x => x.server + ' (' + x.entries.toLocaleString() + ' answers)').join(', ') +
+        (bad.length ? '. Couldn\'t reach ' + bad.map(x => x.server).join(', ') + '.' : '.'), bad.length ? 'err' : undefined);
+    } catch (e) { toast(e.message, 'err'); }
+    setTimeout(() => { b.disabled = false; }, 3000);
+  } }, 'Clear cache');
   return b;
 }
 
