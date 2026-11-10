@@ -27,6 +27,7 @@ const PeerAnalytics = "analytics"
 func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/analytics/summary", a.authed(store.PermDashboard, a.analyticsSummary))
 	m.HandleFunc("GET /api/v1/analytics/top", a.authed(store.PermDashboard, a.analyticsTop))
+	m.HandleFunc("GET /api/v1/analytics/performance", a.authed(store.PermDashboard, a.analyticsPerformance))
 	m.HandleFunc("GET /api/v1/analytics/domain", a.authed(store.PermDashboard, a.analyticsDomain))
 	m.HandleFunc("GET /api/v1/analytics/queries", a.authed(store.PermQueryLog, a.analyticsQueries))
 	m.HandleFunc("GET /api/v1/analytics/export", a.authed(store.PermExport, a.analyticsExport))
@@ -380,6 +381,10 @@ func (a *API) analyticsTop(w http.ResponseWriter, r *http.Request, p *Principal)
 			out = append(out, &topRow{Row: row, Label: l.names[row.Key], Addrs: []string{row.Key}})
 		}
 		slices.SortStableFunc(out, func(x, y *topRow) int { return int(y.Total - x.Total) })
+	} else if q.By == analytics.TopLists {
+		for _, row := range res.Rows {
+			out = append(out, &topRow{Row: row})
+		}
 	} else {
 		for _, row := range res.Rows {
 			s := a.statusOf(row.Key)

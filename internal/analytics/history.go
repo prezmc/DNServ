@@ -62,10 +62,11 @@ func resultName(c int) string {
 }
 
 const (
-	queueSize  = 1 << 15 // queries waiting to be written
-	batchMax   = 4096
-	flushEvery = time.Second
-	pruneEvery = time.Hour
+	queueSize   = 1 << 15 // queries waiting to be written
+	upQueueSize = 1 << 12 // upstream exchanges waiting to be counted
+	batchMax    = 4096
+	flushEvery  = time.Second
+	pruneEvery  = time.Hour
 )
 
 const schema = `
@@ -120,9 +121,12 @@ type Store struct {
 	log  *slog.Logger
 	node func() string // this node's name, put on search results
 
-	in      chan querylog.Entry
-	dropped atomic.Uint64
-	written atomic.Uint64
+	in   chan querylog.Entry
+	upIn chan upSample
+	// upPending holds upstream totals not yet written (writer only).
+	upPending map[upKey]*upAgg
+	dropped   atomic.Uint64
+	written   atomic.Uint64
 
 	days, statsDays atomic.Int64
 
@@ -133,6 +137,7 @@ type Store struct {
 	stop      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
+	bg        sync.WaitGroup // background jobs (backfill)
 }
 
 // Open opens (or creates) the history database at path and starts the
@@ -151,18 +156,32 @@ func Open(path string, node func() string, days, statsDays int, log *slog.Logger
 		db.Close()
 		return nil, fmt.Errorf("history: %w", err)
 	}
+	if _, err := db.Exec(perfSchema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("history: %w", err)
+	}
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("history: %w", err)
 	}
 	s := &Store{
 		db: db, log: log, node: node, in: make(chan querylog.Entry, queueSize),
+		upIn: make(chan upSample, upQueueSize), upPending: map[upKey]*upAgg{},
 		now: time.Now, stop: make(chan struct{}), done: make(chan struct{}),
 		pruneCh: make(chan struct{}, 1), flushReq: make(chan chan struct{}),
 	}
 	s.days.Store(int64(days))
 	s.statsDays.Store(int64(statsDays))
+	cutoff, err := s.backfillCutoff()
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("history: %w", err)
+	}
 	go s.run()
+	if cutoff > 0 {
+		s.bg.Add(1)
+		go s.backfill(cutoff)
+	}
 	return s, nil
 }
 
@@ -219,6 +238,7 @@ func (s *Store) Stats() Stats {
 func (s *Store) Close() error {
 	s.closeOnce.Do(func() { close(s.stop) })
 	<-s.done
+	s.bg.Wait()
 	return s.db.Close()
 }
 
@@ -237,6 +257,9 @@ func (s *Store) run() {
 	defer prune.Stop()
 	batch := make([]querylog.Entry, 0, batchMax)
 	flush := func() {
+		if err := s.writeUpstream(); err != nil {
+			s.log.Warn("upstream timing write failed", "err", err)
+		}
 		if len(batch) == 0 {
 			return
 		}
@@ -258,6 +281,8 @@ func (s *Store) run() {
 			if len(batch) >= batchMax {
 				flush()
 			}
+		case u := <-s.upIn:
+			s.addUp(u)
 		case <-tick.C:
 			flush()
 		case ch := <-s.flushReq:
@@ -265,6 +290,8 @@ func (s *Store) run() {
 				select {
 				case e := <-s.in:
 					batch = append(batch, e)
+				case u := <-s.upIn:
+					s.addUp(u)
 				default:
 					drained = true
 				}
@@ -283,6 +310,8 @@ func (s *Store) run() {
 				select {
 				case e := <-s.in:
 					batch = append(batch, e)
+				case u := <-s.upIn:
+					s.addUp(u)
 				default:
 					drained = true
 				}
@@ -345,6 +374,28 @@ func (s *Store) write(batch []querylog.Entry) error {
 			if err != nil {
 				return err
 			}
+		}
+	}
+	if days > 0 || statsDays > 0 {
+		perf := map[perfKey]*perfAgg{}
+		for _, e := range batch {
+			code, _ := resultCode(e.Result)
+			k := perfKey{e.Time.Unix() / slotSecs, code, e.Type}
+			a := perf[k]
+			if a == nil {
+				a = &perfAgg{}
+				perf[k] = a
+			}
+			a.add(e.Duration)
+			switch e.Rcode {
+			case "SERVFAIL":
+				a.servfail++
+			case "NXDOMAIN":
+				a.nxdomain++
+			}
+		}
+		if err := writePerf(tx, perf); err != nil {
+			return err
 		}
 	}
 	if statsDays > 0 {
@@ -560,6 +611,16 @@ func (s *Store) prune() {
 	if res, err := s.db.Exec(`DELETE FROM hourly WHERE hour < ?`, hcut); err == nil {
 		n, _ := res.RowsAffected()
 		removed += n
+	}
+	pcut := now.AddDate(0, 0, -s.perfDays()).Unix() / slotSecs
+	if s.perfDays() == 0 {
+		pcut = now.Unix()/slotSecs + 1
+	}
+	for _, t := range []string{"perf", "upstream_perf"} {
+		if res, err := s.db.Exec(`DELETE FROM `+t+` WHERE slot < ?`, pcut); err == nil {
+			n, _ := res.RowsAffected()
+			removed += n
+		}
 	}
 	s.db.Exec(`DELETE FROM caught WHERE t < ?`, hcut*3600*1_000_000)
 	s.db.Exec(`DELETE FROM flagged WHERE t < ?`, hcut*3600*1_000_000)
