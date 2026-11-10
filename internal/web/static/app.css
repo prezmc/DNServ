@@ -359,3 +359,6 @@ main .card { scroll-margin-top: 3.5rem; }
 @media (max-width: 760px) { nav.jump { position: static; flex-wrap: nowrap; overflow-x: auto; } nav.jump button { flex: none; } }
 td a { text-decoration: none; }
 td a:hover { text-decoration: underline; }
+.chart .panel-title { fill: var(--text); font-weight: 600; }
+.chart .grid-line.base { stroke: var(--muted); stroke-opacity: .5; }
+.story { margin: 0 0 .5rem; }
