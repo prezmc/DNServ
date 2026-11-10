@@ -1725,7 +1725,7 @@ async function clusterPage(main) {
 
   const recoverCard = !c.healthy && !c.left_out && others.length ? h('div', { class: 'card' }, h('h2', {}, 'Recover with this node only'),
     h('p', {}, 'If ', others.map(n => n.name).join(' and '), ' is gone for good (broken, wiped or replaced), make this node the whole cluster. It keeps its accounts and settings and starts taking changes again.'),
-    h('p', { class: 'muted small' }, 'DNServe checks first that no other node answers, so two clusters never run at once. The nodes left out are locked out; to use one again, wipe it and join it with a new code.'),
+    h('p', { class: 'muted small' }, 'DNServe checks first that no other node answers. It can\u2019t tell a server that is switched off from a broken link between the servers, so if the other one might still be running, fix the link instead: recovering both sides would leave two separate DNServes. The nodes left out are locked out; to use one again, join it with a new code.'),
     form({}, [
       h('label', { for: 'rpw' }, 'Your password'),
       h('input', { id: 'rpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),

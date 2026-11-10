@@ -91,6 +91,10 @@ type Cluster struct {
 	lastAddrSync time.Time
 	wasLeader    string
 
+	// initMu makes cluster.init the first change a new cluster takes:
+	// a change applied before it would be overwritten by it.
+	initMu sync.Mutex
+
 	kick   chan struct{}
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -508,6 +512,11 @@ func (c *Cluster) Propose(cmd store.Command) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cmd.Op != store.OpClusterInit && c.st.State().Cluster.ID == "" {
+		// A brand-new cluster: set it up first, or cluster.init (which
+		// starts from a copy of the state) would undo this change.
+		c.ensureInit()
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		r := c.raft()
@@ -636,7 +645,13 @@ func (c *Cluster) tick() {
 // ensureInit puts the cluster's CA and this node into the replicated
 // state the first time it leads. A node from before clustering brings its
 // state along, so nodes that join later receive it through the log.
+//
+// It runs from the leader's run loop and before any change on a cluster
+// that isn't set up yet; initMu keeps the copy of the state it takes from
+// missing a change applied at the same time.
 func (c *Cluster) ensureInit() {
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
 	st := c.st.State()
 	c.mu.Lock()
 	id := c.id

@@ -5,11 +5,11 @@ A self-hosted DNS server with filtering, built for homes and small businesses
 on separate servers that keep rules and settings in sync, so DNS keeps working
 when a server goes down.
 
-**Status: early development (step 1b of the roadmap).** A single node works:
-encrypted forwarding or recursive resolution, an optional VPN tunnel,
-encrypted DNS for your devices, caching and blocklists. Clustering, the
-dashboard, users with MFA and analytics are on the way. See
-[Roadmap](#roadmap).
+**Status: early development (step 4 of the roadmap).** Single nodes and
+clusters work: encrypted forwarding or recursive resolution, an optional VPN
+tunnel, encrypted DNS for your devices, caching and blocklists, the
+dashboard with users and MFA, clustering with failover, backups and
+analytics. See [Roadmap](#roadmap).
 
 **No config files needed.** Pull the image and start it. Defaults work out
 of the box, common options can be set with environment variables, and the
@@ -184,6 +184,11 @@ Notes:
 
 ## Two or more nodes
 
+**[Running DNServe on two servers](docs/deploy-two-servers.md)** is the full
+guide: ports and firewall, the router, upgrades, what happens when a server
+or the link between them fails, and what to do when a server is lost for
+good.
+
 Run the same image on a second server (same command or compose file, port
 8081 published and open between the servers). Then:
 
@@ -219,10 +224,13 @@ Leadership controls, under **Cluster**:
   its own even while this one is down.
 - **Recover with this node only**, for when the other node is gone for good:
   the survivor becomes a cluster of one and keeps its settings. It refuses
-  while any other node still answers, and asks again if the nodes left out
-  could still have a majority between them, so two clusters never run at
-  once. Nodes left out are locked out (their certificates are no longer
-  accepted) until they join again with a new code.
+  while any other node still answers, and refuses on a node the others
+  have already recovered without. It asks again if the nodes left out could
+  still have a majority between them, or if a full node left out might only
+  be cut off (a node can't tell a switched-off server from a broken link,
+  and recovering both sides would leave two separate clusters). Nodes left
+  out are locked out (their certificates are no longer accepted) until
+  they join again with a new code; their Cluster page says so.
 - **Join another DNServe instead** moves a node that is set up already into
   another cluster, replacing its accounts and settings.
 
@@ -449,6 +457,7 @@ upstream.
 ```bash
 go test -race ./...
 go test -run '^$' -bench . ./internal/...
+go test -tags failover -v -timeout 30m ./test/failover/   # needs Docker
 go run ./cmd/dnserve -config dnserve.example.yaml
 ```
 
@@ -480,7 +489,14 @@ pushes `prezmcmahon/dnserve` to Docker Hub.
    top lists, "caught by", search and export, and the AdGuard Insight
    features: threat-feed risk scores, domain types and owners, answer
    IP and CNAME checks, "also on" lists and VirusTotal lookups (this).
-4. **Multi-server deploy and failover testing.**
+4. **Multi-server deploy and failover testing.** A failover test suite
+   that runs real containers (two nodes and a witness on separate
+   networks) in CI and breaks them on purpose while a client queries
+   nonstop: leader and follower loss, witness loss, loss of quorum, a
+   broken link between servers, everything restarting at once, rolling
+   upgrades, recovery after a lost server, and both sides of a split
+   trying to recover. Plus the [two-server guide](docs/deploy-two-servers.md)
+   (this).
 
 ## License
 

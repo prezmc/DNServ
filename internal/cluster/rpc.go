@@ -23,6 +23,10 @@ import (
 // errRetry means the leader moved or couldn't be reached; try again.
 var errRetry = errors.New("retry")
 
+// errNotMember means a peer answered but doesn't count this node as a
+// member: the cluster was recovered without it, or it was removed.
+var errNotMember = errors.New("not a member of this cluster")
+
 // Error codes carried over RPC so callers can tell errors apart.
 const (
 	codeNotFound    = "not_found"
@@ -30,6 +34,7 @@ const (
 	codeBadJoin     = "bad_join_code"
 	codeNotLeader   = "not_leader"
 	codeUnavailable = "unavailable"
+	codeNotMember   = "not_member"
 )
 
 func errCode(err error) string {
@@ -56,6 +61,8 @@ func codeErr(code, msg string) error {
 		return store.ErrBadJoinCode
 	case codeUnavailable:
 		return store.ErrUnavailable
+	case codeNotMember:
+		return errNotMember
 	case codeNotLeader:
 		return errRetry
 	}
@@ -217,7 +224,7 @@ func replyErr(w http.ResponseWriter, err error) {
 func (c *Cluster) member(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if id := peerID(r); id == "" || !c.isMember(id) {
-			reply(w, http.StatusForbidden, rpcReply{Error: "not a member of this cluster"})
+			reply(w, http.StatusForbidden, rpcReply{Error: errNotMember.Error(), Code: codeNotMember})
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
