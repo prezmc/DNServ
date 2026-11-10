@@ -1,7 +1,7 @@
 # DNServe node configuration. You don't need this file: a node runs with
 # these defaults out of the box, and the dashboard (step 1c) will manage
 # settings in the data volume. Use it for advanced tuning, or set the
-# common options with DNSERVE_* environment variables (see README).
+# common options with DNSERVE_* environment variables (see docs/install.md).
 # Every key is optional. Unknown keys are rejected so typos are caught.
 
 dns:

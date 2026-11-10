@@ -94,7 +94,7 @@ volumes:
 ```
 
 With host networking, port 53 must be free on the host. On many Linux hosts
-systemd-resolved holds it (see "Port 53 already in use?" in the README).
+systemd-resolved holds it (see "Port 53 already in use?" in [Installing](install.md)).
 
 ## Setting it up with keepalived
 

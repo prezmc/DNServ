@@ -1109,7 +1109,7 @@ async function devices(main) {
   if (!list.length && !groups.length) {
     return page(main, 'Devices', h('div', { class: 'card highlight' }, h('h2', {}, 'No devices yet'), routerHelp()));
   }
-  if (list.length && !list.some(d => d.hostname) && can('network.manage')) {
+  if (list.some(d => !d.name) && !list.some(d => d.hostname) && can('network.manage')) {
     settingsHint = msg('warn', '');
     fill(settingsHint, 'Devices show as numbers because DNServe doesn’t know your router. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), ' to see their names.');
   }

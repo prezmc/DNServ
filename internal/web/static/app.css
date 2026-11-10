@@ -207,7 +207,7 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* forms */
 label { display: block; margin: .55rem 0 .2rem; font-weight: 600; font-size: .86rem; }
 label.inline { display: flex; align-items: center; gap: .5rem; font-weight: 400; margin: .35rem 0; }
-input[type=text], input[type=password], input[type=number], input[type=time], select, textarea {
+input[type=text], input[type=search], input[type=password], input[type=number], input[type=time], select, textarea {
   width: 100%; padding: .42rem .6rem; border: 1px solid var(--line); border-radius: 8px;
   background: var(--bg); color: var(--text); font: inherit; transition: border-color .15s, box-shadow .15s;
 }
