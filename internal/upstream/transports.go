@@ -188,8 +188,20 @@ type dot struct {
 	addr, name string
 	boot       *Bootstrap
 	timeout    time.Duration
-	pool       chan *dns.Conn
+	pool       chan pooledConn
 }
+
+// pooledConn is an idle DoT connection and when it was last used.
+type pooledConn struct {
+	c    *dns.Conn
+	used time.Time
+}
+
+// dotIdle is how long an idle DoT connection is kept for reuse. Servers
+// and home routers drop idle connections, often without telling either
+// end, and a query sent on one of those waits for the whole timeout
+// before it is retried. A new TLS connection costs one round trip or two.
+var dotIdle = 10 * time.Second
 
 func newDoT(u *url.URL, boot *Bootstrap, timeout time.Duration) *dot {
 	host := u.Hostname()
@@ -202,17 +214,24 @@ func newDoT(u *url.URL, boot *Bootstrap, timeout time.Duration) *dot {
 		name:    host,
 		boot:    boot,
 		timeout: timeout,
-		pool:    make(chan *dns.Conn, 8),
+		pool:    make(chan pooledConn, 8),
 	}
 }
 
 func (d *dot) String() string { return "tls://" + d.addr }
 
 func (d *dot) conn(ctx context.Context) (*dns.Conn, error) {
-	select {
-	case c := <-d.pool:
-		return c, nil
-	default:
+	for {
+		select {
+		case p := <-d.pool:
+			if time.Since(p.used) < dotIdle {
+				return p.c, nil
+			}
+			p.c.Close() // idle too long; it may be dead already
+			continue
+		default:
+		}
+		break
 	}
 	raw, err := d.boot.dial(ctx, "tcp", d.addr, d.timeout)
 	if err != nil {
@@ -229,7 +248,7 @@ func (d *dot) conn(ctx context.Context) (*dns.Conn, error) {
 
 func (d *dot) put(c *dns.Conn) {
 	select {
-	case d.pool <- c:
+	case d.pool <- pooledConn{c, time.Now()}:
 	default:
 		c.Close()
 	}
