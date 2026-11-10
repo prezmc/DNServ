@@ -37,6 +37,7 @@ import (
 	"github.com/prezmc/dnserve/internal/store"
 	"github.com/prezmc/dnserve/internal/threat"
 	"github.com/prezmc/dnserve/internal/upstream"
+	"github.com/prezmc/dnserve/internal/virustotal"
 	"github.com/prezmc/dnserve/internal/web"
 )
 
@@ -243,8 +244,13 @@ func run() error {
 	intel.SetTrusted(cfg.Analytics.TrustedDomains)
 	go intel.Run(ctx)
 	adm.Intel = intel
+	if hist != nil {
+		hist.SetChecker(intel.CheckAnswer) // runs on the history writer, not the query path
+	}
 	cl.Handle(api.PeerAnalytics, adm.PeerHandler)
 	adm.CheckDomain = engine.Lookup
+	adm.AlsoOn = engine.AlsoOn
+	adm.VirusTotal = virustotal.New(func() string { return st.State().VirusTotalKey })
 	adm.LookupName = srv.LookupName
 	var updating atomic.Bool
 	adm.UpdateLists = func() {

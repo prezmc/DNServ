@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/miekg/dns"
 )
 
 // Result values.
@@ -35,6 +37,10 @@ type Entry struct {
 	List     string     `json:"list,omitempty"` // where the rule came from
 	Allowed  bool       `json:"allowed,omitempty"`
 	Duration float64    `json:"ms"`
+	// Answer is the answer section as sent, for the long-term history to
+	// read addresses and CNAMEs from off the query path. The records are
+	// shared, never modified.
+	Answer []dns.RR `json:"-"`
 }
 
 // Client summarizes one device's recent activity.

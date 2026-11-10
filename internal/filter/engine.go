@@ -2,8 +2,6 @@ package filter
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -185,8 +183,7 @@ func (e *Engine) open(ctx context.Context, src string, force bool) (io.ReadClose
 		return f, false, fi.ModTime(), nil
 	}
 
-	sum := sha256.Sum256([]byte(src))
-	cachePath := filepath.Join(e.dir, hex.EncodeToString(sum[:8])+".txt")
+	cachePath := e.localCopy(src)
 	if fi, err := os.Stat(cachePath); err == nil && !force && time.Since(fi.ModTime()) < e.cfg.Load().RefreshInterval {
 		f, err := os.Open(cachePath)
 		if err == nil {

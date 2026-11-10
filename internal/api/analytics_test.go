@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"encoding/csv"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -13,10 +15,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/miekg/dns"
+
 	"github.com/prezmc/dnserve/internal/analytics"
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/threat"
+	"github.com/prezmc/dnserve/internal/virustotal"
 )
 
 func TestAnalytics(t *testing.T) {
@@ -165,6 +170,7 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 	dir := t.TempDir()
 	for n, c := range map[string]string{
 		"urlhaus.txt": "127.0.0.1 malware.example\n", "threatfox.txt": "", "phishingarmy.txt": "login-bank.example\n", "hagezi-tif.txt": "",
+		"feodo.txt": "203.0.113.66\n", "drop4.txt": "", "drop6.txt": "",
 		"trackers.json":  `{"categories":{"4":"advertising"},"trackers":{"dc":{"name":"DoubleClick","categoryId":4,"companyId":"google"}},"trackerDomains":{"doubleclick.net":"dc"}}`,
 		"companies.json": `{"companies":{"google":{"name":"Google"}}}`,
 	} {
@@ -174,7 +180,10 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 	in.SetEnabled(true)
 	in.Refresh(context.Background(), false)
 	e.api.Intel = in
+	hs.SetChecker(in.CheckAnswer)
 	admin, _ := e.setupAdmin()
+	c2, _ := dns.NewRR("innocent-looking.example. 60 IN A 203.0.113.66")
+	hs.Record(querylog.Entry{Time: e.now.Add(-time.Minute), Client: netip.MustParseAddr("192.168.1.11"), Name: "innocent-looking.example", Type: "A", Result: querylog.Answered, Answer: []dns.RR{c2}})
 
 	ip := netip.MustParseAddr("192.168.1.10")
 	for i, n := range []string{"malware.example", "malware.example", "login-bank.example", "doubleclick.net", "example.com"} {
@@ -189,8 +198,25 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 		Feeds   bool
 	}
 	admin.want(200, "GET", "/api/v1/analytics/risky?range=24h", nil, &risky)
-	if risky.Domains != 2 || risky.Queries != 3 || !risky.Feeds || risky.Rows[0].Key != "malware.example" || risky.Rows[0].Risk.Level != "high" {
+	if risky.Domains != 3 || risky.Queries != 4 || !risky.Feeds || risky.Rows[0].Key != "malware.example" || risky.Rows[0].Risk.Level != "high" {
 		t.Fatalf("risky = %+v", risky)
+	}
+	var flagged *topRow
+	for i := range risky.Rows {
+		if risky.Rows[i].Key == "innocent-looking.example" {
+			flagged = &risky.Rows[i]
+		}
+	}
+	if flagged == nil || flagged.Risk.Score != 90 || !strings.Contains(strings.Join(flagged.Risk.Reasons, " "), "botnet") {
+		t.Fatalf("answer-flagged domain = %+v", flagged)
+	}
+	var dom struct {
+		Risk    threat.Risk
+		Answers []analytics.Answer
+	}
+	admin.want(200, "GET", "/api/v1/analytics/domain?name=innocent-looking.example", nil, &dom)
+	if dom.Risk.Score != 90 || len(dom.Answers) != 1 || dom.Answers[0].IPs[0] != "203.0.113.66" {
+		t.Fatalf("domain = %+v", dom)
 	}
 	var top struct{ Rows []topRow }
 	admin.want(200, "GET", "/api/v1/analytics/top?by=domains", nil, &top)
@@ -204,7 +230,7 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 	}
 	var q struct{ Risk map[string]threat.Risk }
 	admin.want(200, "GET", "/api/v1/analytics/queries", nil, &q)
-	if len(q.Risk) != 2 || q.Risk["login-bank.example"].Level != "high" {
+	if len(q.Risk) != 3 || q.Risk["login-bank.example"].Level != "high" || q.Risk["innocent-looking.example"].Score != 90 {
 		t.Fatalf("query log risk = %+v", q.Risk)
 	}
 
@@ -219,7 +245,73 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 		Sources []threat.SourceStatus
 	}
 	admin.want(200, "GET", "/api/v1/analytics/intel", nil, &st)
-	if !st.Enabled || len(st.Sources) != 5 {
+	if !st.Enabled || len(st.Sources) != 8 {
 		t.Fatalf("intel = %+v", st)
+	}
+}
+
+func TestAlsoOn(t *testing.T) {
+	e := newEnv(t)
+	admin, _ := e.setupAdmin()
+	var out struct {
+		Name  string
+		Lists []filter.ListHit
+	}
+	admin.want(200, "GET", "/api/v1/analytics/alsoon?name=Ads.Example.com", nil, &out)
+	if out.Name != "ads.example.com" || out.Lists == nil || len(out.Lists) != 0 {
+		t.Fatalf("no lists: %+v", out)
+	}
+	e.api.AlsoOn = func(_ context.Context, name string) []filter.ListHit {
+		return []filter.ListHit{{List: "One", Rule: "||" + name + "^"}, {List: "Two", Rule: "0.0.0.0 " + name}}
+	}
+	admin.want(200, "GET", "/api/v1/analytics/alsoon?name=ads.example.com", nil, &out)
+	if len(out.Lists) != 2 || out.Lists[1].List != "Two" {
+		t.Fatalf("lists = %+v", out)
+	}
+	admin.want(400, "GET", "/api/v1/analytics/alsoon?name=", nil, nil)
+}
+
+func TestVirusTotal(t *testing.T) {
+	e := newEnv(t)
+	vt := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-apikey") != "secret-key-123" {
+			w.WriteHeader(401)
+			return
+		}
+		w.Write([]byte(`{"data":{"attributes":{"last_analysis_stats":{"malicious":3,"harmless":70}}}}`))
+	}))
+	defer vt.Close()
+	c := virustotal.New(func() string { return e.api.Store.State().VirusTotalKey })
+	c.Base = vt.URL
+	e.api.VirusTotal = c
+	admin, _ := e.setupAdmin()
+
+	var st struct{ Configured bool }
+	admin.want(200, "GET", "/api/v1/virustotal", nil, &st)
+	if st.Configured {
+		t.Fatal("configured before a key was set")
+	}
+	admin.want(409, "POST", "/api/v1/analytics/virustotal?name=bad.example", nil, nil)
+	admin.want(400, "PUT", "/api/v1/virustotal", map[string]string{"key": "has space"}, nil)
+	admin.want(200, "PUT", "/api/v1/virustotal", map[string]string{"key": "secret-key-123"}, nil)
+	admin.want(200, "GET", "/api/v1/virustotal", nil, &st)
+	if !st.Configured {
+		t.Fatal("not configured")
+	}
+	var out struct {
+		Report virustotal.Report
+		Cached bool
+	}
+	admin.want(200, "POST", "/api/v1/analytics/virustotal?name=Bad.Example", nil, &out)
+	if !out.Report.Found || out.Report.Malicious != 3 || out.Report.Name != "bad.example" || out.Cached {
+		t.Fatalf("report = %+v", out)
+	}
+	// The key never comes back: not in settings, their history, or the audit log.
+	for _, path := range []string{"/api/v1/settings", "/api/v1/config/versions", "/api/v1/audit"} {
+		var raw json.RawMessage
+		admin.want(200, "GET", path, nil, &raw)
+		if strings.Contains(string(raw), "secret-key-123") || len(raw) == 0 {
+			t.Fatalf("%s shows the key", path)
+		}
 	}
 }

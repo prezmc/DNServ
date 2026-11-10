@@ -18,6 +18,7 @@ import (
 	"github.com/prezmc/dnserve/internal/filter"
 	"github.com/prezmc/dnserve/internal/store"
 	"github.com/prezmc/dnserve/internal/threat"
+	"github.com/prezmc/dnserve/internal/virustotal"
 )
 
 // PeerAnalytics is the cluster RPC name for analytics queries.
@@ -29,6 +30,10 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/analytics/domain", a.authed(store.PermDashboard, a.analyticsDomain))
 	m.HandleFunc("GET /api/v1/analytics/queries", a.authed(store.PermQueryLog, a.analyticsQueries))
 	m.HandleFunc("GET /api/v1/analytics/export", a.authed(store.PermExport, a.analyticsExport))
+	m.HandleFunc("GET /api/v1/analytics/alsoon", a.authed(store.PermDashboard, a.analyticsAlsoOn))
+	m.HandleFunc("POST /api/v1/analytics/virustotal", a.authed(store.PermDashboard, a.virusTotalLookup))
+	m.HandleFunc("GET /api/v1/virustotal", a.authed(store.PermDashboard, a.virusTotalStatus))
+	m.HandleFunc("PUT /api/v1/virustotal", a.authed(store.PermLists, a.virusTotalSetKey))
 	m.HandleFunc("GET /api/v1/analytics/risky", a.authed(store.PermDashboard, a.analyticsRisky))
 	m.HandleFunc("GET /api/v1/analytics/intel", a.authed(store.PermDashboard, a.intelStatus))
 }
@@ -312,6 +317,19 @@ type topRow struct {
 	Type     *threat.Type  `json:"type,omitempty"`   // domains: when known
 }
 
+// withFlag raises a name's risk to what its answers showed.
+func withFlag(r threat.Risk, f *analytics.Flag) threat.Risk {
+	if f == nil {
+		return r
+	}
+	r.Reasons = append(r.Reasons, f.Reason)
+	if f.Score > r.Score {
+		r.Score = f.Score
+		r.Level = threat.Level(r.Score)
+	}
+	return r
+}
+
 // describe adds risk and type to a domain row.
 func (a *API) describe(t *topRow) {
 	if a.Intel == nil {
@@ -394,8 +412,13 @@ func (a *API) analyticsDomain(w http.ResponseWriter, r *http.Request, p *Princip
 		"detail": res.Detail, "stats": res.Stats, "nodes": nodes,
 	}
 	if a.Intel != nil {
-		out["risk"], out["type"] = a.Intel.Score(q.Name), a.Intel.TypeOf(q.Name)
+		var f *analytics.Flag
+		if len(res.Flags) > 0 {
+			f = &res.Flags[0]
+		}
+		out["risk"], out["type"] = withFlag(a.Intel.Score(q.Name), f), a.Intel.TypeOf(q.Name)
 	}
+	out["answers"] = orEmpty(res.Answers)
 	if res.Rule != "" || res.List != "" {
 		out["caught_by"] = map[string]string{"rule": res.Rule, "list": res.List}
 	}
@@ -416,6 +439,79 @@ func (a *API) analyticsDomain(w http.ResponseWriter, r *http.Request, p *Princip
 		out["devices"] = devs
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// analyticsAlsoOn lists the enabled lists with a rule for a name. It
+// reads the saved list files, so it runs only when someone opens a domain.
+func (a *API) analyticsAlsoOn(w http.ResponseWriter, r *http.Request, p *Principal) {
+	name := filter.Normalize(strings.TrimSpace(r.URL.Query().Get("name")))
+	if name == "" {
+		writeErr(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if a.AlsoOn == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"name": name, "lists": []filter.ListHit{}})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	hits := a.AlsoOn(ctx, name)
+	if hits == nil {
+		hits = []filter.ListHit{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "lists": hits, "partial": ctx.Err() != nil})
+}
+
+func (a *API) virusTotalStatus(w http.ResponseWriter, r *http.Request, p *Principal) {
+	writeJSON(w, http.StatusOK, map[string]any{"configured": a.VirusTotal != nil && a.VirusTotal.Configured()})
+}
+
+// virusTotalSetKey stores (or, empty, removes) the owner's VirusTotal key.
+// The key is never returned.
+func (a *API) virusTotalSetKey(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var in struct {
+		Key string `json:"key"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	in.Key = strings.TrimSpace(in.Key)
+	if len(in.Key) > 128 || strings.ContainsAny(in.Key, " \t\r\n") {
+		writeErr(w, http.StatusBadRequest, "that doesn't look like a VirusTotal API key")
+		return
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpVirusTotalKey, p.Actor(), store.VirusTotalKey{Key: in.Key})); !ok {
+		return
+	}
+	if a.VirusTotal != nil {
+		a.VirusTotal.Forget()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": in.Key != ""})
+}
+
+// virusTotalLookup asks VirusTotal about one domain. It runs only when
+// someone clicks the button; nothing is sent otherwise.
+func (a *API) virusTotalLookup(w http.ResponseWriter, r *http.Request, p *Principal) {
+	name := filter.Normalize(strings.TrimSpace(r.URL.Query().Get("name")))
+	if name == "" || !strings.Contains(name, ".") {
+		writeErr(w, http.StatusBadRequest, "a domain name is required")
+		return
+	}
+	if a.VirusTotal == nil {
+		writeErr(w, http.StatusConflict, virustotal.ErrNoKey.Error())
+		return
+	}
+	rep, cached, err := a.VirusTotal.Lookup(r.Context(), name)
+	switch {
+	case errors.Is(err, virustotal.ErrNoKey):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.Is(err, virustotal.ErrBusy):
+		writeErr(w, http.StatusTooManyRequests, err.Error())
+	case err != nil:
+		writeErr(w, http.StatusBadGateway, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]any{"report": rep, "cached": cached})
+	}
 }
 
 func (a *API) searchQuery(w http.ResponseWriter, r *http.Request, p *Principal) (analytics.Query, bool) {
@@ -453,6 +549,18 @@ func (a *API) analyticsQueries(w http.ResponseWriter, r *http.Request, p *Princi
 		for _, e := range res.Entries {
 			if _, done := risk[e.Name]; !done {
 				risk[e.Name] = a.Intel.Score(e.Name)
+			}
+			// What this answer pointed to, as the history writer checks it.
+			if len(e.IPs)+len(e.CNAMEs) > 0 {
+				var ips []netip.Addr
+				for _, s := range e.IPs {
+					if ip, err := netip.ParseAddr(s); err == nil {
+						ips = append(ips, ip)
+					}
+				}
+				if sc, why := a.Intel.CheckAnswer(e.Name, ips, e.CNAMEs); sc > risk[e.Name].Score {
+					risk[e.Name] = withFlag(risk[e.Name], &analytics.Flag{Name: e.Name, Reason: why, Score: sc})
+				}
 			}
 		}
 		maps.DeleteFunc(risk, func(_ string, r threat.Risk) bool { return r.Score < threat.Medium })
@@ -526,7 +634,7 @@ func (a *API) analyticsRisky(w http.ResponseWriter, r *http.Request, p *Principa
 		limit = 50
 	}
 	// Every domain seen (up to a generous cap), scored here.
-	q.By, q.Limit = analytics.TopDomains, 20000
+	q.By, q.Limit, q.Flags = analytics.TopDomains, 20000, true
 	res, nodes, ok := a.askOrFail(w, r, q)
 	if !ok {
 		return
@@ -534,8 +642,12 @@ func (a *API) analyticsRisky(w http.ResponseWriter, r *http.Request, p *Principa
 	out := []*topRow{}
 	var queries int64
 	if a.Intel != nil {
+		flags := map[string]*analytics.Flag{}
+		for i := range res.Flags {
+			flags[res.Flags[i].Name] = &res.Flags[i]
+		}
 		for _, row := range res.Rows {
-			risk := a.Intel.Score(row.Key)
+			risk := withFlag(a.Intel.Score(row.Key), flags[row.Key])
 			if risk.Score < threat.Medium {
 				continue
 			}

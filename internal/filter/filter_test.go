@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -190,5 +191,49 @@ func TestBlockBypass(t *testing.T) {
 	}
 	if e.Lookup("dns.quad9.net").Blocked {
 		t.Fatal("a custom allow must override bypass protection")
+	}
+}
+
+func TestAlsoOn(t *testing.T) {
+	dir := t.TempDir()
+	a, b, c := filepath.Join(dir, "a.txt"), filepath.Join(dir, "b.txt"), filepath.Join(dir, "allow.txt")
+	os.WriteFile(a, []byte("! list A\n||doubleclick.net^\nads.example\n"), 0o600)
+	os.WriteFile(b, []byte("0.0.0.0 stats.g.doubleclick.net\n0.0.0.0 Other.DoubleClick.net\n"), 0o600)
+	os.WriteFile(c, []byte("@@||g.doubleclick.net^\n"), 0o600)
+	cfg := config.Default().Filtering
+	cfg.Lists = []config.ListConfig{{Name: "List A", URL: a, Enabled: true}, {Name: "List B", URL: b, Enabled: true}, {Name: "Off", URL: a}}
+	cfg.Allowlists = []config.ListConfig{{Name: "Allow", URL: c, Enabled: true}}
+	cfg.Rules = []string{"||stats.g.doubleclick.net^"}
+	e := NewEngine(cfg, dir, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	got := e.AlsoOn(context.Background(), "stats.g.doubleclick.net")
+	want := []ListHit{
+		{List: "Custom rules", Rule: "||stats.g.doubleclick.net^"},
+		{List: "Allow", Rule: "@@||g.doubleclick.net^", Allowlist: true},
+		{List: "List A", Rule: "||doubleclick.net^"},
+		{List: "List B", Rule: "stats.g.doubleclick.net"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("also on = %+v", got)
+	}
+	if got := e.AlsoOn(context.Background(), "other.doubleclick.net"); len(got) != 2 || got[1].List != "List B" {
+		t.Fatalf("uppercase line = %+v", got)
+	}
+}
+
+// BenchmarkAlsoOn reads a 1,000,000-line list.
+func BenchmarkAlsoOn(b *testing.B) {
+	dir := b.TempDir()
+	path := filepath.Join(dir, "big.txt")
+	var sb strings.Builder
+	for i := range 1_000_000 {
+		fmt.Fprintf(&sb, "||host%d.example%d.com^\n", i, i%5000)
+	}
+	os.WriteFile(path, []byte(sb.String()), 0o600)
+	cfg := config.Default().Filtering
+	cfg.Lists = []config.ListConfig{{Name: "Big", URL: path, Enabled: true}}
+	e := NewEngine(cfg, dir, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	b.ResetTimer()
+	for range b.N {
+		e.AlsoOn(context.Background(), "host42.example42.com")
 	}
 }
