@@ -1,7 +1,7 @@
-# DNServe node configuration. You don't need this file: a node runs with
+# DNServ node configuration. You don't need this file: a node runs with
 # these defaults out of the box, and the dashboard (step 1c) will manage
 # settings in the data volume. Use it for advanced tuning, or set the
-# common options with DNSERVE_* environment variables (see docs/install.md).
+# common options with DNSERV_* environment variables (see docs/install.md).
 # Every key is optional. Unknown keys are rejected so typos are caught.
 
 dns:
@@ -20,7 +20,7 @@ dns:
     doh_path: /dns-query
     cert_file: ""          # PEM cert + key; empty = self-signed in /data/tls
     key_file: ""
-    hostnames: [dnserve.local]   # names/IPs in the self-signed certificate
+    hostnames: [dnserv.local]   # names/IPs in the self-signed certificate
 
 upstream:
   # forward:   encrypted forwarding to the servers below (default)

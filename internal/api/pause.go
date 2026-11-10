@@ -6,7 +6,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // pauseOptions are the durations the dashboard offers, in minutes (0 is

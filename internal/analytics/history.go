@@ -27,7 +27,7 @@ import (
 	"github.com/miekg/dns"
 	_ "modernc.org/sqlite" // pure Go, so the image stays CGO-free
 
-	"github.com/prezmc/dnserve/internal/querylog"
+	"github.com/prezmc/dnserv/internal/querylog"
 )
 
 // Result codes stored in the database.

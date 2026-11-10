@@ -63,42 +63,42 @@ func (m *Metrics) Counts() map[string]int64 {
 
 // WritePrometheus writes the server metrics.
 func (m *Metrics) WritePrometheus(w io.Writer) {
-	fmt.Fprintln(w, "# HELP dnserve_queries_total DNS queries answered, by outcome.")
-	fmt.Fprintln(w, "# TYPE dnserve_queries_total counter")
+	fmt.Fprintln(w, "# HELP dnserv_queries_total DNS queries answered, by outcome.")
+	fmt.Fprintln(w, "# TYPE dnserv_queries_total counter")
 	for i, n := range outcomeNames {
-		fmt.Fprintf(w, "dnserve_queries_total{outcome=%q} %d\n", n, m.outcomes[i].Load())
+		fmt.Fprintf(w, "dnserv_queries_total{outcome=%q} %d\n", n, m.outcomes[i].Load())
 	}
-	fmt.Fprintln(w, "# HELP dnserve_refused_total Queries refused because the client is not in allowed_nets.")
-	fmt.Fprintln(w, "# TYPE dnserve_refused_total counter")
-	fmt.Fprintf(w, "dnserve_refused_total %d\n", m.refused.Load())
-	fmt.Fprintln(w, "# HELP dnserve_rate_limited_total Queries dropped by the per-client rate limit.")
-	fmt.Fprintln(w, "# TYPE dnserve_rate_limited_total counter")
-	fmt.Fprintf(w, "dnserve_rate_limited_total %d\n", m.rateLimited.Load())
-	fmt.Fprintln(w, "# HELP dnserve_upstream_errors_total Upstream exchanges that failed on every server.")
-	fmt.Fprintln(w, "# TYPE dnserve_upstream_errors_total counter")
-	fmt.Fprintf(w, "dnserve_upstream_errors_total %d\n", m.upstreamErrors.Load())
+	fmt.Fprintln(w, "# HELP dnserv_refused_total Queries refused because the client is not in allowed_nets.")
+	fmt.Fprintln(w, "# TYPE dnserv_refused_total counter")
+	fmt.Fprintf(w, "dnserv_refused_total %d\n", m.refused.Load())
+	fmt.Fprintln(w, "# HELP dnserv_rate_limited_total Queries dropped by the per-client rate limit.")
+	fmt.Fprintln(w, "# TYPE dnserv_rate_limited_total counter")
+	fmt.Fprintf(w, "dnserv_rate_limited_total %d\n", m.rateLimited.Load())
+	fmt.Fprintln(w, "# HELP dnserv_upstream_errors_total Upstream exchanges that failed on every server.")
+	fmt.Fprintln(w, "# TYPE dnserv_upstream_errors_total counter")
+	fmt.Fprintf(w, "dnserv_upstream_errors_total %d\n", m.upstreamErrors.Load())
 
-	fmt.Fprintln(w, "# HELP dnserve_responses_total Responses by rcode.")
-	fmt.Fprintln(w, "# TYPE dnserve_responses_total counter")
+	fmt.Fprintln(w, "# HELP dnserv_responses_total Responses by rcode.")
+	fmt.Fprintln(w, "# TYPE dnserv_responses_total counter")
 	for c := range m.rcodes {
 		if n := m.rcodes[c].Load(); n > 0 {
-			fmt.Fprintf(w, "dnserve_responses_total{rcode=%q} %d\n", dns.RcodeToString[c], n)
+			fmt.Fprintf(w, "dnserv_responses_total{rcode=%q} %d\n", dns.RcodeToString[c], n)
 		}
 	}
 
-	fmt.Fprintln(w, "# HELP dnserve_query_duration_seconds Time to answer a query, by outcome.")
-	fmt.Fprintln(w, "# TYPE dnserve_query_duration_seconds histogram")
+	fmt.Fprintln(w, "# HELP dnserv_query_duration_seconds Time to answer a query, by outcome.")
+	fmt.Fprintln(w, "# TYPE dnserv_query_duration_seconds histogram")
 	for i, n := range outcomeNames {
 		h := &m.hist[i]
 		var cum int64
 		for b, le := range buckets {
 			cum += h.counts[b].Load()
-			fmt.Fprintf(w, "dnserve_query_duration_seconds_bucket{outcome=%q,le=\"%g\"} %d\n", n, le, cum)
+			fmt.Fprintf(w, "dnserv_query_duration_seconds_bucket{outcome=%q,le=\"%g\"} %d\n", n, le, cum)
 		}
 		cum += h.counts[len(buckets)].Load()
-		fmt.Fprintf(w, "dnserve_query_duration_seconds_bucket{outcome=%q,le=\"+Inf\"} %d\n", n, cum)
-		fmt.Fprintf(w, "dnserve_query_duration_seconds_sum{outcome=%q} %g\n", n, float64(h.sumNS.Load())/1e9)
-		fmt.Fprintf(w, "dnserve_query_duration_seconds_count{outcome=%q} %d\n", n, cum)
+		fmt.Fprintf(w, "dnserv_query_duration_seconds_bucket{outcome=%q,le=\"+Inf\"} %d\n", n, cum)
+		fmt.Fprintf(w, "dnserv_query_duration_seconds_sum{outcome=%q} %g\n", n, float64(h.sumNS.Load())/1e9)
+		fmt.Fprintf(w, "dnserv_query_duration_seconds_count{outcome=%q} %d\n", n, cum)
 	}
 }
 

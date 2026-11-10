@@ -1,4 +1,4 @@
-// Command dnserve runs a DNServe node.
+// Command dnserv runs a DNServ node.
 package main
 
 import (
@@ -23,37 +23,37 @@ import (
 	"time"
 	_ "time/tzdata" // schedules need zone data; the image has none
 
-	"github.com/prezmc/dnserve/internal/analytics"
-	"github.com/prezmc/dnserve/internal/api"
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/backup"
-	"github.com/prezmc/dnserve/internal/cache"
-	"github.com/prezmc/dnserve/internal/cluster"
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/policy"
-	"github.com/prezmc/dnserve/internal/querylog"
-	"github.com/prezmc/dnserve/internal/recursive"
-	"github.com/prezmc/dnserve/internal/server"
-	"github.com/prezmc/dnserve/internal/store"
-	"github.com/prezmc/dnserve/internal/threat"
-	"github.com/prezmc/dnserve/internal/upstream"
-	"github.com/prezmc/dnserve/internal/virustotal"
-	"github.com/prezmc/dnserve/internal/web"
+	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/api"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/backup"
+	"github.com/prezmc/dnserv/internal/cache"
+	"github.com/prezmc/dnserv/internal/cluster"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/policy"
+	"github.com/prezmc/dnserv/internal/querylog"
+	"github.com/prezmc/dnserv/internal/recursive"
+	"github.com/prezmc/dnserv/internal/server"
+	"github.com/prezmc/dnserv/internal/store"
+	"github.com/prezmc/dnserv/internal/threat"
+	"github.com/prezmc/dnserv/internal/upstream"
+	"github.com/prezmc/dnserv/internal/virustotal"
+	"github.com/prezmc/dnserv/internal/web"
 )
 
 var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "dnserve:", err)
+		fmt.Fprintln(os.Stderr, "dnserv:", err)
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	cfgPath := flag.String("config", envOr("DNSERVE_CONFIG", "/data/dnserve.yaml"), "path to the YAML config file")
-	logLevel := flag.String("log-level", envOr("DNSERVE_LOG_LEVEL", "info"), "debug, info, warn or error")
+	cfgPath := flag.String("config", envOr("DNSERV_CONFIG", "/data/dnserv.yaml"), "path to the YAML config file")
+	logLevel := flag.String("log-level", envOr("DNSERV_LOG_LEVEL", "info"), "debug, info, warn or error")
 	checkConfig := flag.Bool("check-config", false, "validate the config and exit")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	healthcheck := flag.String("healthcheck", "", "probe http://ADDR/healthz and exit 0 if healthy (for container health checks)")
@@ -77,7 +77,7 @@ func run() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 
 	// Base config: built-in defaults, then the optional file, then
-	// DNSERVE_* environment variables. Settings saved in the dashboard
+	// DNSERV_* environment variables. Settings saved in the dashboard
 	// are layered on top, so a node needs no files to get started.
 	base, err := config.Load(*cfgPath)
 	if err != nil {
@@ -101,18 +101,18 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("open state: %w", err)
 	}
-	switch role := strings.ToLower(envOr("DNSERVE_ROLE", "node")); role {
+	switch role := strings.ToLower(envOr("DNSERV_ROLE", "node")); role {
 	case "node":
 	case "witness":
 		return runWitness(base, st, log)
 	default:
-		return fmt.Errorf("DNSERVE_ROLE: unknown role %q (node or witness)", role)
+		return fmt.Errorf("DNSERV_ROLE: unknown role %q (node or witness)", role)
 	}
 	// Clustering. Every node runs Raft, alone or not, so another node can
 	// join at any time. Changes go through the cluster from here on.
 	cl, err := cluster.Open(cluster.Options{
 		DataDir: base.DataDir, Listen: base.Cluster.Listen, Advertise: base.Cluster.Advertise,
-		Name: os.Getenv("DNSERVE_NODE_NAME"), Version: version, Log: log.With("component", "cluster"),
+		Name: os.Getenv("DNSERV_NODE_NAME"), Version: version, Log: log.With("component", "cluster"),
 	}, st)
 	if err != nil {
 		return fmt.Errorf("start cluster: %w", err)
@@ -125,7 +125,7 @@ func run() error {
 		log.Error("saved settings are invalid; using the file and environment config until they are fixed", "err", err)
 		cfg = base
 	}
-	log.Info("starting dnserve", "version", version, "config", *cfgPath, "data_dir", cfg.DataDir, "upstream_mode", cfg.Upstream.Mode)
+	log.Info("starting dnserv", "version", version, "config", *cfgPath, "data_dir", cfg.DataDir, "upstream_mode", cfg.Upstream.Mode)
 	started := time.Now()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -225,7 +225,7 @@ func run() error {
 		return fmt.Errorf("open sessions: %w", err)
 	}
 	adm := api.New(st, sessions, base, log.With("component", "api"))
-	adm.AllowedOrigins = splitList(os.Getenv("DNSERVE_ALLOWED_ORIGINS"))
+	adm.AllowedOrigins = splitList(os.Getenv("DNSERV_ALLOWED_ORIGINS"))
 	adm.Cluster = cl
 	// Scheduled backups: each node keeps its own in /data/backups; the
 	// leader also writes to the off-box folder when one is set.
@@ -454,17 +454,17 @@ func run() error {
 
 // runWitness runs a witness: a cluster member that votes and keeps the
 // log, so two full nodes keep a majority when either is down. It answers
-// no DNS and has no dashboard. It joins with the code in DNSERVE_JOIN.
+// no DNS and has no dashboard. It joins with the code in DNSERV_JOIN.
 func runWitness(base config.Config, st *store.Store, log *slog.Logger) error {
 	cl, err := cluster.Open(cluster.Options{
 		DataDir: base.DataDir, Listen: base.Cluster.Listen, Advertise: base.Cluster.Advertise,
-		Name: os.Getenv("DNSERVE_NODE_NAME"), Version: version, Log: log.With("component", "cluster"), Witness: true,
+		Name: os.Getenv("DNSERV_NODE_NAME"), Version: version, Log: log.With("component", "cluster"), Witness: true,
 	}, st)
 	if err != nil {
 		return fmt.Errorf("start cluster: %w", err)
 	}
 	defer cl.Close()
-	log.Info("starting dnserve witness", "version", version, "name", cl.Name())
+	log.Info("starting dnserv witness", "version", version, "name", cl.Name())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -473,9 +473,9 @@ func runWitness(base config.Config, st *store.Store, log *slog.Logger) error {
 		if cl.Joined() {
 			return
 		}
-		code := strings.TrimSpace(os.Getenv("DNSERVE_JOIN"))
+		code := strings.TrimSpace(os.Getenv("DNSERV_JOIN"))
 		if code == "" {
-			log.Warn("this witness isn't in a cluster yet: on a DNServe node open Cluster, make a join code, and start this container with DNSERVE_JOIN=<code>")
+			log.Warn("this witness isn't in a cluster yet: on a DNServ node open Cluster, make a join code, and start this container with DNSERV_JOIN=<code>")
 			return
 		}
 		for {
@@ -519,7 +519,7 @@ func runWitness(base config.Config, st *store.Store, log *slog.Logger) error {
 		if ls.LeaderID != "" {
 			leader = st.State().Cluster.NodeName(ls.LeaderID)
 		}
-		fmt.Fprintf(w, "DNServe witness %q\nIn a cluster: %v\nLeader: %s\n\nThis container only votes in the cluster. Manage it from a DNServe node's dashboard under Cluster.\n", cl.Name(), cl.Joined(), leader)
+		fmt.Fprintf(w, "DNServ witness %q\nIn a cluster: %v\nLeader: %s\n\nThis container only votes in the cluster. Manage it from a DNServ node's dashboard under Cluster.\n", cl.Name(), cl.Joined(), leader)
 	})
 	httpSrv := &http.Server{Addr: base.HTTP.Listen, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -722,23 +722,23 @@ func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, ups 
 		srv.Metrics.WritePrometheus(w)
 		if c != nil {
 			st := c.Stats()
-			fmt.Fprintf(w, "# TYPE dnserve_cache_entries gauge\ndnserve_cache_entries %d\n", st.Entries)
-			fmt.Fprintf(w, "# TYPE dnserve_cache_prefetches_total counter\ndnserve_cache_prefetches_total %d\n", st.Prefetches)
+			fmt.Fprintf(w, "# TYPE dnserv_cache_entries gauge\ndnserv_cache_entries %d\n", st.Entries)
+			fmt.Fprintf(w, "# TYPE dnserv_cache_prefetches_total counter\ndnserv_cache_prefetches_total %d\n", st.Prefetches)
 		}
-		fmt.Fprintf(w, "# TYPE dnserve_filter_rules gauge\ndnserve_filter_rules %d\n", engine.Rules())
-		fmt.Fprintln(w, "# TYPE dnserve_upstream_latency_ms gauge")
+		fmt.Fprintf(w, "# TYPE dnserv_filter_rules gauge\ndnserv_filter_rules %d\n", engine.Rules())
+		fmt.Fprintln(w, "# TYPE dnserv_upstream_latency_ms gauge")
 		for _, g := range up.groups {
 			for _, s := range g.Stats() {
-				fmt.Fprintf(w, "dnserve_upstream_latency_ms{server=%q} %g\n", s.Server, s.LatencyMS)
+				fmt.Fprintf(w, "dnserv_upstream_latency_ms{server=%q} %g\n", s.Server, s.LatencyMS)
 			}
 		}
 		if up.unbound != nil {
-			fmt.Fprintf(w, "# TYPE dnserve_unbound_up gauge\ndnserve_unbound_up %d\n", b2i(up.unbound.ub.Ready()))
-			fmt.Fprintf(w, "# TYPE dnserve_unbound_restarts_total counter\ndnserve_unbound_restarts_total %d\n", up.unbound.ub.Restarts())
+			fmt.Fprintf(w, "# TYPE dnserv_unbound_up gauge\ndnserv_unbound_up %d\n", b2i(up.unbound.ub.Ready()))
+			fmt.Fprintf(w, "# TYPE dnserv_unbound_restarts_total counter\ndnserv_unbound_restarts_total %d\n", up.unbound.ub.Restarts())
 		}
 		if up.tunnel != nil {
 			ok, _ := up.tunnel.Up()
-			fmt.Fprintf(w, "# TYPE dnserve_tunnel_up gauge\ndnserve_tunnel_up %d\n", b2i(ok))
+			fmt.Fprintf(w, "# TYPE dnserv_tunnel_up gauge\ndnserv_tunnel_up %d\n", b2i(ok))
 		}
 	})
 	return mux

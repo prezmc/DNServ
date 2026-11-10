@@ -11,7 +11,7 @@ type Service struct {
 	Domains  []string `json:"domains"`
 }
 
-// Services is DNServe's own catalog, kept short and to the domains each
+// Services is DNServ's own catalog, kept short and to the domains each
 // service needs to work, so blocking one breaks it cleanly without taking
 // unrelated sites with it. Shared domains (Google's, Meta's and Microsoft's
 // CDNs) are left out on purpose.

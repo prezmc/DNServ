@@ -6,10 +6,10 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/policy"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/policy"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 func TestGroupServices(t *testing.T) {

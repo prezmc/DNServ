@@ -9,7 +9,7 @@ going back never brings back an old password or a deleted user.
 **Encrypted backups.** A backup is one `.dnsbak` file with the accounts,
 API tokens, settings, devices, groups and settings history. It is encrypted
 with a passphrase you choose when you set backups up (at least 12
-characters). DNServe keeps only a public key made from it: nodes can make
+characters). DNServ keeps only a public key made from it: nodes can make
 backups on their own but can't read them, and without the passphrase
 nobody can open one. Keep it in a password manager.
 
@@ -18,7 +18,7 @@ nobody can open one. Keep it in a password manager.
   same time zone as group schedules. Every node keeps its own in
   `/data/backups` (the last 14 by default).
 - **A copy off the server:** mount a folder from a NAS or another disk into
-  the container (for example `-v /mnt/nas/dnserve:/backups`) and enter
+  the container (for example `-v /mnt/nas/dnserv:/backups`) and enter
   `/backups` as the copy folder. The leading node writes one copy of each
   backup there.
 - **Restore** from a file under Backups & history (replaces the accounts and

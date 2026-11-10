@@ -92,7 +92,7 @@ func VerifyPassword(encoded, pw string) bool {
 
 // dummyHash is verified against when a username doesn't exist, so a
 // failed login takes the same time either way.
-var dummyHash, _ = HashPassword("dnserve-timing-equalizer")
+var dummyHash, _ = HashPassword("dnserv-timing-equalizer")
 
 // VerifyDummy spends the same time as a real verification.
 func VerifyDummy(pw string) { VerifyPassword(dummyHash, pw) }

@@ -14,7 +14,8 @@ import (
 )
 
 // One TCP port carries both Raft and the node-to-node API, told apart by
-// the TLS ALPN protocol.
+// the TLS ALPN protocol. These keep the old project name (DNServe) so
+// nodes on versions from before and after the rename can still talk.
 const (
 	alpnRaft = "dnserve-raft/1"
 	alpnRPC  = "dnserve-rpc/1"

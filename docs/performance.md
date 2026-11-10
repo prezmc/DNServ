@@ -28,7 +28,7 @@ not yet cached.
 Run it against your own node (it's in the image):
 
 ```bash
-docker run --rm --network host --entrypoint dnsbench ghcr.io/prezmc/dnserve \
+docker run --rm --network host --entrypoint dnsbench ghcr.io/prezmc/dnserv \
   -server 192.168.1.10:53 -c 20 -d 30s
 ```
 

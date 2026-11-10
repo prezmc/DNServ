@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 type env struct {

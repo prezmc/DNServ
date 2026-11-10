@@ -10,9 +10,9 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // Plan says what an import would change, section by section.
@@ -36,7 +36,7 @@ type Section struct {
 	Default bool `json:"default"`
 	// Info sections are only for reading: nothing is imported.
 	Info bool `json:"info,omitempty"`
-	// Items are what would be added; Have are already in DNServe.
+	// Items are what would be added; Have are already in DNServ.
 	Items   []Item `json:"items"`
 	Have    []Item `json:"have,omitempty"`
 	Skipped []Item `json:"skipped,omitempty"`
@@ -51,7 +51,7 @@ type Item struct {
 	Detail string `json:"detail,omitempty"`
 }
 
-// DevicePlan is a device to name. Existing is set when DNServe already
+// DevicePlan is a device to name. Existing is set when DNServ already
 // has it (only its group would change).
 type DevicePlan struct {
 	ItemID   string
@@ -108,7 +108,7 @@ func (p *Plan) Section(key string) *Section {
 	return nil
 }
 
-// Build works out what importing s would change, given DNServe's current
+// Build works out what importing s would change, given DNServ's current
 // state and effective configuration. Items whose ID is in exclude are left
 // out (and not listed), so Build can be re-run with the person's choices.
 func Build(s *Snapshot, st *store.State, eff config.Config, exclude map[string]bool) *Plan {
@@ -175,7 +175,7 @@ func (b *builder) lists(key, title string, in []Filter, cur []config.ListConfig)
 		case u == "":
 			continue
 		case !strings.HasPrefix(u, "http://") && !strings.HasPrefix(u, "https://"):
-			it.ID, it.Detail = "", u+": a file on the AdGuard Home server, which DNServe can't read. Copy its rules into Custom rules instead."
+			it.ID, it.Detail = "", u+": a file on the AdGuard Home server, which DNServ can't read. Copy its rules into Custom rules instead."
 			sec.Skipped = append(sec.Skipped, it)
 		case have[u]:
 			it.ID = ""
@@ -192,7 +192,7 @@ func (b *builder) lists(key, title string, in []Filter, cur []config.ListConfig)
 		b.p.patches[key] = store.Settings{Lists: ptrIf(key == KeyLists, next), Allowlists: ptrIf(key == KeyAllowlists, next)}
 	}
 	if key == KeyLists {
-		sec.Note = "Added next to the lists DNServe already uses. A list on both is downloaded once."
+		sec.Note = "Added next to the lists DNServ already uses. A list on both is downloaded once."
 	}
 }
 
@@ -214,7 +214,7 @@ var defaultBlockedHosts = map[string]bool{"version.bind": true, "id.server": tru
 
 func (b *builder) rules() []recordCand {
 	sec := b.section(KeyRules, "Custom rules")
-	sec.Note = "Added after your DNServe rules. Rules that answer with an address become Local names."
+	sec.Note = "Added after your DNServ rules. Rules that answer with an address become Local names."
 	have := map[string]bool{}
 	for _, r := range b.eff.Filtering.Rules {
 		have[strings.TrimSpace(r)] = true
@@ -297,7 +297,7 @@ func (b *builder) rules() []recordCand {
 			rule = "||" + r[0].Domain + "^" // AdGuard Home refuses the domain and its subdomains
 		}
 		if _, ok, _ := filter.ParseLine(rule); !ok {
-			sec.Skipped = append(sec.Skipped, Item{Text: hst, Detail: "A disallowed domain DNServe can't read as a rule."})
+			sec.Skipped = append(sec.Skipped, Item{Text: hst, Detail: "A disallowed domain DNServ can't read as a rule."})
 			continue
 		}
 		add(rule, rule, "from Access settings: disallowed domains")
@@ -385,11 +385,11 @@ func unsupportedReason(line string) string {
 	case strings.Contains(l, "$badfilter"):
 		return "$badfilter isn't supported: add an allow rule (@@||domain^) instead."
 	case strings.Contains(l, "$"):
-		return "This rule uses options DNServe doesn't support."
+		return "This rule uses options DNServ doesn't support."
 	case strings.ContainsAny(l, "*/"):
 		return "Wildcards are only supported at the start, like *.example.com."
 	}
-	return "DNServe can't read this rule."
+	return "DNServ can't read this rule."
 }
 
 func (b *builder) records(fromRules []recordCand) {
@@ -410,7 +410,7 @@ func (b *builder) records(fromRules []recordCand) {
 			continue
 		}
 		if v := strings.ToUpper(r.Value); v == "A" || v == "AAAA" {
-			sec.Skipped = append(sec.Skipped, Item{Text: text, Detail: "Keeps the real " + v + " answer: DNServe does that without a record."})
+			sec.Skipped = append(sec.Skipped, Item{Text: text, Detail: "Keeps the real " + v + " answer: DNServ does that without a record."})
 			continue
 		}
 		cands = append(cands, recordCand{rec: r, from: "DNS rewrite"})
@@ -455,7 +455,7 @@ func (b *builder) records(fromRules []recordCand) {
 	}
 }
 
-// mapUpstream turns an AdGuard Home upstream into a DNServe server URL.
+// mapUpstream turns an AdGuard Home upstream into a DNServ server URL.
 func mapUpstream(s string) (string, string) {
 	low := strings.ToLower(s)
 	for _, p := range []struct{ prefix, why string }{
@@ -472,7 +472,7 @@ func mapUpstream(s string) (string, string) {
 	if strings.Contains(s, "://") {
 		u, err := url.Parse(s)
 		if err != nil || u.Host == "" {
-			return "", "Not an address DNServe understands."
+			return "", "Not an address DNServ understands."
 		}
 		switch u.Scheme {
 		case "https", "tls", "udp", "tcp":
@@ -490,7 +490,7 @@ func mapUpstream(s string) (string, string) {
 		} else if !strings.ContainsAny(s, "/[] ") {
 			host = s
 		} else {
-			return "", "Not an address DNServe understands."
+			return "", "Not an address DNServ understands."
 		}
 		if !strings.HasPrefix(out, "udp://") {
 			out = "udp://" + s
@@ -505,7 +505,7 @@ func mapUpstream(s string) (string, string) {
 	return out, ""
 }
 
-const loopbackWhy = "This is a resolver on the AdGuard Home machine itself (often Unbound), which DNServe can't reach. DNServe has its own: choose Full recursion under Settings → Privacy."
+const loopbackWhy = "This is a resolver on the AdGuard Home machine itself (often Unbound), which DNServ can't reach. DNServ has its own: choose Full recursion under Settings → Privacy."
 
 func (b *builder) upstream() {
 	sec := b.section(KeyUpstream, "Upstream DNS servers")
@@ -519,7 +519,7 @@ func (b *builder) upstream() {
 		if strings.HasPrefix(line, "[/") {
 			end := strings.Index(line, "/]")
 			if end < 0 {
-				sec.Skipped = append(sec.Skipped, Item{Text: line, Detail: "Not an address DNServe understands."})
+				sec.Skipped = append(sec.Skipped, Item{Text: line, Detail: "Not an address DNServ understands."})
 				continue
 			}
 			for _, addr := range strings.Fields(line[end+2:]) {
@@ -527,7 +527,7 @@ func (b *builder) upstream() {
 					b.upstreamLocal = append(b.upstreamLocal, a)
 				}
 			}
-			sec.Skipped = append(sec.Skipped, Item{Text: line, Detail: "DNServe sends every name to the same servers. Names for your local network go to your router instead (see Device names)."})
+			sec.Skipped = append(sec.Skipped, Item{Text: line, Detail: "DNServ sends every name to the same servers. Names for your local network go to your router instead (see Device names)."})
 			continue
 		}
 		for _, one := range strings.Fields(line) { // "a b" are parallel upstreams
@@ -571,13 +571,13 @@ func (b *builder) upstream() {
 	if cur.Mode != "forward" {
 		now = map[string]string{"recursive": "full recursion", "tunnel": "recursion through a VPN"}[cur.Mode]
 	}
-	sec.Note = "Replaces DNServe's upstream (now " + now + ")."
+	sec.Note = "Replaces DNServ's upstream (now " + now + ")."
 	unchanged := b.st.Settings.UpstreamMode == nil && b.st.Settings.UpstreamServers == nil
 	sec.Default = encrypted && unchanged
 	if !encrypted {
-		sec.Note += " Some of these servers are unencrypted, so your internet provider could see and change lookups; DNServe's encrypted default is more private."
+		sec.Note += " Some of these servers are unencrypted, so your internet provider could see and change lookups; DNServ's encrypted default is more private."
 	} else if !unchanged {
-		sec.Note += " You've already chosen an upstream in DNServe, so this is off to start with."
+		sec.Note += " You've already chosen an upstream in DNServ, so this is off to start with."
 	}
 }
 
@@ -627,7 +627,7 @@ func (b *builder) localDNS() {
 		return
 	}
 	sec.Items = append(sec.Items, Item{ID: id, Text: cand, Detail: "AdGuard Home asked this address for local names and device names."})
-	sec.Note = "DNServe asks your router what each device is called and sends local names (like printer.lan) to it."
+	sec.Note = "DNServ asks your router what each device is called and sends local names (like printer.lan) to it."
 	if cur != "" {
 		sec.Note += " Replaces " + cur + "."
 		sec.Default = false
@@ -647,7 +647,7 @@ func (b *builder) blocking() {
 	case "refused", "nxdomain":
 		mode = m
 	case "custom_ip":
-		detail = "AdGuard Home answered with your own address; DNServe answers 0.0.0.0 instead."
+		detail = "AdGuard Home answered with your own address; DNServ answers 0.0.0.0 instead."
 	default:
 		return
 	}
@@ -679,7 +679,7 @@ func (b *builder) access() {
 	}
 	for _, c := range b.s.Access.Disallowed {
 		if c = strings.TrimSpace(c); c != "" {
-			sec.Skipped = append(sec.Skipped, Item{Text: c, Detail: "DNServe has no list of refused devices: it answers only the networks you allow."})
+			sec.Skipped = append(sec.Skipped, Item{Text: c, Detail: "DNServ has no list of refused devices: it answers only the networks you allow."})
 		}
 	}
 	if len(nets) == 0 {
@@ -703,7 +703,7 @@ func (b *builder) access() {
 		return
 	}
 	sec.Default = false
-	sec.Note = "Only these devices and networks will be able to use DNServe. Check it includes every network your devices are on."
+	sec.Note = "Only these devices and networks will be able to use DNServ. Check it includes every network your devices are on."
 	b.p.patches[KeyAccess] = store.Settings{AllowedNets: kept}
 }
 
@@ -757,7 +757,7 @@ func (b *builder) devicesAndGroups() {
 			if d := b.st.DeviceByAddr(a); d != nil {
 				existing = d.ID
 				if !strings.EqualFold(d.Name, name) {
-					devs.Skipped = append(devs.Skipped, Item{Text: name + " (" + a + ")", Detail: "Already named " + d.Name + " in DNServe."})
+					devs.Skipped = append(devs.Skipped, Item{Text: name + " (" + a + ")", Detail: "Already named " + d.Name + " in DNServ."})
 				} else {
 					devs.Have = append(devs.Have, Item{Text: name, Detail: a})
 				}
@@ -796,7 +796,7 @@ func (b *builder) devicesAndGroups() {
 			if a, err := netip.ParseAddr(id); err == nil {
 				addrs = append(addrs, a.Unmap().String())
 			} else if _, err := netip.ParsePrefix(id); err == nil {
-				devs.Skipped = append(devs.Skipped, Item{Text: c.Name + " (" + id + ")", Detail: "A range of addresses: DNServe names single addresses. Put the devices in a group instead."})
+				devs.Skipped = append(devs.Skipped, Item{Text: c.Name + " (" + id + ")", Detail: "A range of addresses: DNServ names single addresses. Put the devices in a group instead."})
 			} else if k := macKey(id); k != "" {
 				if ip, ok := byMAC[k]; ok {
 					if a, err := netip.ParseAddr(ip); err == nil {
@@ -805,7 +805,7 @@ func (b *builder) devicesAndGroups() {
 						continue
 					}
 				}
-				devs.Skipped = append(devs.Skipped, Item{Text: c.Name + " (" + id + ")", Detail: "DNServe sees addresses, not MAC addresses. Give the device a fixed address in your router, then name it on the Devices page."})
+				devs.Skipped = append(devs.Skipped, Item{Text: c.Name + " (" + id + ")", Detail: "DNServ sees addresses, not MAC addresses. Give the device a fixed address in your router, then name it on the Devices page."})
 			} else {
 				devs.Skipped = append(devs.Skipped, Item{Text: c.Name + " (" + id + ")", Detail: "Client IDs (from encrypted DNS addresses) aren't supported yet."})
 			}
@@ -855,7 +855,7 @@ func (b *builder) devicesAndGroups() {
 		text := g.Name + ": " + strings.Join(why, ", ")
 		switch {
 		case di < 0:
-			groups.Skipped = append(groups.Skipped, Item{Text: text, Detail: "The device has no address DNServe can use."})
+			groups.Skipped = append(groups.Skipped, Item{Text: text, Detail: "The device has no address DNServ can use."})
 			continue
 		case len(g.Rules) > store.MaxGroupRules:
 			groups.Skipped = append(groups.Skipped, Item{Text: text, Detail: fmt.Sprintf("More than %d rules.", store.MaxGroupRules)})
@@ -866,7 +866,7 @@ func (b *builder) devicesAndGroups() {
 		}
 		if d := b.p.Devices[di]; d.Existing != "" {
 			if old := b.st.Devices[d.Existing]; old != nil && old.Group != "" {
-				groups.Skipped = append(groups.Skipped, Item{Text: text, Detail: old.Name + " is already in a DNServe group."})
+				groups.Skipped = append(groups.Skipped, Item{Text: text, Detail: old.Name + " is already in a DNServ group."})
 				continue
 			}
 		}
@@ -914,10 +914,10 @@ func (b *builder) other() {
 	sec.Default = false
 	note := func(text, detail string) { sec.Skipped = append(sec.Skipped, Item{Text: text, Detail: detail}) }
 	if b.s.DHCPEnabled {
-		note("AdGuard Home is handing out addresses (DHCP)", "DNServe doesn't do DHCP. Turn DHCP back on in your router before you switch AdGuard Home off, or devices will lose their connection.")
+		note("AdGuard Home is handing out addresses (DHCP)", "DNServ doesn't do DHCP. Turn DHCP back on in your router before you switch AdGuard Home off, or devices will lose their connection.")
 	}
 	if b.s.SafeBrowsing {
-		note("Safe browsing", "DNServe doesn't use AdGuard's lookup service. Tick Extra malware and phishing protection under Settings → Filtering to block scam and malware sites.")
+		note("Safe browsing", "DNServ doesn't use AdGuard's lookup service. Tick Extra malware and phishing protection under Settings → Filtering to block scam and malware sites.")
 	}
 	if b.s.Parental {
 		note("Parental control", "Add an adult-content blocklist under Settings → Filtering, or give children's devices a group with a schedule.")
@@ -932,28 +932,28 @@ func (b *builder) other() {
 		}
 	}
 	if safe {
-		note("Safe search", "DNServe doesn't force safe search yet.")
+		note("Safe search", "DNServ doesn't force safe search yet.")
 	}
 	if perDevice > 0 {
-		note(fmt.Sprintf("Safe search, safe browsing or parental control for %d devices", perDevice), "Not available per device in DNServe.")
+		note(fmt.Sprintf("Safe search, safe browsing or parental control for %d devices", perDevice), "Not available per device in DNServ.")
 	}
 	if own > 0 {
-		note(fmt.Sprintf("Upstream servers for %d devices", own), "Every device uses the same upstream in DNServe.")
+		note(fmt.Sprintf("Upstream servers for %d devices", own), "Every device uses the same upstream in DNServ.")
 	}
 	if !b.s.FilteringEnabled && len(b.s.Filters) > 0 {
-		note("Filtering is turned off in AdGuard Home", "Lists are still imported, and DNServe keeps filtering on.")
+		note("Filtering is turned off in AdGuard Home", "Lists are still imported, and DNServ keeps filtering on.")
 	}
 	if b.s.AutoClients > 0 {
 		names := "names"
 		if b.s.AutoClients == 1 {
 			names = "name"
 		}
-		note(fmt.Sprintf("%d device %s AdGuard Home found by itself", b.s.AutoClients, names), "DNServe asks your router for names instead (Router for device names, above).")
+		note(fmt.Sprintf("%d device %s AdGuard Home found by itself", b.s.AutoClients, names), "DNServ asks your router for names instead (Router for device names, above).")
 	}
 	if len(b.s.Missing) > 0 {
 		note("Couldn't read: "+strings.Join(b.s.Missing, ", "), "This version of AdGuard Home doesn't offer them, or the account can't see them.")
 	}
-	note("Query log and statistics", "History starts fresh in DNServe.")
+	note("Query log and statistics", "History starts fresh in DNServ.")
 }
 
 func dedupe(in []string) []string {

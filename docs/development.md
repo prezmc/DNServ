@@ -4,10 +4,10 @@
 go test -race ./...
 go test -run '^$' -bench . ./internal/...
 go test -tags failover -v -timeout 30m ./test/failover/   # needs Docker
-go run ./cmd/dnserve -config dnserve.example.yaml
+go run ./cmd/dnserv -config dnserv.example.yaml
 ```
 
-Layout: `cmd/dnserve` (entry point), `internal/config`, `internal/filter`
+Layout: `cmd/dnserv` (entry point), `internal/config`, `internal/filter`
 (rule parsing, compiled index, list downloads, bypass list),
 `internal/cache`, `internal/upstream` (DoH, DoT, plain),
 `internal/recursive` (Unbound config and supervisor, tunnel checks),
@@ -17,9 +17,9 @@ The Unbound integration test runs when `unbound` and a DNSSEC root key are
 installed (`apt install unbound` or `apk add unbound dnssec-root`).
 
 Images: `.github/workflows/publish.yml` builds amd64 and arm64 images and
-pushes `ghcr.io/prezmc/dnserve` on every push to `main` and on version tags.
+pushes `ghcr.io/prezmc/dnserv` on every push to `main` and on version tags.
 Adding `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets also
-pushes `prezmcmahon/dnserve` to Docker Hub.
+pushes `prezmcmahon/dnserv` to Docker Hub.
 
 ## Roadmap
 

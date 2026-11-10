@@ -7,7 +7,7 @@ package filter
 //
 // Blocking the names is only half of it: a device can still reach a
 // resolver by IP. Pair this with a router rule that blocks outbound TCP and
-// UDP port 853 and redirects port 53 to DNServe (see the README).
+// UDP port 853 and redirects port 53 to DNServ (see the README).
 var BypassDomains = []string{
 	// Google
 	"dns.google", "dns.google.com",

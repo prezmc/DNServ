@@ -35,8 +35,8 @@ import (
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb/v2"
 
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // Options configure a node's cluster membership.

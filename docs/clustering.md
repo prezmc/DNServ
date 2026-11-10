@@ -1,6 +1,6 @@
 # Clustering
 
-**[Running DNServe on two servers](deploy-two-servers.md)** is the full
+**[Running DNServ on two servers](deploy-two-servers.md)** is the full
 guide: ports and firewall, the router, upgrades, what happens when a server
 or the link between them fails, and what to do when a server is lost for
 good.
@@ -10,7 +10,7 @@ Run the same image on a second server (same command or compose file, port
 
 1. On your first node, open **Cluster** and choose **Make a join code**.
 2. Open the new node's dashboard, enter its setup code, choose **No, add
-   this server to my DNServe**, and paste the join code.
+   this server to my DNServ**, and paste the join code.
 
 The new node copies the accounts, settings, devices, groups and rules, and
 from then on every change made on either node reaches both, usually within
@@ -51,12 +51,12 @@ Leadership controls, under **Cluster**:
   and recovering both sides would leave two separate clusters). Nodes left
   out are locked out (their certificates are no longer accepted) until
   they join again with a new code; their Cluster page says so.
-- **Join another DNServe instead** moves a node that is set up already into
+- **Join another DNServ instead** moves a node that is set up already into
   another cluster, replacing its accounts and settings.
 
 ## How many nodes?
 
-DNServe works with one node, two, or more. The Cluster page says how many
+DNServ works with one node, two, or more. The Cluster page says how many
 voting nodes can be down while changes still work.
 
 | Setup | DNS if a node is down | Changes if a node is down |
@@ -66,10 +66,10 @@ voting nodes can be down while changes still work.
 | 2 nodes + witness | The other answers | Keep working |
 | 3 nodes | Others answer | Keep working |
 
-A **witness** is the same image started with `DNSERVE_ROLE=witness` on a
+A **witness** is the same image started with `DNSERV_ROLE=witness` on a
 third machine. It votes and keeps the change log, but answers no DNS and has
 no dashboard, so a Raspberry Pi or a NAS is plenty. It joins with a join code
-in `DNSERVE_JOIN` (the join-code screen shows the full command; see also
+in `DNSERV_JOIN` (the join-code screen shows the full command; see also
 [`deploy/docker-compose.witness.yml`](../deploy/docker-compose.witness.yml)). If it wins an election it hands
 leadership straight to a full node. Put it on a different machine from your
 DNS nodes: a witness on the same box doesn't help when that box fails. With
@@ -82,7 +82,7 @@ any number of nodes behind two floating addresses with keepalived.
 
 By default a node learns its cluster address from the address its dashboard
 is opened at, or, for a witness, from the address the other node sees it
-connect from. Set `DNSERVE_CLUSTER_ADVERTISE` (for example
+connect from. Set `DNSERV_CLUSTER_ADVERTISE` (for example
 `192.168.1.10:8081`) if other nodes reach it differently, such as through a
 different published port.
 

@@ -24,7 +24,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/config"
+	"github.com/prezmc/dnserv/internal/config"
 )
 
 // LoadOrCreateCert loads the configured certificate, or a self-signed one
@@ -56,7 +56,7 @@ func LoadOrCreateCert(c config.TLSConfig, dataDir string) (tls.Certificate, stri
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 126))
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: firstOr(c.Hostnames, "dnserve.local"), Organization: []string{"DNServe self-signed"}},
+		Subject:      pkix.Name{CommonName: firstOr(c.Hostnames, "dnserv.local"), Organization: []string{"DNServ self-signed"}},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(2 * 365 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

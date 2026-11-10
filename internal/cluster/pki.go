@@ -19,7 +19,8 @@ import (
 
 // serverName is in every node certificate. Peers check certificates
 // against the cluster CA and this name, not against IPs or hostnames,
-// which change and which the node can't know.
+// which change and which the node can't know. It keeps the old project
+// name (DNServe) because existing certificates carry it.
 const serverName = "dnserve-node"
 
 // certLife is long because nodes have no way to renew yet; trust comes
@@ -42,7 +43,7 @@ func newCA(clusterID string) (certPEM, keyPEM string, err error) {
 	now := time.Now()
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial(),
-		Subject:               pkix.Name{CommonName: "DNServe cluster " + clusterID},
+		Subject:               pkix.Name{CommonName: "DNServ cluster " + clusterID},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.Add(certLife),
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,

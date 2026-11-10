@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/config"
+	"github.com/prezmc/dnserv/internal/config"
 )
 
 // maxListBytes bounds a single downloaded list.
@@ -295,7 +295,7 @@ func (e *Engine) download(ctx context.Context, src, dst string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("User-Agent", "DNServe")
+	req.Header.Set("User-Agent", "DNServ")
 	resp, err := e.client.Do(req)
 	if err != nil {
 		return err

@@ -1,8 +1,8 @@
 # Features
 
-Everything DNServe does today, in more detail than the README.
+Everything DNServ does today, in more detail than the README.
 
-- **Three ways to resolve** (`upstream.mode` or `DNSERVE_UPSTREAM_MODE`):
+- **Three ways to resolve** (`upstream.mode` or `DNSERV_UPSTREAM_MODE`):
 
   | Mode | How | ISP sees your lookups | You trust |
   |---|---|---|---|
@@ -59,10 +59,10 @@ Everything DNServe does today, in more detail than the README.
   audit log but not in settings history or backups. Admins, power users
   with "Manage blocklists" or "Pause filtering", and viewers given "Pause
   filtering" can use it.
-- **Devices and recent queries.** See every device using DNServe, name
+- **Devices and recent queries.** See every device using DNServ, name
   them, and browse its most recent queries (kept in memory) with one-click
   Block or Allow. "Check a domain" says whether a name is blocked and by
-  which rule and list. Give DNServe your router's address (`local_dns`) and
+  which rule and list. Give DNServ your router's address (`local_dns`) and
   it shows the names your router knows and answers local names such as
   `printer.lan` through it.
 - **Analytics and query history.** Each node keeps its own query history
@@ -81,7 +81,7 @@ Everything DNServe does today, in more detail than the README.
   up they are counted and dropped rather than waited on. People with only
   `dashboard.view` see totals and top domains; devices, the query log and
   exports need `querylog.view` (and `data.export`).
-- **Performance.** The **Performance** page shows how quickly DNServe
+- **Performance.** The **Performance** page shows how quickly DNServ
   answers: median, 95th and 99th percentile response times, how long
   lookups the cache couldn't answer took, cache hit rate and SERVFAILs,
   over time and by record type, plus each upstream server's speed,

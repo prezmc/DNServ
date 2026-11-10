@@ -1,4 +1,4 @@
-module github.com/prezmc/dnserve
+module github.com/prezmc/dnserv
 
 go 1.26.0
 

@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/cluster"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/cluster"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 func (a *API) clusterRoutes(m *http.ServeMux) {

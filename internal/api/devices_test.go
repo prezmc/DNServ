@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/querylog"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/querylog"
 )
 
 func TestDevicesQueriesAndCheck(t *testing.T) {

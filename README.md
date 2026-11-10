@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="internal/web/static/logo.svg" alt="DNServe logo" width="96">
+  <img src="internal/web/static/logo.svg" alt="DNServ logo" width="96">
 </p>
 
-<h1 align="center">DNServe</h1>
+<h1 align="center">DNServ</h1>
 
 <p align="center">
   Fast, filtered DNS for homes and small offices.<br>
@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/dashboard.png" alt="DNServe dashboard" width="900">
+  <img src="docs/images/dashboard.png" alt="DNServ dashboard" width="900">
 </p>
 
-## Why DNServe
+## Why DNServ
 
 - **Fast.** About 51,000 queries a second on a 4-core machine, with a median answer of 0.14 ms. Popular names are prefetched before they expire, and old answers are served if the internet is down.
 - **Blocks ads, trackers and malware.** Use any hosts file, domain list or AdGuard-style list (wildcards and regex included), plus your own allow and block rules.
@@ -27,11 +27,11 @@
 ## Quick start
 
 ```bash
-docker run -d --name dnserve --restart unless-stopped \
+docker run -d --name dnserv --restart unless-stopped \
   -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 -p 8081:8081 \
-  -v dnserve-data:/data ghcr.io/prezmc/dnserve:latest
+  -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
 
-docker logs dnserve 2>&1 | grep setup_code
+docker logs dnserv 2>&1 | grep setup_code
 ```
 
 You can also run `docker compose up -d` with the included [`docker-compose.yml`](docker-compose.yml).
@@ -45,13 +45,13 @@ Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 
 Is port 53 already in use? See [Installing](docs/install.md) for systemd-resolved, non-root and reverse proxy notes.
 
-**Updating:** run `docker compose pull && docker compose up -d`. Settings and history are kept.
+**Updating:** run `docker compose pull && docker compose up -d`. Settings and history are kept. Coming from DNServe, the old name? See [Upgrading from DNServe](docs/install.md#upgrading-from-dnserve).
 
 ## A second server
 
 1. Start the same image on another machine, with port 8081 open between the two.
 2. On the first server, open **Cluster** and choose **Make a join code**.
-3. On the new server, enter its setup code, choose **No, add this server to my DNServe**, and paste the join code.
+3. On the new server, enter its setup code, choose **No, add this server to my DNServ**, and paste the join code.
 
 Then add the second server as your router's second DNS server. To keep taking changes while either server is down, add a witness on a third machine. The [two-server guide](docs/deploy-two-servers.md) covers firewalls, upgrades, and what happens when something fails.
 
@@ -67,7 +67,7 @@ Then add the second server as your router's second DNS server. To keep taking ch
 
 | | |
 |---|---|
-| [Features](docs/features.md) | Everything DNServe does, in detail |
+| [Features](docs/features.md) | Everything DNServ does, in detail |
 | [Installing and configuring](docs/install.md) | Ports, notes for some hosts, and environment variables |
 | [Clustering](docs/clustering.md) | Nodes, witnesses, leader controls and recovery |
 | [Two-server guide](docs/deploy-two-servers.md) | Step-by-step deploy and failure scenarios |

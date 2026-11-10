@@ -12,7 +12,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/querylog"
+	"github.com/prezmc/dnserv/internal/querylog"
 )
 
 func open(t *testing.T, days, stats int) *Store {

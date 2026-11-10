@@ -10,10 +10,10 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/analytics"
-	"github.com/prezmc/dnserve/internal/policy"
-	"github.com/prezmc/dnserve/internal/querylog"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/policy"
+	"github.com/prezmc/dnserv/internal/querylog"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // BenchmarkHandle measures the in-process query path (no sockets) with the

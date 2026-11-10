@@ -1,4 +1,4 @@
-// Package backup writes and reads encrypted DNServe backups, and runs the
+// Package backup writes and reads encrypted DNServ backups, and runs the
 // backup schedule.
 //
 // A backup is encrypted to a public key derived from the owner's
@@ -7,7 +7,7 @@
 // is never stored. The format is a short text header, so the file says
 // what it is, followed by the sealed data:
 //
-//	DNSERVE-BACKUP 1
+//	DNSERV-BACKUP 1
 //	{"created":...,"salt":...,"epk":...,"nonce":...}
 //	<XChaCha20-Poly1305 ciphertext of gzipped JSON>
 //
@@ -34,9 +34,11 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/scrypt"
 
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
+// magic and the key label below keep the project's old name (DNServe) on
+// purpose: changing them would make every existing backup unreadable.
 const magic = "DNSERVE-BACKUP 1\n"
 
 // Scrypt cost: about 100 ms and 32 MB, once per passphrase use.
@@ -54,7 +56,7 @@ type Header struct {
 	Created   time.Time `json:"created"`
 	Node      string    `json:"node"`
 	ClusterID string    `json:"cluster_id,omitempty"`
-	Version   string    `json:"version,omitempty"` // DNServe version that made it
+	Version   string    `json:"version,omitempty"` // DNServ version that made it
 	Salt      string    `json:"salt"`
 	N         int       `json:"n"`
 	R         int       `json:"r"`
@@ -160,7 +162,7 @@ var ErrBadPassphrase = errors.New("that passphrase doesn't open this backup (or 
 func ReadHeader(file []byte) (Header, []byte, []byte, error) {
 	var h Header
 	if !bytes.HasPrefix(file, []byte(magic)) {
-		return h, nil, nil, errors.New("that isn't a DNServe backup file")
+		return h, nil, nil, errors.New("that isn't a DNServ backup file")
 	}
 	rest := file[len(magic):]
 	i := bytes.IndexByte(rest, '\n')

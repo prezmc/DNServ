@@ -1,9 +1,9 @@
 # Installing and configuring
 
 ```bash
-docker run -d --name dnserve --restart unless-stopped \
+docker run -d --name dnserv --restart unless-stopped \
   -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 -p 8081:8081 \
-  -v dnserve-data:/data ghcr.io/prezmc/dnserve:latest
+  -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
 ```
 
 or `docker compose up -d` with the included `docker-compose.yml`.
@@ -12,7 +12,7 @@ No config file is needed. On first start the node prints a one-time setup
 code in its log:
 
 ```bash
-docker logs dnserve 2>&1 | grep setup_code
+docker logs dnserv 2>&1 | grep setup_code
 ```
 
 Open `http://<server>:8080` and the setup wizard walks you through it:
@@ -32,18 +32,18 @@ users (admins), the audit log (admins), and your own password, sessions
 and API tokens. It is a small built-in page with no external scripts or
 fonts, so it works without internet access. Port 8080 is plain HTTP: keep
 it on your LAN, or put it behind a reverse proxy with HTTPS (set
-`DNSERVE_ALLOWED_ORIGINS` to the proxy's host name).
+`DNSERV_ALLOWED_ORIGINS` to the proxy's host name).
 
 Settings you save are stored in the data volume and win over the config
 file and environment variables, which only provide the starting values. A
-config file is optional: copy [`dnserve.example.yaml`](../dnserve.example.yaml)
-to `/data/dnserve.yaml` if you'd rather manage settings that way. Check one
-with `dnserve -check-config -config FILE`.
+config file is optional: copy [`dnserv.example.yaml`](../dnserv.example.yaml)
+to `/data/dnserv.yaml` if you'd rather manage settings that way. Check one
+with `dnserv -check-config -config FILE`.
 
 Notes:
 
 - **Port 53 already in use?** On many Linux hosts `systemd-resolved` listens
-  on port 53. Either publish DNServe on the host's LAN address
+  on port 53. Either publish DNServ on the host's LAN address
   (`-p 192.168.1.10:53:53/udp …`) or set `DNSStubListener=no` in
   `/etc/systemd/resolved.conf`.
 - **Non-root.** The container runs as an unprivileged user, and so does the
@@ -59,27 +59,47 @@ Notes:
 
 | Variable | Example | Sets |
 |---|---|---|
-| `DNSERVE_UPSTREAM_MODE` | `recursive` | `forward`, `recursive` or `tunnel` |
-| `DNSERVE_UPSTREAM_SERVERS` | `https://dns.quad9.net/dns-query,tls://dns.quad9.net` | forwarding servers |
-| `DNSERVE_TUNNEL_INTERFACE` | `wg0` | interface that must be up in tunnel mode |
-| `DNSERVE_TUNNEL_EXPECTED_EGRESS` | `185.65.0.0/16` | optional VPN exit IPs to verify |
-| `DNSERVE_TUNNEL_ON_DOWN` | `block` | `forward` (encrypted fallback) or `block` |
-| `DNSERVE_ALLOWED_NETS` | `192.168.1.0/24,10.0.0.0/8` | client networks allowed to query |
-| `DNSERVE_LOCAL_DNS` | `192.168.1.1` | your router, for device names and local names |
-| `DNSERVE_TIME_ZONE` | `Europe/London` | time zone for group schedules (default: the container's `TZ`, else UTC) |
-| `DNSERVE_BLOCK_BYPASS` | `true` | block public DoH resolvers and Private Relay |
-| `DNSERVE_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
-| `DNSERVE_THREAT_FEEDS` | `false` | download threat feeds for risk scores (default on) |
-| `DNSERVE_HISTORY_DAYS` | `14` | days of individual queries each node keeps (0 = none) |
-| `DNSERVE_STATS_DAYS` | `90` | days of hourly totals each node keeps (0 = none) |
-| `DNSERVE_CLUSTER_ADVERTISE` | `192.168.1.10:8081` | how other nodes reach this one (default: learned from the dashboard's address) |
-| `DNSERVE_CLUSTER_LISTEN` | `:8081` | node-to-node listener |
-| `DNSERVE_ROLE` | `witness` | `node` (default) or `witness` (votes only; see above) |
-| `DNSERVE_JOIN` | `DNSJ1-…` | witness only: the join code it uses the first time it starts |
-| `DNSERVE_NODE_NAME` | `pi-kitchen` | this node's name when it is first created (rename it under Cluster) |
-| `DNSERVE_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
+| `DNSERV_UPSTREAM_MODE` | `recursive` | `forward`, `recursive` or `tunnel` |
+| `DNSERV_UPSTREAM_SERVERS` | `https://dns.quad9.net/dns-query,tls://dns.quad9.net` | forwarding servers |
+| `DNSERV_TUNNEL_INTERFACE` | `wg0` | interface that must be up in tunnel mode |
+| `DNSERV_TUNNEL_EXPECTED_EGRESS` | `185.65.0.0/16` | optional VPN exit IPs to verify |
+| `DNSERV_TUNNEL_ON_DOWN` | `block` | `forward` (encrypted fallback) or `block` |
+| `DNSERV_ALLOWED_NETS` | `192.168.1.0/24,10.0.0.0/8` | client networks allowed to query |
+| `DNSERV_LOCAL_DNS` | `192.168.1.1` | your router, for device names and local names |
+| `DNSERV_TIME_ZONE` | `Europe/London` | time zone for group schedules (default: the container's `TZ`, else UTC) |
+| `DNSERV_BLOCK_BYPASS` | `true` | block public DoH resolvers and Private Relay |
+| `DNSERV_BLOCK_MODE` | `nxdomain` | `null_ip`, `nxdomain` or `refused` |
+| `DNSERV_THREAT_FEEDS` | `false` | download threat feeds for risk scores (default on) |
+| `DNSERV_HISTORY_DAYS` | `14` | days of individual queries each node keeps (0 = none) |
+| `DNSERV_STATS_DAYS` | `90` | days of hourly totals each node keeps (0 = none) |
+| `DNSERV_CLUSTER_ADVERTISE` | `192.168.1.10:8081` | how other nodes reach this one (default: learned from the dashboard's address) |
+| `DNSERV_CLUSTER_LISTEN` | `:8081` | node-to-node listener |
+| `DNSERV_ROLE` | `witness` | `node` (default) or `witness` (votes only; see above) |
+| `DNSERV_JOIN` | `DNSJ1-…` | witness only: the join code it uses the first time it starts |
+| `DNSERV_NODE_NAME` | `pi-kitchen` | this node's name when it is first created (rename it under Cluster) |
+| `DNSERV_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
 
 Environment variables override the optional config file; settings saved in
 the dashboard or API override both.
+
+## Upgrading from DNServe
+
+The project was called DNServe until November 2026. Servers set up under
+the old name keep their data, but a few names changed. In each server's
+`docker-compose.yml`:
+
+1. Change the image to `ghcr.io/prezmc/dnserv:latest`. The old image
+   name gets no more updates.
+2. Rename every `DNSERVE_` environment variable to `DNSERV_` (for
+   example `DNSERVE_CLUSTER_ADVERTISE` becomes `DNSERV_CLUSTER_ADVERTISE`).
+   The old names are ignored.
+3. Leave the `volumes:` lines as they are. The volume holds your settings
+   and history, and a new volume name would start an empty server.
+
+Then run `docker compose pull && docker compose up -d`. Update every
+server: nodes on either side of the rename still talk to each other, so
+the order doesn't matter. You'll need to sign in again, and Prometheus
+metrics now start with `dnserv_`. Backups made before the rename restore
+as normal.
 
 [Back to the README](../README.md)

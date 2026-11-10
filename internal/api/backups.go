@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/backup"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/backup"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // maxBackup is the largest backup file accepted for a restore.

@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/prezmc/dnserve/internal/config"
+	"github.com/prezmc/dnserv/internal/config"
 )
 
 func TestParseLine(t *testing.T) {

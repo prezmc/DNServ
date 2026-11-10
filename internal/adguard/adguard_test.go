@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // fakeAGH answers like AdGuard Home v0.107 with Basic auth.

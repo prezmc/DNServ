@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 func TestGroupPolicy(t *testing.T) {

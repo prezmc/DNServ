@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/prezmc/dnserve/internal/adguard"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/adguard"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 func TestAdGuardImport(t *testing.T) {

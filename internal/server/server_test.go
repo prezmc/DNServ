@@ -13,12 +13,12 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/cache"
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/policy"
-	"github.com/prezmc/dnserve/internal/querylog"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/cache"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/policy"
+	"github.com/prezmc/dnserv/internal/querylog"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // fakeResolver answers A queries with 192.0.2.1 and counts calls.

@@ -102,7 +102,7 @@ func (l *lab) waitHealthy(via string, names ...string) {
 	})
 }
 
-// TestTwoNodesAndWitness is the recommended set-up: two DNServe servers and
+// TestTwoNodesAndWitness is the recommended set-up: two DNServ servers and
 // a witness on a third machine.
 func TestTwoNodesAndWitness(t *testing.T) {
 	l := newLab(t)

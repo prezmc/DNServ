@@ -5,7 +5,7 @@ import (
 
 	"github.com/miekg/dns"
 
-	"github.com/prezmc/dnserve/internal/policy"
+	"github.com/prezmc/dnserv/internal/policy"
 )
 
 // Safe search works the way Google, Microsoft and DuckDuckGo ask networks

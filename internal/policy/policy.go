@@ -7,8 +7,8 @@ import (
 	"net/netip"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 // Set maps client addresses to their group. A nil *Set has no groups.

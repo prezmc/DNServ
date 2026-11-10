@@ -2,13 +2,13 @@
 
 Admins can bring an existing AdGuard Home's setup across from **Settings →
 Import from AdGuard Home** (also offered at the end of the setup wizard).
-Enter AdGuard Home's dashboard address, username and password: DNServe reads
+Enter AdGuard Home's dashboard address, username and password: DNServ reads
 its settings through AdGuard Home's own API, changes nothing there, and uses
 the password once without saving it. You then see, section by section, what
-would be added, what DNServe already has, and what can't move and why, and
+would be added, what DNServ already has, and what can't move and why, and
 tick what to import. Running it again adds only what's missing.
 
-| AdGuard Home | Becomes in DNServe |
+| AdGuard Home | Becomes in DNServ |
 |---|---|
 | Blocklists and allowlists (by URL) | Lists, added next to yours, with the same on/off state |
 | Custom rules | Custom rules. Hosts lines with a real address and simple `$dnsrewrite` rules become local names |

@@ -1,6 +1,6 @@
-# Running DNServe on two servers
+# Running DNServ on two servers
 
-This guide sets up DNServe on two Linux servers, with an optional witness on a
+This guide sets up DNServ on two Linux servers, with an optional witness on a
 third machine, and explains what happens when something breaks. Everything in
 the "What happens when" table is checked by the failover tests in
 [`test/failover`](../test/failover), which run on every pull request.
@@ -8,7 +8,7 @@ the "What happens when" table is checked by the failover tests in
 ## What you need
 
 - **Two Linux servers** (x86-64 or ARM64) with Docker and Docker Compose.
-  They don't need to be big; DNServe answers tens of thousands of queries a
+  They don't need to be big; DNServ answers tens of thousands of queries a
   second on a 4-core machine.
 - **A fixed address for each**, set as a DHCP reservation on your router or
   configured on the server. Devices are given these addresses as their DNS
@@ -26,7 +26,7 @@ the "What happens when" table is checked by the failover tests in
 | 853 TCP | Your devices (optional) | DNS over TLS (Android Private DNS and others) |
 | 443 TCP | Your devices (optional) | DNS over HTTPS, if you uncomment it in the compose file |
 | 8080 TCP | You, from your own network | Dashboard and setup |
-| 8081 TCP | The other DNServe server and the witness only | Keeping settings in sync. Encrypted and authenticated with the cluster's own certificates |
+| 8081 TCP | The other DNServ server and the witness only | Keeping settings in sync. Encrypted and authenticated with the cluster's own certificates |
 
 Don't expose any of these to the internet. If you use a firewall on the
 servers (ufw shown, with your network as `192.168.1.0/24`):
@@ -42,12 +42,12 @@ sudo ufw allow from 192.168.1.30 to any port 8081 proto tcp   # the witness
 ### Port 53 is already in use
 
 On Ubuntu and some other distributions, systemd-resolved listens on port 53,
-and DNServe can't start (`address already in use`). Turn off its listener and
-point the server itself at a public resolver (or at the other DNServe):
+and DNServ can't start (`address already in use`). Turn off its listener and
+point the server itself at a public resolver (or at the other DNServ):
 
 ```sh
 sudo mkdir -p /etc/systemd/resolved.conf.d
-printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1\n' | sudo tee /etc/systemd/resolved.conf.d/dnserve.conf
+printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1\n' | sudo tee /etc/systemd/resolved.conf.d/dnserv.conf
 sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
 sudo systemctl restart systemd-resolved
 ```
@@ -62,22 +62,22 @@ sudo systemctl restart systemd-resolved
    server's dashboard open **Cluster** and choose **Make a join code**. Check
    that "Other nodes reach this one at" is the first server's address. Open
    `http://<second server>:8080`, enter its setup code from its log, choose
-   **No, add this server to my DNServe** and paste the join code. A few
+   **No, add this server to my DNServ** and paste the join code. A few
    seconds later the second server has the same accounts, settings and
    blocklists, and both show as healthy on the Cluster page.
 3. **Witness (optional).** Make another join code; the dialog shows the
    command to run on the third machine, or use
    [`deploy/docker-compose.witness.yml`](../deploy/docker-compose.witness.yml)
-   with the code in `DNSERVE_JOIN`.
+   with the code in `DNSERV_JOIN`.
 4. **Router.** In your router's DHCP settings, set the DNS servers to the two
-   DNServe addresses, first server first. Devices pick up the change when
+   DNServ addresses, first server first. Devices pick up the change when
    they renew their lease (reconnect to Wi-Fi to hurry one along). Remove
    any other DNS servers there, or devices will use them to get around
    blocking.
 
 The servers find each other by the addresses on the Cluster page. If they are
 on different networks (two sites over a VPN, for example), set
-`DNSERVE_CLUSTER_ADVERTISE=<address the other server uses>:8081` in each
+`DNSERV_CLUSTER_ADVERTISE=<address the other server uses>:8081` in each
 compose file.
 
 ## What happens when
@@ -116,14 +116,14 @@ Without a witness, changes are paused until you tell the surviving server
 it's on its own: open **Cluster** on it and choose **Recover with this node
 only**. It asks you to confirm, because it can't tell a server that is
 switched off from a broken link. If the other server is in fact still
-running, recovering both would leave two separate DNServes with different
+running, recovering both would leave two separate DNServs with different
 settings. So only recover when you know the other one is off, broken or
 wiped.
 
 If the old server comes back anyway, it shows that it was left out, keeps
 answering DNS with its old settings, and refuses to recover on its own. To
 use it again, make a join code on the working server and use **Join another
-DNServe** on the old one.
+DNServ** on the old one.
 
 ## Upgrading
 
@@ -166,6 +166,6 @@ go test -tags failover -v -timeout 30m ./test/failover/
 ```
 
 They build the image from this repository, or test another one with
-`DNSERVE_IMAGE=ghcr.io/prezmc/dnserve:latest`. `FAILOVER_REPORT=report.md`
+`DNSERV_IMAGE=ghcr.io/prezmc/dnserv:latest`. `FAILOVER_REPORT=report.md`
 writes the results table; `FAILOVER_KEEP=1` leaves the containers running for
 a look afterwards.

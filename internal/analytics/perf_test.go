@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/querylog"
+	"github.com/prezmc/dnserv/internal/querylog"
 )
 
 func TestHistQuantile(t *testing.T) {

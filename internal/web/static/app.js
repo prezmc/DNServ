@@ -1,4 +1,4 @@
-// DNServe dashboard. Plain JavaScript, no build step, no external assets.
+// DNServ dashboard. Plain JavaScript, no build step, no external assets.
 // All text from the server is inserted with textContent, never as HTML.
 'use strict';
 
@@ -195,8 +195,8 @@ function fmtDur(sec) {
   return m + 'm';
 }
 const store = {
-  get(k) { try { return sessionStorage.getItem('dnserve.' + k); } catch (_) { return null; } },
-  set(k, v) { try { v === null ? sessionStorage.removeItem('dnserve.' + k) : sessionStorage.setItem('dnserve.' + k, v); } catch (_) { /* ignore */ } },
+  get(k) { try { return sessionStorage.getItem('dnserv.' + k); } catch (_) { return null; } },
+  set(k, v) { try { v === null ? sessionStorage.removeItem('dnserv.' + k) : sessionStorage.setItem('dnserv.' + k, v); } catch (_) { /* ignore */ } },
 };
 
 function download(name, text) {
@@ -217,7 +217,7 @@ function tempPass() {
 
 // inviteText is a message an admin can send to a new user.
 function inviteText(username, password) {
-  return 'You have an account on DNServe, our home network\u2019s DNS filter.\n\n' +
+  return 'You have an account on DNServ, our home network\u2019s DNS filter.\n\n' +
     '1. Open ' + location.origin + '/\n' +
     '2. Sign in as ' + username + ' with the temporary password ' + password + '\n' +
     '3. Set up an authenticator app when asked (for example Google Authenticator, Microsoft Authenticator or 1Password)\n' +
@@ -273,7 +273,7 @@ const providerFor = (servers) => Object.keys(PROVIDERS).find(k => JSON.stringify
 
 const MODES = {
   forward: { title: 'Encrypted forwarding (recommended)', note: "Lookups go encrypted to a public resolver you pick, so your ISP can't see or change them." },
-  recursive: { title: 'Full recursion', note: 'DNServe asks the domain servers itself and checks DNSSEC. No single company sees all your lookups, but your ISP can see them.' },
+  recursive: { title: 'Full recursion', note: 'DNServ asks the domain servers itself and checks DNSSEC. No single company sees all your lookups, but your ISP can see them.' },
   tunnel: { title: 'Recursion through a VPN', note: 'Full recursion with every lookup sent through a WireGuard VPN, hidden from your ISP.' },
 };
 
@@ -321,7 +321,7 @@ function routerHelp() {
     h('p', {}, "Set your router's DNS server (usually under DHCP or LAN settings) to:"),
     a.loopback ? msg('warn', "You opened the dashboard on this machine itself, so use the machine's LAN address (for example 192.168.1.10), not " + a.host + '.')
       : h('p', {}, h('code', { class: 'big' }, a.host), a.ok ? null : h('span', { class: 'muted small' }, '  (use the IP address this name points to)')),
-    h('p', { class: 'muted small' }, "Leave the secondary DNS empty or point it at a second DNServe node. A public one such as 8.8.8.8 lets devices skip filtering. Devices switch over when they reconnect to Wi-Fi."),
+    h('p', { class: 'muted small' }, "Leave the secondary DNS empty or point it at a second DNServ node. A public one such as 8.8.8.8 lets devices skip filtering. Devices switch over when they reconnect to Wi-Fi."),
   ];
 }
 
@@ -331,7 +331,7 @@ async function boot() {
   try {
     ME = await api('GET', '/auth/me');
   } catch (e) {
-    return render(h('div', { class: 'center' }, h('div', { class: 'card' }, h('h1', {}, 'DNServe'), msg('err', 'Could not reach the node: ' + e.message), h('button', { onclick: boot }, 'Try again'))));
+    return render(h('div', { class: 'center' }, h('div', { class: 'card' }, h('h1', {}, 'DNServ'), msg('err', 'Could not reach the node: ' + e.message), h('button', { onclick: boot }, 'Try again'))));
   }
   if (!ME.signed_in) {
     if (ME.setup_needed) {
@@ -374,9 +374,9 @@ function centered(...kids) { return h('div', { class: 'center' }, h('div', { cla
 function setupAccount() {
   render(centered(
     wizardSteps(1),
-    h('h1', {}, 'Welcome to DNServe'),
-    h('p', { class: 'muted' }, "First, prove this is your server. DNServe printed a setup code in its container log when it started. It's in a box headed \u201cDNServe first-run setup\u201d. From a terminal:"),
-    h('p', {}, h('code', {}, 'docker logs dnserve')),
+    h('h1', {}, 'Welcome to DNServ'),
+    h('p', { class: 'muted' }, "First, prove this is your server. DNServ printed a setup code in its container log when it started. It's in a box headed \u201cDNServ first-run setup\u201d. From a terminal:"),
+    h('p', {}, h('code', {}, 'docker logs dnserv')),
     h('p', { class: 'muted small' }, 'Using Portainer, Synology, Unraid or similar? Open the container and look at its log.'),
     form({}, [
       h('label', { for: 'code' }, 'Setup code'),
@@ -390,27 +390,27 @@ function setupAccount() {
   ));
 }
 
-// setupChoice: a new DNServe, or another node for an existing one.
+// setupChoice: a new DNServ, or another node for an existing one.
 function setupChoice(code) {
   render(centered(
     wizardSteps(1),
-    h('h1', {}, 'Is this your first DNServe?'),
+    h('h1', {}, 'Is this your first DNServ?'),
     h('div', { class: 'choices' },
       h('button', { class: 'choice', type: 'button', autofocus: true, onclick: () => setupAdmin(code) },
-        h('b', {}, 'Yes, set up a new DNServe'), h('span', { class: 'muted small' }, 'Create an admin account and choose your settings.')),
+        h('b', {}, 'Yes, set up a new DNServ'), h('span', { class: 'muted small' }, 'Create an admin account and choose your settings.')),
       h('button', { class: 'choice', type: 'button', onclick: () => setupJoin(code) },
-        h('b', {}, 'No, add this server to my DNServe'), h('span', { class: 'muted small' }, 'It copies the accounts, settings and blocklists from your other node and stays in sync with it.')),
+        h('b', {}, 'No, add this server to my DNServ'), h('span', { class: 'muted small' }, 'It copies the accounts, settings and blocklists from your other node and stays in sync with it.')),
       h('button', { class: 'choice', type: 'button', onclick: () => setupRestore(code) },
-        h('b', {}, 'Restore from a backup'), h('span', { class: 'muted small' }, 'Bring back the accounts and settings from a DNServe backup file.'))),
+        h('b', {}, 'Restore from a backup'), h('span', { class: 'muted small' }, 'Bring back the accounts and settings from a DNServ backup file.'))),
     h('div', { class: 'actions' }, h('button', { class: 'link', type: 'button', onclick: setupAccount }, 'Back')),
   ));
 }
 
 function setupJoin(code) {
   render(centered(
-    h('h1', {}, 'Add this server to your DNServe'),
+    h('h1', {}, 'Add this server to your DNServ'),
     h('ol', { class: 'steps-list' },
-      h('li', {}, 'On your other DNServe, open ', h('b', {}, 'Cluster'), ' and choose ', h('b', {}, 'Add a node'), '.'),
+      h('li', {}, 'On your other DNServ, open ', h('b', {}, 'Cluster'), ' and choose ', h('b', {}, 'Add a node'), '.'),
       h('li', {}, 'Copy the join code it shows and paste it here.')),
     form({}, [
       h('label', { for: 'join' }, 'Join code'),
@@ -427,7 +427,7 @@ function setupJoin(code) {
 // joinWaiting shows progress while the other node sends its settings.
 function joinWaiting() {
   const note = h('p', { class: 'muted' }, 'Copying accounts and settings from your other node…');
-  render(centered(h('h1', {}, 'Joining your DNServe'), note, h('div', { class: 'spinner', 'aria-hidden': 'true' })));
+  render(centered(h('h1', {}, 'Joining your DNServ'), note, h('div', { class: 'spinner', 'aria-hidden': 'true' })));
   const started = Date.now();
   timer = setInterval(async () => {
     let su;
@@ -435,9 +435,9 @@ function joinWaiting() {
     if (!su.needed) {
       clearInterval(timer); timer = null;
       render(centered(
-        h('h1', {}, 'This server is now part of your DNServe'),
+        h('h1', {}, 'This server is now part of your DNServ'),
         msg('ok', 'It has the same accounts, settings and blocklists as your other node, and keeps in sync with it.'),
-        h('p', {}, 'Sign in with your usual DNServe account. To use it for DNS, add its address to your router as a second DNS server.'),
+        h('p', {}, 'Sign in with your usual DNServ account. To use it for DNS, add its address to your router as a second DNS server.'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', autofocus: true, onclick: boot }, 'Sign in'))));
     } else if (Date.now() - started > 30000) {
       note.replaceChildren('Still waiting for the other node. Check that both servers can reach each other on port 8081. This page carries on as soon as the settings arrive.');
@@ -471,7 +471,7 @@ function setupAdmin(code) {
 function login() {
   render(centered(
     h('h1', {}, 'Sign in'),
-    h('p', { class: 'muted' }, 'DNServe on ' + location.hostname),
+    h('p', { class: 'muted' }, 'DNServ on ' + location.hostname),
     form({}, [
       h('label', { for: 'username' }, 'Username'),
       h('input', { id: 'username', name: 'username', type: 'text', autocomplete: 'username', required: true, autofocus: true }),
@@ -525,7 +525,7 @@ async function enroll() {
   render(centered(
     wizard ? wizardSteps(2) : null,
     h('h1', {}, 'Set up two-factor sign-in'),
-    h('p', { class: 'muted' }, 'Every DNServe account needs an authenticator app, such as 1Password, Bitwarden, Google Authenticator, Microsoft Authenticator or Authy. Scan this code with it:'),
+    h('p', { class: 'muted' }, 'Every DNServ account needs an authenticator app, such as 1Password, Bitwarden, Google Authenticator, Microsoft Authenticator or Authy. Scan this code with it:'),
     t.qr_png ? h('img', { class: 'qr', src: t.qr_png, alt: 'QR code for your authenticator app' }) : null,
     h('details', {}, h('summary', { class: 'small' }, "Can't scan? Enter the key by hand"),
       h('p', { class: 'small' }, 'Account: ', h('b', {}, ME.user ? ME.user.username : ''), ', key: ', h('code', {}, secretGroups), ' (time-based, 6 digits).')),
@@ -542,7 +542,7 @@ async function enroll() {
 }
 
 function recoveryCodes(codes, wizard) {
-  const text = 'DNServe recovery codes for ' + (ME.user ? ME.user.username : '') + ' on ' + location.hostname + '\n' +
+  const text = 'DNServ recovery codes for ' + (ME.user ? ME.user.username : '') + ' on ' + location.hostname + '\n' +
     'Each code works once. Keep them somewhere safe.\n\n' + codes.join('\n') + '\n';
   const cont = h('button', { class: 'primary', disabled: true, onclick: () => (wizard && can('upstream.manage') ? setupBasics() : boot()) }, 'Continue');
   render(h('div', { class: 'center' }, h('div', { class: 'card' },
@@ -551,7 +551,7 @@ function recoveryCodes(codes, wizard) {
     h('p', { class: 'muted' }, "If you lose your phone, each of these codes lets you sign in once. They won't be shown again."),
     h('div', { class: 'codes mono' }, codes.map(c => h('div', {}, c))),
     h('div', { class: 'actions' },
-      h('button', { type: 'button', onclick: () => download('dnserve-recovery-codes.txt', text) }, 'Download'),
+      h('button', { type: 'button', onclick: () => download('dnserv-recovery-codes.txt', text) }, 'Download'),
       h('button', { type: 'button', onclick: (ev) => { navigator.clipboard.writeText(text).then(() => { ev.target.textContent = 'Copied'; }); } }, 'Copy')),
     h('label', { class: 'inline' }, h('input', { type: 'checkbox', onchange: (ev) => { cont.disabled = !ev.target.checked; } }), "I've saved these codes"),
     h('div', { class: 'actions' }, cont),
@@ -591,7 +591,7 @@ async function setupBasics() {
 
   render(h('div', { class: 'center' }, h('div', { class: 'card wide' },
     wizardSteps(4),
-    h('h1', {}, 'Choose how DNServe protects you'),
+    h('h1', {}, 'Choose how DNServ protects you'),
     h('p', { class: 'muted' }, 'The defaults suit most homes. You can change all of this later in Settings.'),
     form({}, [
       h('h2', {}, 'Blocking'),
@@ -606,7 +606,7 @@ async function setupBasics() {
 
       h('h2', { class: 'mt' }, 'Extra protection'),
       h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: eff.Filtering.BlockBypass }),
-        h('span', {}, h('b', {}, "Don't let devices skip DNServe"), ' ', h('span', { class: 'muted small' }, 'Blocks browsers and apps from using their own encrypted DNS (and iCloud Private Relay). Good for families. A few apps may then fail to connect.'))),
+        h('span', {}, h('b', {}, "Don't let devices skip DNServ"), ' ', h('span', { class: 'muted small' }, 'Blocks browsers and apps from using their own encrypted DNS (and iCloud Private Relay). Good for families. A few apps may then fail to connect.'))),
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save and finish'), h('button', { type: 'button', onclick: setupDone }, 'Skip')),
     ], async (f) => {
       const mode = f.querySelector('input[name=mode]:checked').value;
@@ -629,7 +629,7 @@ function setupDone() {
   const seen = h('div', { 'aria-live': 'polite' });
   render(centered(
     h('h1', {}, "You're set up"),
-    h('p', {}, 'Last step: send your devices to DNServe.'),
+    h('p', {}, 'Last step: send your devices to DNServ.'),
     routerHelp(),
     seen,
     h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: () => { location.hash = '#/'; boot(); } }, 'Open the dashboard'),
@@ -640,7 +640,7 @@ function setupDone() {
     let ds;
     try { ds = await api('GET', '/devices'); } catch (_) { return; }
     ds = ds.filter(d => d.queries > 0);
-    fill(seen, h('h3', {}, 'Devices using DNServe'),
+    fill(seen, h('h3', {}, 'Devices using DNServ'),
       ds.length ? h('ul', {}, ds.slice(0, 8).map(d => h('li', {}, deviceLabel(d), ' ', h('span', { class: 'muted small' }, ago(d.last_seen)))))
         : h('p', { class: 'muted small' }, h('span', { class: 'dot' }), 'Waiting for the first device\u2026 (devices pick up the change when they reconnect to Wi\u2011Fi)'));
   };
@@ -680,7 +680,7 @@ function route() {
     menu.setAttribute('aria-expanded', String(open));
   } }, r.title + ' \u25be');
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
-    h('div', { class: 'brand' }, h('a', { href: '#/', class: 'logo' }, h('img', { src: 'logo.svg', alt: '', width: 26, height: 26 }), h('span', {}, 'DN', h('b', {}, 'Serve'))), menu),
+    h('div', { class: 'brand' }, h('a', { href: '#/', class: 'logo' }, h('img', { src: 'logo.svg', alt: '', width: 26, height: 26 }), h('span', {}, 'DN', h('b', {}, 'Serv'))), menu),
     h('div', { id: 'navlinks', class: 'links' },
       ROUTES.filter(x => x.show() && !x.hidden).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, navIcon(x.path), x.title))),
     h('div', { class: 'spacer' }),
@@ -689,7 +689,7 @@ function route() {
   const main = h('main', {});
   shownHash = location.hash;
   render(h('div', { class: 'shell' }, nav, main));
-  document.title = r.title + ' · DNServe';
+  document.title = r.title + ' · DNServ';
   r.page(main);
 }
 
@@ -846,8 +846,8 @@ async function dashboard(main) {
     fill(status, h('span', { class: 'dot' }), bad ? 'Needs attention' : paused || (off ? 'Filtering is off' : loading ? 'Loading lists' : 'Protecting your network'));
     fill(body,
       total === 0 ? h('div', { class: 'card highlight d-wait' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
-      h('p', { class: 'muted small d-note' }, fromHist ? [RANGES[range], hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
-        : ['Counting since DNServe started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '. Turn on query history to keep counts across restarts.']),
+      h('p', { class: 'muted small d-note' }, fromHist ? [RANGES[range], hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServ started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
+        : ['Counting since DNServ started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '. Turn on query history to keep counts across restarts.']),
       h('div', { class: 'grid d-tiles' },
         tile('Queries', fmtNum(total), fromHist ? fmtNum(hist.sum.devices || 0) + ' devices' : null,
           can('querylog.view') ? '#/queries' + (rq ? '?' + rq : '') : null, series.map(p => p.total)),
@@ -871,7 +871,7 @@ async function dashboard(main) {
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
     );
-    ver.textContent = 'DNServe ' + s.version;
+    ver.textContent = 'DNServ ' + s.version;
   };
   const loadDevices = async () => {
     let ds;
@@ -1111,12 +1111,12 @@ async function devices(main) {
   }
   if (list.some(d => !d.name) && !list.some(d => d.hostname) && can('network.manage')) {
     settingsHint = msg('warn', '');
-    fill(settingsHint, 'Devices show as numbers because DNServe doesn’t know your router. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), ' to see their names.');
+    fill(settingsHint, 'Devices show as numbers because DNServ doesn’t know your router. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), ' to see their names.');
   }
   const gnames = {};
   groups.forEach(g => { gnames[g.id] = g.name; });
   page(main, 'Devices',
-    h('p', { class: 'muted' }, 'Every device that has used DNServe since it started, most recent first.'),
+    h('p', { class: 'muted' }, 'Every device that has used DNServ since it started, most recent first.'),
     settingsHint,
     h('div', { class: 'card' }, deviceTable(list, { groups: groups.length ? gnames : null, groupList: groups })),
     groupsCard(groups, list, gs));
@@ -1858,7 +1858,7 @@ async function performancePage(main) {
       history.replaceState(null, '', '#/performance' + (k !== '24h' ? '?range=' + k : ''));
       load();
     } }, k)));
-  page(main, 'Performance', h('p', { class: 'muted' }, 'How quickly DNServe answers, how your upstream servers are doing, and anything out of the ordinary.'), h('div', { class: 'row' }, rangeBtns), body);
+  page(main, 'Performance', h('p', { class: 'muted' }, 'How quickly DNServ answers, how your upstream servers are doing, and anything out of the ordinary.'), h('div', { class: 'row' }, rangeBtns), body);
 
   const load = async () => {
     let r;
@@ -1885,11 +1885,11 @@ async function performancePage(main) {
         tile('Median response', fmtMs(s.p50_ms), u ? usualNote(s.p50_ms, u.p50_ms, fmtMs, true) : null, 'Half of all queries were answered faster than this.'),
         tile('95% answered within', fmtMs(s.p95_ms), u ? usualNote(s.p95_ms, u.p95_ms, fmtMs, true) : null, '1 in 20 queries took longer than this.'),
         tile('Average response', fmtMs(s.avg_ms), [fmtNum(s.queries), ' queries'], 'Includes cached and blocked answers.'),
-        tile('Lookups (not cached)', s.lookups ? fmtMs(s.lookup_avg_ms) : '—', s.lookups ? ['95% within ', fmtMs(s.lookup_p95_ms), u && u.lookups ? [' · ', usualNote(s.lookup_p95_ms, u.lookup_p95_ms, fmtMs, true)] : null] : 'none', 'Queries DNServe had to ask an upstream server about.'),
+        tile('Lookups (not cached)', s.lookups ? fmtMs(s.lookup_avg_ms) : '—', s.lookups ? ['95% within ', fmtMs(s.lookup_p95_ms), u && u.lookups ? [' · ', usualNote(s.lookup_p95_ms, u.lookup_p95_ms, fmtMs, true)] : null] : 'none', 'Queries DNServ had to ask an upstream server about.'),
         tile('Answered from cache', fmtPct(s.cache_hit), u ? usualNote(s.cache_hit, u.cache_hit, fmtPct, false) : null, 'Of the queries that weren’t blocked or local names.'),
         tile('Failed (SERVFAIL)', fmtNum(s.failed), [fmtPct(s.fail_rate), u ? [' · ', usualNote(s.fail_rate, u.fail_rate, fmtPct, true)] : null])),
       h('div', { class: 'card' }, h('h2', {}, 'Response times'), s.queries ? latencyChart(v, r.step, from, to, v.anomalies.filter(a => !a.server)) : h('p', { class: 'muted' }, 'No queries in this period.'),
-        s.queries ? h('p', { class: 'muted small' }, 'Times are measured inside DNServe, from receiving a query to having the answer ready. ', usualWhat) : null),
+        s.queries ? h('p', { class: 'muted small' }, 'Times are measured inside DNServ, from receiving a query to having the answer ready. ', usualWhat) : null),
       h('div', { class: 'card' }, h('h2', {}, 'Upstream servers'),
         !v.upstreams.length ? h('p', { class: 'muted' }, 'No upstream lookups in this period.') : h('div', { class: 'scroll' }, h('table', {},
           h('thead', {}, h('tr', {}, multiNode ? h('th', {}, 'Server') : null, h('th', {}, 'Upstream'), h('th', { class: 'num' }, 'Tries'), h('th', { class: 'num' }, 'Average'), h('th', { class: 'num' }, 'Median'), h('th', { class: 'num' }, '95%'), h('th', { class: 'num' }, 'Slowest'), h('th', { class: 'num' }, 'Timeouts'), h('th', { class: 'num' }, 'Errors'))),
@@ -2054,7 +2054,7 @@ async function settings(main) {
     };
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Privacy ', origin('upstream_mode', 'upstream_servers', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
-      h('p', { class: 'muted' }, 'How DNServe looks up the domains it doesn\u2019t block.'),
+      h('p', { class: 'muted' }, 'How DNServ looks up the domains it doesn\u2019t block.'),
       form({ 'data-track': true }, [
         h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
         fwd, tunnelOpts,
@@ -2097,7 +2097,7 @@ async function settings(main) {
       h('h2', {}, 'Filtering ', origin('filtering_enabled', 'block_mode', 'block_bypass', 'lists', 'allowlists')),
       form({ 'data-track': true }, [
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'enabled', checked: fl.Enabled }), 'Filtering on'),
-        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: fl.BlockBypass }), "Don't let devices skip DNServe (blocks apps' own encrypted DNS and iCloud Private Relay)"),
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: fl.BlockBypass }), "Don't let devices skip DNServ (blocks apps' own encrypted DNS and iCloud Private Relay)"),
         h('label', { for: 'bmode' }, 'Blocked domains answer with'),
         h('select', { id: 'bmode', name: 'bmode' },
           h('option', { value: 'null_ip', selected: fl.BlockMode === 'null_ip' }, '0.0.0.0 / :: (fastest for apps)'),
@@ -2147,7 +2147,7 @@ async function settings(main) {
     sections.push(h('div', { class: 'card' },
       h('h2', {}, 'Device names ', origin('local_dns')),
       form({ 'data-track': true }, [
-        h('p', { class: 'muted' }, 'DNServe can ask your router what each device is called, and sends lookups for local names (like printer.lan) to it.'),
+        h('p', { class: 'muted' }, 'DNServ can ask your router what each device is called, and sends lookups for local names (like printer.lan) to it.'),
         h('label', { for: 'localdns' }, 'Your router\u2019s address'),
         h('input', { id: 'localdns', name: 'localdns', type: 'text', value: eff.DNS.LocalDNS || '', placeholder: '192.168.1.1', spellcheck: 'false' }),
         h('p', { class: 'muted small' }, 'Usually the address you type to open your router\u2019s settings. Leave empty to turn this off.'),
@@ -2247,7 +2247,7 @@ async function settings(main) {
 async function importPage(main) {
   const result = h('div');
   const connect = form({}, [
-    h('p', { class: 'muted' }, 'DNServe reads your blocklists, custom rules, DNS rewrites, devices and upstream servers from AdGuard Home, shows you what it found, and adds what you choose. Nothing changes in AdGuard Home, and the password is used once and not saved.'),
+    h('p', { class: 'muted' }, 'DNServ reads your blocklists, custom rules, DNS rewrites, devices and upstream servers from AdGuard Home, shows you what it found, and adds what you choose. Nothing changes in AdGuard Home, and the password is used once and not saved.'),
     h('label', { for: 'agurl' }, 'AdGuard Home address'),
     h('input', { id: 'agurl', name: 'url', type: 'text', placeholder: 'http://192.168.1.2:3000', autofocus: true, autocomplete: 'off', spellcheck: 'false', required: true }),
     h('p', { class: 'muted small' }, 'The address you open AdGuard Home’s dashboard at.'),
@@ -2288,7 +2288,7 @@ function importPreview(box, id, plan) {
         h('ul', { class: 'plain small' }, (s.skipped || []).map(it => h('li', {}, h('b', {}, it.text), h('span', { class: 'muted' }, ' — ' + it.detail)))));
     }
     const n = s.items.length, have = (s.have || []).length, skipped = (s.skipped || []).length;
-    const counts = [n ? fmtNum(n) + ' to add' : 'Nothing new', have ? fmtNum(have) + ' already in DNServe' : null, skipped ? fmtNum(skipped) + ' can’t move' : null].filter(Boolean).join(' · ');
+    const counts = [n ? fmtNum(n) + ' to add' : 'Nothing new', have ? fmtNum(have) + ' already in DNServ' : null, skipped ? fmtNum(skipped) + ' can’t move' : null].filter(Boolean).join(' · ');
     let tick = null;
     if (n) {
       tick = h('input', { type: 'checkbox', checked: s.default });
@@ -2299,7 +2299,7 @@ function importPreview(box, id, plan) {
       h('p', { class: 'muted small mt-s' }, counts),
       s.note ? h('p', { class: 'small' + (s.default || !n ? '' : ' warn-text') }, s.note) : null,
       list(s.items, 'What will be added', n <= 12, true),
-      list(s.have, 'Already in DNServe', false, false),
+      list(s.have, 'Already in DNServ', false, false),
       list(s.skipped, 'Can’t be moved, and why', skipped <= 6, false));
   });
   const done = h('div');
@@ -2311,10 +2311,10 @@ function importPreview(box, id, plan) {
       const r = await api('POST', '/import/adguard/apply', { id, sections, exclude: [...exclude] });
       fill(box, h('div', { class: 'card highlight' },
         h('h2', {}, 'Imported from AdGuard Home'),
-        h('p', {}, r.summary ? 'Added ' + r.summary + '.' : 'Everything was already in DNServe.'),
+        h('p', {}, r.summary ? 'Added ' + r.summary + '.' : 'Everything was already in DNServ.'),
         r.lists ? h('p', { class: 'muted small' }, 'New lists download in the background and start blocking within a minute.') : null,
         h('p', {}, 'Next: check ', h('a', { href: '#/settings' }, 'Settings'), ', ', h('a', { href: '#/names' }, 'Local names'), ' and ', h('a', { href: '#/devices' }, 'Devices'),
-          ', then point your router’s DNS at DNServe. Keep AdGuard Home running until devices have moved across.')));
+          ', then point your router’s DNS at DNServ. Keep AdGuard Home running until devices have moved across.')));
     } catch (e) {
       fill(done, msg('err', e.message));
       go.disabled = false;
@@ -2324,7 +2324,7 @@ function importPreview(box, id, plan) {
     h('p', { class: 'muted' }, 'Found AdGuard Home ', plan.version || '', ' at ', h('code', {}, plan.source), '. Tick what to bring across; open a section to leave single items out.'),
     cards,
     pick.length ? h('div', { class: 'card' }, h('div', { class: 'actions m0' }, go, h('button', { type: 'button', onclick: () => fill(box) }, 'Cancel')), done)
-      : h('div', { class: 'card' }, h('p', {}, 'Everything DNServe can import is already here.')));
+      : h('div', { class: 'card' }, h('p', {}, 'Everything DNServ can import is already here.')));
   box.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -2471,11 +2471,11 @@ async function clusterPage(main) {
 
   const status = [];
   if (c.left_out) {
-    status.push(msg('err', 'This node is no longer part of its cluster (it was removed, or the cluster was recovered without it). It still answers DNS with the settings it last had. To bring it back, make a join code on a working node and use "Join another DNServe" below.'));
+    status.push(msg('err', 'This node is no longer part of its cluster (it was removed, or the cluster was recovered without it). It still answers DNS with the settings it last had. To bring it back, make a join code on a working node and use "Join another DNServ" below.'));
   } else if (!c.healthy) {
     status.push(msg('err', 'No leader: this node can’t reach enough of the cluster, so changes are paused. DNS keeps working everywhere with the current settings. Bring the missing node back, or if it’s gone for good, recover below.'));
   } else if (nodes.length === 1) {
-    status.push(h('p', { class: 'muted' }, 'This DNServe runs on one server. Add a second so DNS keeps working if one goes down. Settings, accounts and blocklists stay the same on both.'));
+    status.push(h('p', { class: 'muted' }, 'This DNServ runs on one server. Add a second so DNS keeps working if one goes down. Settings, accounts and blocklists stay the same on both.'));
   } else {
     status.push(msg('ok', 'All changes are shared between ' + nodes.length + ' nodes. ' + (nodes.find(n => n.leader) || {}).name + ' is leading.'));
   }
@@ -2512,8 +2512,8 @@ async function clusterPage(main) {
 
   const addCard = c.healthy && !c.left_out ? h('div', { class: 'card' }, h('h2', {}, 'Add a node'),
     h('ol', { class: 'steps-list' },
-      h('li', {}, 'On the new server, start DNServe the same way as this one (the same ', h('code', {}, 'docker compose'), ' file works). Make sure port ', h('b', {}, '8081'), ' is published and open between the servers.'),
-      h('li', {}, 'Open its dashboard, enter its setup code, and choose ', h('b', {}, 'No, add this server to my DNServe'), '.'),
+      h('li', {}, 'On the new server, start DNServ the same way as this one (the same ', h('code', {}, 'docker compose'), ' file works). Make sure port ', h('b', {}, '8081'), ' is published and open between the servers.'),
+      h('li', {}, 'Open its dashboard, enter its setup code, and choose ', h('b', {}, 'No, add this server to my DNServ'), '.'),
       h('li', {}, 'Paste the join code from here. It works once, for an hour.')),
     h('p', { class: 'muted small' }, 'Adding a ', h('b', {}, 'witness'), ' instead? It\u2019s the same image on a third machine; it only votes, so it needs very little. Make a join code and the next screen shows the command to start it.'),
     form({}, [
@@ -2523,7 +2523,7 @@ async function clusterPage(main) {
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Make a join code')),
     ], async (f) => {
       const r = await api('POST', '/cluster/join-codes', { host: val(f, 'host').trim() });
-      const cmd = 'docker run -d --name dnserve-witness --restart unless-stopped \\\n  -p 8081:8081 -v dnserve-witness:/data \\\n  -e DNSERVE_ROLE=witness -e DNSERVE_JOIN=' + r.code + ' \\\n  ghcr.io/prezmc/dnserve:latest';
+      const cmd = 'docker run -d --name dnserv-witness --restart unless-stopped \\\n  -p 8081:8081 -v dnserv-witness:/data \\\n  -e DNSERV_ROLE=witness -e DNSERV_JOIN=' + r.code + ' \\\n  ghcr.io/prezmc/dnserv:latest';
       const copy = (text) => (ev) => navigator.clipboard.writeText(text).then(() => { ev.target.textContent = 'Copied'; });
       const d = dialog('Join code', [
         h('p', {}, 'For a full node, paste this into the new server’s setup page. It works once and expires at ' + fmtTime(r.expires_at) + '.'),
@@ -2540,7 +2540,7 @@ async function clusterPage(main) {
 
   const recoverCard = !c.healthy && !c.left_out && others.length ? h('div', { class: 'card' }, h('h2', {}, 'Recover with this node only'),
     h('p', {}, 'If ', others.map(n => n.name).join(' and '), ' is gone for good (broken, wiped or replaced), make this node the whole cluster. It keeps its accounts and settings and starts taking changes again.'),
-    h('p', { class: 'muted small' }, 'DNServe checks first that no other node answers. It can\u2019t tell a server that is switched off from a broken link between the servers, so if the other one might still be running, fix the link instead: recovering both sides would leave two separate DNServes. The nodes left out are locked out; to use one again, join it with a new code.'),
+    h('p', { class: 'muted small' }, 'DNServ checks first that no other node answers. It can\u2019t tell a server that is switched off from a broken link between the servers, so if the other one might still be running, fix the link instead: recovering both sides would leave two separate DNServs. The nodes left out are locked out; to use one again, join it with a new code.'),
     form({}, [
       h('label', { for: 'rpw' }, 'Your password'),
       h('input', { id: 'rpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
@@ -2558,16 +2558,16 @@ async function clusterPage(main) {
       route();
     })) : null;
 
-  const joinCard = data.can_join ? h('details', { class: 'card' }, h('summary', {}, 'Join another DNServe instead'),
-    msg('warn', 'This replaces everything on this node (accounts, settings, devices and groups) with the other DNServe’s. You’ll sign in again with an account from there.'),
+  const joinCard = data.can_join ? h('details', { class: 'card' }, h('summary', {}, 'Join another DNServ instead'),
+    msg('warn', 'This replaces everything on this node (accounts, settings, devices and groups) with the other DNServ’s. You’ll sign in again with an account from there.'),
     form({}, [
-      h('label', { for: 'jc' }, 'Join code from the other DNServe'),
+      h('label', { for: 'jc' }, 'Join code from the other DNServ'),
       h('textarea', { id: 'jc', name: 'join', class: 'code', rows: 3, required: true, spellcheck: 'false', placeholder: 'DNSJ1-…' }),
       h('label', { for: 'jpw' }, 'Your password'),
       h('input', { id: 'jpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
       h('div', { class: 'actions' }, h('button', { class: 'primary danger-fill', type: 'submit' }, 'Replace and join')),
     ], async (f) => {
-      if (!(await ask('Replace this node’s accounts and settings with the other DNServe’s?', 'Replace and join'))) return;
+      if (!(await ask('Replace this node’s accounts and settings with the other DNServ’s?', 'Replace and join'))) return;
       await api('POST', '/cluster/join', { join_code: val(f, 'join'), password: val(f, 'password'), host: location.hostname });
       csrf = ''; ME = null;
       joinWaiting();
@@ -2676,14 +2676,14 @@ async function localNames(main) {
     }));
 
   page(main, title,
-    h('p', { class: 'muted' }, 'Give names to things on your network, like nas.home or printer.office. Every DNServe node answers them, before blocklists and before asking the internet. They’re part of settings history and backups.'),
+    h('p', { class: 'muted' }, 'Give names to things on your network, like nas.home or printer.office. Every DNServ node answers them, before blocklists and before asking the internet. They’re part of settings history and backups.'),
     h('div', { class: 'card' }, h('h2', {}, 'Your names'), list,
       h('p', { class: 'muted small' }, 'Pick names under a domain you control, or under .home.arpa, .home, .lan or .internal. A name here overrides the real one on the internet for your devices.')),
     add,
     h('div', { class: 'card' }, h('h2', {}, 'Names from your router'),
       router
         ? h('p', {}, 'Other local names (like a device’s own name) are looked up at your router, ', h('code', {}, router), '. Names on this page win over the router’s.')
-        : h('p', {}, 'DNServe can also answer the names your router knows for each device. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), '.')));
+        : h('p', {}, 'DNServ can also answer the names your router knows for each device. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), '.')));
 }
 
 // ---------- backups & history ----------
@@ -2706,7 +2706,7 @@ async function fetchFile(method, path) {
     try { m = (await r.json()).error || m; } catch (_) { /* keep */ }
     throw new Error(m);
   }
-  const name = ((r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [, 'dnserve-backup.dnsbak'])[1];
+  const name = ((r.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/) || [, 'dnserv-backup.dnsbak'])[1];
   const a = h('a', { href: URL.createObjectURL(await r.blob()), download: name });
   document.body.append(a);
   a.click();
@@ -2739,7 +2739,7 @@ function passphraseFields(label) {
     h('p', { class: 'muted small' }, 'At least 12 characters. Four or five random words works well. Use a different one from your password.'),
     h('label', { for: 'pp2' }, 'Confirm passphrase'),
     h('input', { id: 'pp2', name: 'pp2', type: 'password', autocomplete: 'new-password', required: true }),
-    h('label', { for: 'bpw' }, 'Your DNServe password'),
+    h('label', { for: 'bpw' }, 'Your DNServ password'),
     h('input', { id: 'bpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
   ];
 }
@@ -2771,7 +2771,7 @@ async function backupsPage(main) {
     dl.addEventListener('close', () => route());
   };
   const history = h('div', { class: 'card' }, h('h2', {}, 'Settings history'),
-    h('p', { class: 'muted' }, 'DNServe keeps the last ' + vers.max + ' versions of your settings, devices and groups, on every node. Look at what changed and go back to any of them. Accounts aren’t part of this, so going back never brings back an old password.'),
+    h('p', { class: 'muted' }, 'DNServ keeps the last ' + vers.max + ' versions of your settings, devices and groups, on every node. Look at what changed and go back to any of them. Accounts aren’t part of this, so going back never brings back an old password.'),
     vers.versions.length ? h('div', { class: 'scroll' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'Who'), h('th', {}, 'What changed'), h('th', {}))),
       h('tbody', {}, vers.versions.map(v => h('tr', {},
@@ -2784,8 +2784,8 @@ async function backupsPage(main) {
 
   function setupBackups() {
     return h('div', { class: 'card highlight' }, h('h2', {}, 'Set up backups'),
-      h('p', {}, 'A backup holds your accounts, settings, devices, groups and settings history in one file, encrypted with a passphrase you choose. Use one to rebuild DNServe on a new server, or to undo a mistake.'),
-      msg('warn', 'Write the passphrase down somewhere safe, like a password manager. DNServe doesn’t keep it, so without it nobody, including you, can open a backup.'),
+      h('p', {}, 'A backup holds your accounts, settings, devices, groups and settings history in one file, encrypted with a passphrase you choose. Use one to rebuild DNServ on a new server, or to undo a mistake.'),
+      msg('warn', 'Write the passphrase down somewhere safe, like a password manager. DNServ doesn’t keep it, so without it nobody, including you, can open a backup.'),
       form({}, [passphraseFields(), h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Set up backups'))], async (f) => {
         if (val(f, 'pp') !== val(f, 'pp2')) throw new Error("The passphrases don't match.");
         await api('POST', '/backups/passphrase', { passphrase: val(f, 'pp'), password: val(f, 'password') });
@@ -2817,7 +2817,7 @@ async function backupsPage(main) {
         h('label', { for: 'offsite' }, 'Also copy to a folder (optional)'),
         h('input', { id: 'offsite', name: 'offsite', type: 'text', value: bk.offsite || '', placeholder: '/backups', spellcheck: 'false' }),
         h('p', { class: 'muted small' }, 'Every node keeps its own backups in ', h('code', {}, bk.dir || '/data/backups'),
-          '. To keep copies off the server too, mount a folder from your NAS or another disk into the container (for example ', h('code', {}, '-v /mnt/nas/dnserve:/backups'),
+          '. To keep copies off the server too, mount a folder from your NAS or another disk into the container (for example ', h('code', {}, '-v /mnt/nas/dnserv:/backups'),
           ') and enter its path here. The leading node writes one copy per backup there.'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save schedule')),
       ], async (f) => {
@@ -2850,7 +2850,7 @@ async function backupsPage(main) {
       h('input', { id: 'rf', name: 'file', type: 'file', accept: '.dnsbak', required: true }),
       h('label', { for: 'rpp' }, 'The passphrase it was made with'),
       h('input', { id: 'rpp', name: 'passphrase', type: 'password', autocomplete: 'off', required: true }),
-      h('label', { for: 'rpw2' }, 'Your DNServe password'),
+      h('label', { for: 'rpw2' }, 'Your DNServ password'),
       h('input', { id: 'rpw2', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
       h('div', { class: 'actions' }, h('button', { class: 'primary danger-fill', type: 'submit' }, 'Restore')),
     ], async (f) => {
@@ -2872,8 +2872,8 @@ async function backupsPage(main) {
 // setupRestore: first run from a backup file.
 function setupRestore(code) {
   render(centered(
-    h('h1', {}, 'Restore DNServe from a backup'),
-    h('p', { class: 'muted' }, 'Use a backup file from this or another DNServe. Its accounts, settings, devices, groups and backup schedule come back as they were.'),
+    h('h1', {}, 'Restore DNServ from a backup'),
+    h('p', { class: 'muted' }, 'Use a backup file from this or another DNServ. Its accounts, settings, devices, groups and backup schedule come back as they were.'),
     form({}, [
       h('label', { for: 'sf' }, 'Backup file (.dnsbak)'),
       h('input', { id: 'sf', name: 'file', type: 'file', accept: '.dnsbak', required: true, autofocus: true }),
@@ -2887,7 +2887,7 @@ function setupRestore(code) {
       fd.append('code', code);
       const r = await apiForm('/setup/restore', fd);
       render(centered(
-        h('h1', {}, 'DNServe is restored'),
+        h('h1', {}, 'DNServ is restored'),
         msg('ok', 'Everything from the backup made on ' + fmtTime(r.created) + ' is back.'),
         h('p', {}, 'Sign in with an account from the backup. If this server has a new address, update the DNS servers in your router.'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', autofocus: true, onclick: boot }, 'Sign in'))));
@@ -2917,14 +2917,14 @@ async function audit(main) {
 
 // showCodes puts fresh recovery codes in a dialog.
 function showCodes(title, codes) {
-  const text = 'DNServe recovery codes for ' + ME.user.username + ' on ' + location.hostname + '\n' +
+  const text = 'DNServ recovery codes for ' + ME.user.username + ' on ' + location.hostname + '\n' +
     'Each code works once. Keep them somewhere safe.\n\n' + codes.join('\n') + '\n';
   const done = h('button', { class: 'primary', type: 'button', disabled: true, onclick: () => d.close() }, 'Done');
   const d = dialog(title, [
     h('p', { class: 'muted' }, 'Your old recovery codes no longer work. Each of these lets you sign in once if you lose your phone.'),
     h('div', { class: 'codes mono' }, codes.map(c => h('div', {}, c))),
     h('div', { class: 'actions' },
-      h('button', { type: 'button', onclick: () => download('dnserve-recovery-codes.txt', text) }, 'Download'),
+      h('button', { type: 'button', onclick: () => download('dnserv-recovery-codes.txt', text) }, 'Download'),
       h('button', { type: 'button', onclick: (ev) => navigator.clipboard.writeText(text).then(() => { ev.target.textContent = 'Copied'; }) }, 'Copy')),
     h('label', { class: 'inline' }, h('input', { type: 'checkbox', onchange: (ev) => { done.disabled = !ev.target.checked; } }), "I've saved these codes"),
     h('div', { class: 'actions' }, done)]);

@@ -37,9 +37,9 @@ Lost your phone? Sign in with a recovery code, or have another admin reset
 your MFA. If the only admin is locked out, stop the node and run:
 
 ```bash
-docker stop dnserve
-docker run --rm -v dnserve-data:/data ghcr.io/prezmc/dnserve -reset-mfa USERNAME
-docker start dnserve
+docker stop dnserv
+docker run --rm -v dnserv-data:/data ghcr.io/prezmc/dnserv -reset-mfa USERNAME
+docker start dnserv
 ```
 
 That clears the account's second factor when the node starts (you set it up

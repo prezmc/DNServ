@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/analytics"
-	"github.com/prezmc/dnserve/internal/querylog"
-	"github.com/prezmc/dnserve/internal/store"
+	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/querylog"
+	"github.com/prezmc/dnserv/internal/store"
 )
 
 func TestPerformanceAndTopLists(t *testing.T) {

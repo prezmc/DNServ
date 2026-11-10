@@ -48,14 +48,14 @@ networks to do it: the search site's name is answered as an alias for its
 safe-search address. A group can turn it on or off for its devices whatever
 the household setting is.
 
-## Stopping devices from bypassing DNServe
+## Stopping devices from bypassing DNServ
 
 Blocking resolver names only goes so far, because a device can still use a
 resolver by IP. On your router or firewall:
 
 1. Block outbound TCP and UDP port 853 (DNS over TLS) from every device
-   except the DNServe hosts.
-2. Redirect (DNAT) outbound port 53 from devices to DNServe, so hard-coded
+   except the DNServ hosts.
+2. Redirect (DNAT) outbound port 53 from devices to DNServ, so hard-coded
    `8.8.8.8` still reaches it.
 
 [Back to the README](../README.md)

@@ -19,23 +19,23 @@ import (
 	"sync"
 	"time"
 
-	"github.com/prezmc/dnserve/internal/analytics"
-	"github.com/prezmc/dnserve/internal/auth"
-	"github.com/prezmc/dnserve/internal/backup"
-	"github.com/prezmc/dnserve/internal/cluster"
-	"github.com/prezmc/dnserve/internal/config"
-	"github.com/prezmc/dnserve/internal/filter"
-	"github.com/prezmc/dnserve/internal/querylog"
-	"github.com/prezmc/dnserve/internal/store"
-	"github.com/prezmc/dnserve/internal/threat"
-	"github.com/prezmc/dnserve/internal/virustotal"
+	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/backup"
+	"github.com/prezmc/dnserv/internal/cluster"
+	"github.com/prezmc/dnserv/internal/config"
+	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/querylog"
+	"github.com/prezmc/dnserv/internal/store"
+	"github.com/prezmc/dnserv/internal/threat"
+	"github.com/prezmc/dnserv/internal/virustotal"
 )
 
 // CookieName is the session cookie.
-const CookieName = "dnserve_session"
+const CookieName = "dnserv_session"
 
 // Issuer names the node in authenticator apps.
-const Issuer = "DNServe"
+const Issuer = "DNServ"
 
 // API serves /api/v1.
 type API struct {
@@ -105,7 +105,7 @@ func New(st *store.Store, sess *auth.Sessions, base config.Config, log *slog.Log
 		log.Warn("first-run setup: open the dashboard and enter this setup code", "setup_code", a.setupCode)
 		fmt.Fprintf(os.Stderr, "\n"+
 			"  +--------------------------------------------------+\n"+
-			"  |  DNServe first-run setup                         |\n"+
+			"  |  DNServ first-run setup                         |\n"+
 			"  |                                                  |\n"+
 			"  |  Open http://<this server>:8080 in a browser     |\n"+
 			"  |  and enter this setup code:   %-19s|\n"+
@@ -327,7 +327,7 @@ func (a *API) checkOrigin(r *http.Request) error {
 	if strings.EqualFold(u.Host, r.Host) || slices.ContainsFunc(a.AllowedOrigins, func(h string) bool { return strings.EqualFold(h, u.Host) }) {
 		return nil
 	}
-	return errors.New("cross-site request blocked (set DNSERVE_ALLOWED_ORIGINS if a proxy rewrites Host)")
+	return errors.New("cross-site request blocked (set DNSERV_ALLOWED_ORIGINS if a proxy rewrites Host)")
 }
 
 func (a *API) checkToken(st *store.State, raw string) (*store.Token, *store.User) {

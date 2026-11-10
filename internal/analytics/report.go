@@ -389,7 +389,7 @@ func anomalies(p *Perf, base []PerfPoint, step, baseStep int64) []Anomaly {
 					parts = append(parts, plural(pt.Errors, "error"))
 				}
 				add(Anomaly{T: pt.T, End: pt.T, Kind: "upstream-fail", Severity: sev, Node: u.Node, Server: u.Server, Title: "Upstream server failing",
-					Detail: fmt.Sprintf("%s in %s (%s). DNServe moves on to the next server when there is one.", strings.Join(parts, " and "), plural(pt.Tries, "try"), pct(ratio(f, pt.Tries)))})
+					Detail: fmt.Sprintf("%s in %s (%s). DNServ moves on to the next server when there is one.", strings.Join(parts, " and "), plural(pt.Tries, "try"), pct(ratio(f, pt.Tries)))})
 			}
 			if usualAvg > 0 && pt.Stat.N >= minLookups && u.Usual.Stat.N >= 50 {
 				if avg := pt.Stat.Avg(); avg > math.Max(3*usualAvg, usualAvg+50) {
