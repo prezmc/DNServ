@@ -61,6 +61,9 @@ type API struct {
 	AlsoOn func(ctx context.Context, name string) []filter.ListHit
 	// UpdateLists re-downloads every list now (runs in the background).
 	UpdateLists func()
+	// ClearCache empties the answer cache on this node and every other
+	// server, and reports what each one cleared.
+	ClearCache func(ctx context.Context) []CacheCleared
 	// LookupName asks the router for a device's name ("" if unknown).
 	LookupName func(ctx context.Context, a netip.Addr) string
 
@@ -163,6 +166,7 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/settings/reset", a.authed("", a.resetSettings))
 	m.HandleFunc("POST /api/v1/domains", a.authed(store.PermAllowBlock, a.domainAction))
 	m.HandleFunc("POST /api/v1/lists/update", a.authed(store.PermLists, a.updateLists))
+	m.HandleFunc("POST /api/v1/cache/clear", a.authed(store.PermLists, a.clearCache))
 	m.HandleFunc("GET /api/v1/domains/check", a.authed(store.PermDashboard, a.checkDomain))
 
 	// Devices and recent queries.
@@ -172,6 +176,9 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("DELETE /api/v1/devices/{id}", a.authed(store.PermDevices, a.deleteDevice))
 	m.HandleFunc("GET /api/v1/queries", a.authed(store.PermQueryLog, a.queries))
 	m.HandleFunc("GET /api/v1/groups", a.authed(store.PermDashboard, a.listGroups))
+	m.HandleFunc("GET /api/v1/services", a.authed(store.PermDashboard, func(w http.ResponseWriter, r *http.Request, p *Principal) {
+		writeJSON(w, http.StatusOK, map[string]any{"services": filter.Services})
+	}))
 	m.HandleFunc("POST /api/v1/groups", a.authed(store.PermDevices, a.saveGroup))
 	m.HandleFunc("PUT /api/v1/groups/{id}", a.authed(store.PermDevices, a.saveGroup))
 	m.HandleFunc("DELETE /api/v1/groups/{id}", a.authed(store.PermDevices, a.deleteGroup))

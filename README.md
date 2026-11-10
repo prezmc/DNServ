@@ -457,6 +457,22 @@ resolver by IP. On your router or firewall:
 2. Redirect (DNAT) outbound port 53 from devices to DNServe, so hard-coded
    `8.8.8.8` still reaches it.
 
+## Blocked services and safe search
+
+**Settings > Blocked services and safe search** blocks well-known apps and
+sites with one tick each (YouTube, TikTok, Roblox, Discord and about 35
+more), for everyone. A group on the Devices page can block more services for
+its devices, all the time or only during a schedule (homework time, say).
+Each service is a short, hand-checked list of the domains it needs, so
+blocking one doesn't take shared Google, Meta or Microsoft domains with it.
+An allow rule of your own still wins.
+
+**Safe search** makes Google, Bing and DuckDuckGo show only safe results and
+puts YouTube in Restricted Mode (moderate), the way those companies ask
+networks to do it: the search site's name is answered as an alias for its
+safe-search address. A group can turn it on or off for its devices whatever
+the household setting is.
+
 ## Rule syntax
 
 | Rule | Matches |

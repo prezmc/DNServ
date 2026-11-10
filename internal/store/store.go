@@ -72,9 +72,14 @@ type Group struct {
 	// (custom rules and the group's own rules still apply).
 	SkipBlocklists bool `json:"skip_blocklists"`
 	// Rules are extra rules for this group, in the custom rule syntax.
-	Rules     []string   `json:"rules"`
-	Schedules []Schedule `json:"schedules"`
-	CreatedAt time.Time  `json:"created_at"`
+	Rules []string `json:"rules"`
+	// Services are blocked services (catalog ids) for this group, on top
+	// of the household's.
+	Services []string `json:"services,omitempty"`
+	// SafeSearch: "" follows the household setting, "on" or "off" overrides it.
+	SafeSearch string     `json:"safe_search,omitempty"`
+	Schedules  []Schedule `json:"schedules"`
+	CreatedAt  time.Time  `json:"created_at"`
 }
 
 // Schedule tightens a group's filtering at set times, in the node's time
@@ -89,6 +94,8 @@ type Schedule struct {
 	// work); otherwise Rules are blocked during the window.
 	BlockAll bool     `json:"block_all"`
 	Rules    []string `json:"rules"`
+	// Services are blocked services (catalog ids) during the window.
+	Services []string `json:"services,omitempty"`
 }
 
 // DeviceByAddr returns the device that owns addr, if any.

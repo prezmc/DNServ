@@ -645,6 +645,10 @@ func clearField(s *Settings, f string) error {
 		s.BlockMode = nil
 	case "block_bypass":
 		s.BlockBypass = nil
+	case "blocked_services":
+		s.BlockedServices = nil
+	case "safe_search":
+		s.SafeSearch = nil
 	case "lists":
 		s.Lists = nil
 	case "allowlists":

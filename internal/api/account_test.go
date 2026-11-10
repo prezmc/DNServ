@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -54,4 +55,15 @@ func TestSelfServiceSecondFactor(t *testing.T) {
 	e.api.UpdateLists = func() { called <- struct{}{} }
 	admin.want(202, "POST", "/api/v1/lists/update", nil, nil)
 	<-called
+
+	// Clearing the cache: 503 without a hook, each server's result with one.
+	admin.want(503, "POST", "/api/v1/cache/clear", nil, nil)
+	e.api.ClearCache = func(context.Context) []CacheCleared {
+		return []CacheCleared{{Server: "n1", Entries: 12}, {Server: "n2", Error: "down"}}
+	}
+	var cleared struct{ Servers []CacheCleared }
+	admin.want(200, "POST", "/api/v1/cache/clear", nil, &cleared)
+	if len(cleared.Servers) != 2 || cleared.Servers[0].Entries != 12 || cleared.Servers[1].Error != "down" {
+		t.Fatalf("cache clear result %+v", cleared)
+	}
 }

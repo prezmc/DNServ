@@ -777,7 +777,7 @@ async function dashboard(main) {
             return h('tr', {}, h('td', { title: u.server }, upName(u.server)), h('td', {}, u.latency_ms ? u.latency_ms.toFixed(1) + ' ms' : '—'),
               h('td', {}, fmtNum(hu ? hu.tries : u.queries)), h('td', {}, fmtNum(hu ? hu.failed : u.failures)));
           })))) : null),
-      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card d-lists' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), updateListsButton()), h('div', { class: 'scroll' }, h('table', {},
+      (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card d-lists' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), h('div', { class: 'row' }, clearCacheButton(), updateListsButton())), h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
@@ -916,6 +916,23 @@ function updateListsButton() {
   return b;
 }
 
+// clearCacheButton empties the answer cache on every server, so the next
+// question for each name goes upstream again.
+function clearCacheButton() {
+  if (!can('lists.manage')) return null;
+  const b = h('button', { type: 'button', class: 'small', onclick: async () => {
+    b.disabled = true;
+    try {
+      const r = await api('POST', '/cache/clear');
+      const ok = r.servers.filter(x => !x.error), bad = r.servers.filter(x => x.error);
+      toast('Cache cleared: ' + ok.map(x => x.server + ' (' + x.entries.toLocaleString() + ' answers)').join(', ') +
+        (bad.length ? '. Couldn\'t reach ' + bad.map(x => x.server).join(', ') + '.' : '.'), bad.length ? 'err' : undefined);
+    } catch (e) { toast(e.message, 'err'); }
+    setTimeout(() => { b.disabled = false; }, 3000);
+  } }, 'Clear cache');
+  return b;
+}
+
 // ---------- check a domain ----------
 
 function checkDomainCard() {
@@ -1051,9 +1068,50 @@ function groupsCard(groups, devs, gs) {
         : h('p', { class: 'muted small' }, 'Name a device first (Name it, above), then you can put it in a group.')) : null);
 }
 
+// ---------- blocked services ----------
+
+let servicesCache = null;
+const loadServices = () => (servicesCache = servicesCache || api('GET', '/services').then(r => r.services).catch((e) => { servicesCache = null; throw e; }));
+
+// servicePicker shows the service catalog as ticks grouped by category.
+// read() returns the ticked ids (or the starting ones until it has loaded).
+function servicePicker(selected, label, collapsed) {
+  selected = selected || [];
+  const box = h('div', { class: 'services', 'aria-label': label || 'Blocked services' }, h('p', { class: 'muted small' }, 'Loading services…'));
+  let loaded = false;
+  loadServices().then((all) => {
+    const cats = [];
+    all.forEach(sv => { if (!cats.includes(sv.category)) cats.push(sv.category); });
+    box.replaceChildren(...cats.map(c => h('div', { class: 'mt-s' },
+      h('div', { class: 'muted small' }, c),
+      h('div', { class: 'perms' }, all.filter(sv => sv.category === c).map(sv => h('label', { class: 'inline', title: sv.domains.join(', ') },
+        h('input', { type: 'checkbox', 'data-service': sv.id, checked: selected.includes(sv.id) }), sv.name))))));
+    loaded = true;
+  }).catch(e => fill(box, h('p', { class: 'muted small' }, "Couldn't load the services: " + e.message)));
+  box.read = () => loaded ? [...box.querySelectorAll('[data-service]')].filter(c => c.checked).map(c => c.dataset.service) : selected.slice();
+  if (!collapsed) return box;
+  // In dialogs: folded away, with a summary of what's ticked.
+  const sum = h('summary', {});
+  const names = () => {
+    const ids = box.read();
+    if (!ids.length) return 'None. Choose services';
+    const byId = {}; (servicesCache && loaded ? [...box.querySelectorAll('[data-service]')] : []).forEach(c => { byId[c.dataset.service] = c.parentNode.textContent; });
+    return ids.map(id => byId[id] || id).join(', ');
+  };
+  const det = h('details', { class: 'services-pick' }, sum, box);
+  const upd = () => { sum.textContent = names(); };
+  box.addEventListener('change', upd);
+  loadServices().then(() => setTimeout(upd)).catch(() => {});
+  upd();
+  det.read = box.read;
+  return det;
+}
+
 function scheduleEditor(sc) {
   const rules = h('textarea', { 'data-f': 'rules', spellcheck: 'false', class: 'short', placeholder: 'youtube.com\ntiktok.com', 'aria-label': 'Domains to block' }, (sc.rules || []).join('\n'));
-  const rulesBox = h('div', { hidden: sc.block_all }, h('p', { class: 'muted small' }, 'Domains to block during this time (subdomains included):'), rules);
+  const svc = servicePicker(sc.services, 'Services to block during this time', true);
+  const rulesBox = h('div', { hidden: sc.block_all }, h('p', { class: 'muted small' }, 'Services to block during this time:'), svc,
+    h('p', { class: 'muted small mt-s' }, 'And other domains (subdomains included):'), rules);
   const box = h('fieldset', { class: 'sched' },
     h('div', { class: 'row' },
       h('input', { type: 'text', 'data-f': 'name', value: sc.name || '', placeholder: 'Name', 'aria-label': 'Schedule name', maxlength: 64 }),
@@ -1074,12 +1132,14 @@ function scheduleEditor(sc) {
     days: [...box.querySelectorAll('[data-day]')].filter(c => c.checked).map(c => +c.dataset.day),
     start: box.querySelector('[data-f=start]').value, end: box.querySelector('[data-f=end]').value,
     block_all: radios[0].checked, rules: radios[0].checked ? [] : lines(rules.value),
+    services: radios[0].checked ? [] : svc.read(),
   });
   return box;
 }
 
 function editGroup(g, named, gs) {
   g = g || { name: '', devices: [], rules: [], schedules: [], skip_blocklists: false };
+  const gsvc = servicePicker(g.services, 'Services blocked for this group', true);
   const scheds = h('div', {}, g.schedules.map(scheduleEditor));
   const preset = (sc) => scheds.append(scheduleEditor(sc));
   const dlg = dialog(g.id ? 'Edit group' : 'Add a group', form({}, [
@@ -1092,6 +1152,14 @@ function editGroup(g, named, gs) {
     h('label', { for: 'grules' }, 'Extra rules for this group'),
     h('textarea', { id: 'grules', name: 'rules', spellcheck: 'false', class: 'short', placeholder: '||games.example^\n@@||school.example^' }, g.rules.join('\n')),
     h('p', { class: 'muted small' }, 'Same syntax as custom rules. Allow rules here (', h('code', {}, '@@||site^'), ') beat everything, even schedules.'),
+    h('h3', {}, 'Blocked services'),
+    h('p', { class: 'muted small' }, 'Blocked all the time for this group, on top of the ones blocked for everyone. Use a schedule below to block them only at some times.'),
+    gsvc,
+    h('label', { for: 'gsafe' }, 'Safe search'),
+    h('select', { id: 'gsafe', name: 'safe' },
+      h('option', { value: '', selected: !g.safe_search }, 'Same as the household'),
+      h('option', { value: 'on', selected: g.safe_search === 'on' }, 'On for this group'),
+      h('option', { value: 'off', selected: g.safe_search === 'off' }, 'Off for this group')),
     h('h3', {}, 'Schedules'),
     h('p', { class: 'muted small' }, 'In ', gs.time_zone, ' time. A schedule that ends before it starts runs overnight.'),
     scheds,
@@ -1105,6 +1173,7 @@ function editGroup(g, named, gs) {
   ], async (f) => {
     const body = {
       name: val(f, 'name').trim(), skip_blocklists: f.elements.skip.checked, rules: lines(val(f, 'rules')),
+      services: gsvc.read(), safe_search: val(f, 'safe'),
       schedules: [...scheds.children].map(x => x.read()),
       devices: [...f.querySelectorAll('input[name=dev]:checked')].map(i => i.value),
     };
@@ -1946,6 +2015,22 @@ async function settings(main) {
         filtering_enabled: fl.Enabled, block_bypass: fl.BlockBypass, block_mode: fl.BlockMode,
         lists: norm(fl.Lists).map(l => ({ name: l.name, url: l.url, enabled: l.enabled })), allowlists: norm(fl.Allowlists).map(l => ({ name: l.name, url: l.url, enabled: l.enabled })),
       }))));
+  }
+
+  if (can('lists.manage')) {
+    const fl = eff.Filtering;
+    const svc = servicePicker(fl.BlockedServices);
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'Blocked services and safe search ', origin('blocked_services', 'safe_search')),
+      form({ 'data-track': true }, [
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'safe', checked: fl.SafeSearch }),
+          'Safe search: Google, Bing and DuckDuckGo only show safe results, and YouTube uses Restricted Mode'),
+        h('h3', {}, 'Blocked for everyone'),
+        h('p', { class: 'muted small' }, 'Each one blocks the app and its website. To block a service for some devices only, or at some times, use a group on the Devices page. An allow rule of your own still wins.'),
+        svc,
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], (f) => save({ safe_search: f.elements.safe.checked, blocked_services: svc.read() },
+        { safe_search: fl.SafeSearch, blocked_services: norm(fl.BlockedServices) }))));
   }
 
   if (can('rules.edit')) {

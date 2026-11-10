@@ -253,3 +253,20 @@ func TestDownloadURL(t *testing.T) {
 		}
 	}
 }
+
+func TestBlockedServicesForEveryone(t *testing.T) {
+	cfg := config.Default().Filtering
+	cfg.Lists = nil
+	cfg.BlockedServices = []string{"tiktok", "no-such-service"}
+	cfg.Rules = []string{"@@||tiktokcdn.com^"}
+	e := NewEngine(cfg, t.TempDir(), nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := e.Rebuild(context.Background(), false); err != nil {
+		t.Fatal(err)
+	}
+	if m := e.Lookup("www.tiktok.com"); !m.Blocked || m.Source != "Blocked service: TikTok" {
+		t.Fatalf("www.tiktok.com = %+v", m)
+	}
+	if e.Lookup("p16.tiktokcdn.com").Blocked {
+		t.Fatal("a custom allow must override a blocked service")
+	}
+}

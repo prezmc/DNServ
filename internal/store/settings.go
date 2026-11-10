@@ -21,6 +21,8 @@ type Settings struct {
 	FilteringEnabled *bool                `json:"filtering_enabled,omitempty"`
 	BlockMode        *string              `json:"block_mode,omitempty"`
 	BlockBypass      *bool                `json:"block_bypass,omitempty"`
+	BlockedServices  *[]string            `json:"blocked_services,omitempty"`
+	SafeSearch       *bool                `json:"safe_search,omitempty"`
 	Lists            *[]config.ListConfig `json:"lists,omitempty"`
 	Allowlists       *[]config.ListConfig `json:"allowlists,omitempty"`
 	Rules            *[]string            `json:"rules,omitempty"`
@@ -70,6 +72,12 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.BlockBypass != nil {
 		c.Filtering.BlockBypass = *s.BlockBypass
+	}
+	if s.BlockedServices != nil {
+		c.Filtering.BlockedServices = append([]string(nil), (*s.BlockedServices)...)
+	}
+	if s.SafeSearch != nil {
+		c.Filtering.SafeSearch = *s.SafeSearch
 	}
 	if s.Lists != nil {
 		c.Filtering.Lists = append([]config.ListConfig(nil), (*s.Lists)...)
@@ -133,6 +141,12 @@ func (s *Settings) Merge(p Settings) {
 	if p.BlockBypass != nil {
 		s.BlockBypass = p.BlockBypass
 	}
+	if p.BlockedServices != nil {
+		s.BlockedServices = p.BlockedServices
+	}
+	if p.SafeSearch != nil {
+		s.SafeSearch = p.SafeSearch
+	}
 	if p.Lists != nil {
 		s.Lists = p.Lists
 	}
@@ -161,7 +175,7 @@ func (p Settings) Touches() (upstream, network, lists, rules bool) {
 	upstream = p.UpstreamMode != nil || p.UpstreamServers != nil || p.TunnelInterface != nil ||
 		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil
 	network = p.AllowedNets != nil || p.LocalDNS != nil || p.TimeZone != nil || p.Records != nil
-	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.FilteringEnabled != nil || p.BlockMode != nil ||
+	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.BlockedServices != nil || p.SafeSearch != nil || p.FilteringEnabled != nil || p.BlockMode != nil ||
 		p.ThreatFeeds != nil || p.TrustedDomains != nil
 	rules = p.Rules != nil
 	return

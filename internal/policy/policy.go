@@ -22,6 +22,8 @@ type Group struct {
 	ID, Name string
 	// SkipShared means the shared blocklists and custom rules don't apply.
 	SkipShared bool
+	// SafeSearch overrides the household setting when not nil.
+	SafeSearch *bool
 	rules      *filter.Index
 	schedules  []schedule
 }
@@ -40,14 +42,19 @@ func Build(st *store.State) *Set {
 	s := &Set{byAddr: map[netip.Addr]*Group{}, byID: map[string]*Group{}}
 	compiled := s.byID
 	for id, g := range st.Groups {
-		cg := &Group{ID: id, Name: g.Name, SkipShared: g.SkipBlocklists, rules: index("Group "+g.Name, g.Rules)}
+		cg := &Group{ID: id, Name: g.Name, SkipShared: g.SkipBlocklists, rules: index("Group "+g.Name, g.Rules, g.Services)}
+		switch g.SafeSearch {
+		case "on", "off":
+			on := g.SafeSearch == "on"
+			cg.SafeSearch = &on
+		}
 		for _, sc := range g.Schedules {
 			start, err1 := store.ParseClock(sc.Start)
 			end, err2 := store.ParseClock(sc.End)
 			if err1 != nil || err2 != nil {
 				continue
 			}
-			c := schedule{name: sc.Name, start: start, end: end, blockAll: sc.BlockAll, rules: index("Schedule "+sc.Name, sc.Rules)}
+			c := schedule{name: sc.Name, start: start, end: end, blockAll: sc.BlockAll, rules: index("Schedule "+sc.Name, sc.Rules, sc.Services)}
 			for _, d := range sc.Days {
 				c.days |= 1 << (d % 7)
 			}
@@ -69,11 +76,12 @@ func Build(st *store.State) *Set {
 	return s
 }
 
-func index(source string, lines []string) *filter.Index {
-	if len(lines) == 0 {
+func index(source string, lines, services []string) *filter.Index {
+	if len(lines) == 0 && len(services) == 0 {
 		return nil
 	}
 	b := filter.NewBuilder()
+	filter.AddServices(b, services)
 	src := b.AddSource(source, filter.TierCustom)
 	for _, l := range lines {
 		rules, ok, _ := filter.ParseLine(l)
