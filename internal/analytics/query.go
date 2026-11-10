@@ -46,6 +46,9 @@ type Query struct {
 	// Before pages search: only queries before this unix microsecond.
 	Before int64 `json:"before,omitempty"`
 	Limit  int   `json:"limit,omitempty"`
+	// Flags adds (to top lists) every domain whose answers were flagged
+	// in the period.
+	Flags bool `json:"flags,omitempty"`
 }
 
 // Counts are query totals.
@@ -113,6 +116,15 @@ type Entry struct {
 	Allowed bool    `json:"allowed,omitempty"`
 	Rule    string  `json:"rule,omitempty"`
 	List    string  `json:"list,omitempty"`
+	// IPs and CNAMEs are what the answer held.
+	IPs    []string `json:"ips,omitempty"`
+	CNAMEs []string `json:"cnames,omitempty"`
+}
+
+// Answer is one distinct answer a domain got.
+type Answer struct {
+	IPs    []string `json:"ips,omitempty"`
+	CNAMEs []string `json:"cnames,omitempty"`
 }
 
 // Result is a node's answer. Which fields are set depends on the kind.
@@ -128,11 +140,15 @@ type Result struct {
 	Rows    []Row    `json:"rows,omitempty"`    // top; domain: its devices
 	Entries []Entry  `json:"entries,omitempty"`
 
+	// Flags are risky answers (top with Flags; domain).
+	Flags []Flag `json:"flags,omitempty"`
+
 	// Domain only.
-	Rule  string `json:"rule,omitempty"`
-	List  string `json:"list,omitempty"`
-	First int64  `json:"first,omitempty"` // unix seconds
-	Last  int64  `json:"last,omitempty"`
+	Answers []Answer `json:"answers,omitempty"` // recent distinct answers
+	Rule    string   `json:"rule,omitempty"`
+	List    string   `json:"list,omitempty"`
+	First   int64    `json:"first,omitempty"` // unix seconds
+	Last    int64    `json:"last,omitempty"`
 }
 
 // Validate fills defaults and checks a query.
@@ -311,8 +327,22 @@ func (s *Store) top(ctx context.Context, q *Query, res *Result) error {
 		res.Rows = append(res.Rows, row)
 		return err
 	})
-	if err != nil || q.By == TopClients || len(res.Rows) == 0 {
+	if err != nil {
 		return err
+	}
+	if q.Flags {
+		err := collect(ctx, s.db, `SELECT name, reason, score FROM flagged WHERE t >= ? AND t < ?`, []any{q.From.UnixMicro(), q.To.UnixMicro()}, func(r *sql.Rows) error {
+			var f Flag
+			err := r.Scan(&f.Name, &f.Reason, &f.Score)
+			res.Flags = append(res.Flags, f)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if q.By == TopClients || len(res.Rows) == 0 {
+		return nil
 	}
 	return s.caughtBy(ctx, res.Rows)
 }
@@ -383,13 +413,15 @@ func (s *Store) search(ctx context.Context, q *Query, res *Result) error {
 		}
 	}
 	args = append(args, q.Limit)
-	return collect(ctx, s.db, `SELECT t, client, name, qtype, result, rcode, answers, ms, allowed, COALESCE(rule, ''), COALESCE(list, '') FROM queries WHERE `+
+	return collect(ctx, s.db, `SELECT t, client, name, qtype, result, rcode, answers, ms, allowed, COALESCE(rule, ''), COALESCE(list, ''), COALESCE(ips, ''), COALESCE(cnames, '') FROM queries WHERE `+
 		strings.Join(conds, " AND ")+` ORDER BY t DESC LIMIT ?`, args, func(r *sql.Rows) error {
 		var e Entry
 		var code, allowed int
-		if err := r.Scan(&e.T, &e.Client, &e.Name, &e.Type, &code, &e.Rcode, &e.Answers, &e.Ms, &allowed, &e.Rule, &e.List); err != nil {
+		var ips, cnames string
+		if err := r.Scan(&e.T, &e.Client, &e.Name, &e.Type, &code, &e.Rcode, &e.Answers, &e.Ms, &allowed, &e.Rule, &e.List, &ips, &cnames); err != nil {
 			return err
 		}
+		e.IPs, e.CNAMEs = split(ips), split(cnames)
 		e.Result, e.Allowed, e.Node = resultName(code), allowed == 1, s.node()
 		e.Time = time.UnixMicro(e.T).UTC().Format(time.RFC3339Nano)
 		res.Entries = append(res.Entries, e)
@@ -434,7 +466,34 @@ func (s *Store) domain(ctx context.Context, q *Query, res *Result) error {
 	if s.db.QueryRowContext(ctx, `SELECT rule, list FROM caught WHERE name = ?`, q.Name).Scan(&rule, &list) == nil {
 		res.Rule, res.List = rule, list
 	}
-	return nil
+	var f Flag
+	if s.db.QueryRowContext(ctx, `SELECT name, reason, score FROM flagged WHERE name = ?`, q.Name).Scan(&f.Name, &f.Reason, &f.Score) == nil {
+		res.Flags = []Flag{f}
+	}
+	if !res.Detail {
+		return nil
+	}
+	// The latest distinct answers.
+	seen := map[string]bool{}
+	return collect(ctx, s.db, `SELECT COALESCE(ips, ''), COALESCE(cnames, '') FROM queries WHERE name = ? AND (ips IS NOT NULL OR cnames IS NOT NULL) ORDER BY t DESC LIMIT 200`,
+		[]any{q.Name}, func(r *sql.Rows) error {
+			var ips, cn string
+			if err := r.Scan(&ips, &cn); err != nil {
+				return err
+			}
+			if k := ips + "|" + cn; !seen[k] && len(res.Answers) < 5 {
+				seen[k] = true
+				res.Answers = append(res.Answers, Answer{IPs: split(ips), CNAMEs: split(cn)})
+			}
+			return nil
+		})
+}
+
+func split(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, ",")
 }
 
 func collect(ctx context.Context, db *sql.DB, query string, args []any, fn func(*sql.Rows) error) error {
@@ -458,6 +517,7 @@ func Merge(q Query, parts []*Result) *Result {
 	series := map[int64]*Point{}
 	clients := map[string]bool{}
 	rows := map[string]*Row{}
+	flags := map[string]Flag{}
 	for _, p := range parts {
 		if p == nil {
 			continue
@@ -494,6 +554,16 @@ func Merge(q Query, parts []*Result) *Result {
 			}
 		}
 		out.Entries = append(out.Entries, p.Entries...)
+		for _, f := range p.Flags {
+			if cur, ok := flags[f.Name]; !ok || f.Score > cur.Score {
+				flags[f.Name] = f
+			}
+		}
+		for _, a := range p.Answers {
+			if len(out.Answers) < 5 && !slices.ContainsFunc(out.Answers, func(b Answer) bool { return slices.Equal(a.IPs, b.IPs) && slices.Equal(a.CNAMEs, b.CNAMEs) }) {
+				out.Answers = append(out.Answers, a)
+			}
+		}
 		if out.Rule == "" {
 			out.Rule, out.List = p.Rule, p.List
 		}
@@ -509,6 +579,10 @@ func Merge(q Query, parts []*Result) *Result {
 	for c := range clients {
 		out.Clients = append(out.Clients, c)
 	}
+	for _, f := range flags {
+		out.Flags = append(out.Flags, f)
+	}
+	slices.SortFunc(out.Flags, func(a, b Flag) int { return strings.Compare(a.Name, b.Name) })
 	slices.Sort(out.Clients)
 	for _, r := range rows {
 		out.Rows = append(out.Rows, *r)

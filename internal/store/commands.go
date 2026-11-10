@@ -97,7 +97,15 @@ const (
 	OpDeviceDelete   = "device.delete"       // IDOnly
 	OpGroupSave      = "group.save"          // Group (creates or replaces)
 	OpGroupDelete    = "group.delete"        // IDOnly
+	OpVirusTotalKey  = "virustotal.key"      // VirusTotalKey
 )
+
+// VirusTotalKey sets (or, empty, removes) the VirusTotal API key. It is
+// kept apart from Settings so it never shows in settings, their history
+// or the audit log.
+type VirusTotalKey struct {
+	Key string `json:"key"`
+}
 
 type UserCreate struct {
 	ID, Username, Role string
@@ -483,6 +491,17 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		return applyConfigRestore(st, c, dec)
 	case OpBackupConfig, OpBackupRestore:
 		return applyBackup(st, c, dec)
+
+	case OpVirusTotalKey:
+		var d VirusTotalKey
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		st.VirusTotalKey = strings.TrimSpace(d.Key)
+		if st.VirusTotalKey == "" {
+			return nil, audit("removed the VirusTotal key", nil, nil), nil
+		}
+		return nil, audit("set the VirusTotal key", nil, nil), nil
 	}
 	return nil, nil, fmt.Errorf("unknown command %q", c.Op)
 }

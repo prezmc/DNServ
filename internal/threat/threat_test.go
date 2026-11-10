@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +30,9 @@ func seeded(t *testing.T) *Intel {
 		"threatfox.txt":    "127.0.0.1 c2.example\n127.0.0.1 malware.example\n",
 		"phishingarmy.txt": "paypa1-login.example\n",
 		"hagezi-tif.txt":   "# tif\nscam-shop.example\n",
+		"feodo.txt":        "# Feodo\n203.0.113.66\n",
+		"drop4.txt":        `{"cidr":"198.51.100.0/24","sblid":"SBL1"}` + "\n" + `{"type":"metadata","timestamp":1}` + "\n",
+		"drop6.txt":        "2001:db8:bad::/48 ; SBL2\n",
 		"trackers.json":    trackers,
 		"companies.json":   companies,
 	}
@@ -113,6 +117,9 @@ func TestDownloadAndKeepLastCopy(t *testing.T) {
 	old := Feeds
 	defer func() { Feeds = old }()
 	Feeds = []Feed{{ID: "test", Name: "Test feed", URL: srv.URL, Kind: KindMalware}}
+	oldIP := IPFeeds
+	defer func() { IPFeeds = oldIP }()
+	IPFeeds = nil
 	in := New(t.TempDir(), srv.Client(), quiet())
 	in.SetEnabled(true)
 	in.Refresh(context.Background(), false)
@@ -136,5 +143,36 @@ func TestHeuristicsLeaveCommonNamesAlone(t *testing.T) {
 		if s, why := heuristics(n); s != 0 {
 			t.Errorf("%s scored %d: %v", n, s, why)
 		}
+	}
+}
+
+func TestCheckAnswer(t *testing.T) {
+	in := seeded(t)
+	for _, tc := range []struct {
+		ips    []string
+		cnames []string
+		score  int
+		why    string
+	}{
+		{[]string{"192.0.2.1", "203.0.113.66"}, nil, 90, "botnet"},
+		{[]string{"198.51.100.7"}, nil, 85, "Spamhaus"},
+		{[]string{"::ffff:198.51.100.7"}, nil, 85, "Spamhaus"},
+		{[]string{"2001:db8:bad:1::5"}, nil, 85, "Spamhaus"},
+		{[]string{"2001:db8:900d::5"}, nil, 0, ""},
+		{nil, []string{"cdn.scam-shop.example"}, 70, "Points to cdn.scam-shop.example"},
+		{nil, []string{"cdn.example.net"}, 0, ""},
+	} {
+		var ips []netip.Addr
+		for _, a := range tc.ips {
+			ips = append(ips, netip.MustParseAddr(a))
+		}
+		score, why := in.CheckAnswer("shop.example.org", ips, tc.cnames)
+		if score != tc.score || !strings.Contains(why, tc.why) {
+			t.Errorf("%v %v: %d %q", tc.ips, tc.cnames, score, why)
+		}
+	}
+	in.SetTrusted([]string{"example.org"})
+	if s, _ := in.CheckAnswer("shop.example.org", []netip.Addr{netip.MustParseAddr("203.0.113.66")}, nil); s != 0 {
+		t.Error("trusted domain flagged")
 	}
 }

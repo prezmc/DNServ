@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,23 @@ var Feeds = []Feed{
 	{ID: "hagezi-tif", Name: "HaGeZi Threat Intelligence Feeds (medium)", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt", Kind: KindThreat, Wildcard: true},
 }
 
+// IPFeed lists risky addresses or networks. A domain whose answer points
+// into one is flagged.
+type IPFeed struct {
+	ID     string
+	Name   string
+	URL    string
+	Score  int
+	Reason string // "a botnet command server"
+}
+
+// IPFeeds are the address lists DNServe uses.
+var IPFeeds = []IPFeed{
+	{ID: "feodo", Name: "Feodo Tracker (abuse.ch) botnet C2 servers", URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Score: 90, Reason: "a botnet command server (Feodo Tracker)"},
+	{ID: "drop4", Name: "Spamhaus DROP (IPv4)", URL: "https://www.spamhaus.org/drop/drop_v4.json", Score: 85, Reason: "a hijacked or criminal network (Spamhaus DROP)"},
+	{ID: "drop6", Name: "Spamhaus DROP (IPv6)", URL: "https://www.spamhaus.org/drop/drop_v6.json", Score: 85, Reason: "a hijacked or criminal network (Spamhaus DROP)"},
+}
+
 // Companies database (CC BY-SA 4.0, AdGuard).
 const (
 	trackersURL  = "https://raw.githubusercontent.com/AdguardTeam/companiesdb/main/dist/trackers.json"
@@ -82,6 +100,9 @@ const (
 	Medium = 40
 )
 
+// Level names a score: "", low, medium or high.
+func Level(score int) string { return level(score) }
+
 func level(score int) string {
 	switch {
 	case score >= High:
@@ -99,6 +120,11 @@ type db struct {
 	feeds    map[string]uint8 // exact names -> bit i set for Feeds[i]
 	wildcard map[string]uint8 // registrable domains covering subdomains
 	trackers map[string]tracker
+	// Address lists: single addresses, and networks grouped by prefix
+	// length so a lookup is one map probe per length in use.
+	ips     map[netip.Addr]uint8 // bit i set for IPFeeds[i]
+	nets    map[netip.Prefix]uint8
+	netBits []int
 }
 
 type tracker struct {
@@ -198,7 +224,8 @@ func (in *Intel) Refresh(ctx context.Context, force bool) {
 	if err := os.MkdirAll(in.dir, 0o700); err != nil {
 		in.log.Warn("threat feeds: can't create folder", "err", err)
 	}
-	next := &db{feeds: map[string]uint8{}, wildcard: map[string]uint8{}, trackers: map[string]tracker{}}
+	next := &db{feeds: map[string]uint8{}, wildcard: map[string]uint8{}, trackers: map[string]tracker{},
+		ips: map[netip.Addr]uint8{}, nets: map[netip.Prefix]uint8{}}
 	var status []SourceStatus
 	feedIDs := map[string]string{}
 	if in.enabled.Load() {
@@ -219,9 +246,35 @@ func (in *Intel) Refresh(ctx context.Context, force bool) {
 			feedIDs[f.ID] = f.Name
 			status = append(status, st)
 		}
+		for i, f := range IPFeeds {
+			st := SourceStatus{ID: f.ID, Name: f.Name}
+			path, updated, err := in.fetch(ctx, f.ID+".txt", f.URL, force)
+			st.Updated = updated
+			if err != nil {
+				st.Error = err.Error()
+			}
+			if path != "" {
+				n, err := loadIPFeed(path, i, next)
+				st.Entries = n
+				if err != nil && st.Error == "" {
+					st.Error = err.Error()
+				}
+			}
+			status = append(status, st)
+		}
+		bits := map[int]bool{}
+		for p := range next.nets {
+			bits[p.Bits()] = true
+		}
+		for b := range bits {
+			next.netBits = append(next.netBits, b)
+		}
 	} else {
 		// Turned off: free the memory and the disk.
 		for _, f := range Feeds {
+			os.Remove(filepath.Join(in.dir, f.ID+".txt"))
+		}
+		for _, f := range IPFeeds {
 			os.Remove(filepath.Join(in.dir, f.ID+".txt"))
 		}
 	}
@@ -321,6 +374,99 @@ func loadFeed(path string, idx int, f Feed, d *db) (int, error) {
 	return n, sc.Err()
 }
 
+// loadIPFeed reads addresses or networks, one per line: plain text
+// ("1.2.3.4", "1.2.3.0/24 ; SBL123") or JSON lines ({"cidr": "..."}).
+func loadIPFeed(path string, idx int, d *db) (int, error) {
+	fh, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer fh.Close()
+	sc := bufio.NewScanner(fh)
+	n := 0
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || line[0] == '#' || line[0] == ';' {
+			continue
+		}
+		if line[0] == '{' {
+			var v struct {
+				CIDR string `json:"cidr"`
+			}
+			if json.Unmarshal([]byte(line), &v) != nil || v.CIDR == "" {
+				continue
+			}
+			line = v.CIDR
+		}
+		if i := strings.IndexAny(line, " \t;"); i >= 0 {
+			line = line[:i]
+		}
+		if p, err := netip.ParsePrefix(line); err == nil {
+			p = p.Masked()
+			if p.IsSingleIP() {
+				d.ips[p.Addr().Unmap()] |= 1 << idx
+			} else {
+				d.nets[p] |= 1 << idx
+			}
+			n++
+		} else if a, err := netip.ParseAddr(line); err == nil {
+			d.ips[a.Unmap()] |= 1 << idx
+			n++
+		}
+	}
+	return n, sc.Err()
+}
+
+// ipFeeds returns the feeds that list a (bit i for IPFeeds[i]).
+func (d *db) ipFeeds(a netip.Addr) uint8 {
+	a = a.Unmap()
+	m := d.ips[a]
+	for _, b := range d.netBits {
+		if b > a.BitLen() {
+			continue
+		}
+		if p, err := a.Prefix(b); err == nil {
+			m |= d.nets[p]
+		}
+	}
+	return m
+}
+
+// CheckAnswer rates what a domain resolved to: addresses on an IP threat
+// list, or a CNAME to a risky domain. It is meant for the history writer,
+// off the query path.
+func (in *Intel) CheckAnswer(name string, ips []netip.Addr, cnames []string) (int, string) {
+	name = filter.Normalize(name)
+	if in.trustedName(name) {
+		return 0, ""
+	}
+	d := in.cur.Load()
+	best, why := 0, ""
+	for _, a := range ips {
+		m := d.ipFeeds(a)
+		for i, f := range IPFeeds {
+			if i < 8 && m&(1<<i) != 0 && f.Score > best {
+				best, why = f.Score, "Answered with "+a.String()+", "+f.Reason
+			}
+		}
+	}
+	for _, c := range cnames {
+		if r := in.Score(c); r.Score >= Medium && r.Score > best {
+			best, why = r.Score, "Points to "+c+" ("+strings.Join(r.Reasons, "; ")+")"
+		}
+	}
+	return best, why
+}
+
+func (in *Intel) trustedName(name string) bool {
+	for _, t := range *in.trusted.Load() {
+		if name == t || strings.HasSuffix(name, "."+t) {
+			return true
+		}
+	}
+	return false
+}
+
 func loadCompanies(trackersPath, companiesPath string, d *db) (int, error) {
 	var tr struct {
 		Categories map[string]string `json:"categories"`
@@ -414,10 +560,8 @@ func (in *Intel) TypeOf(name string) *Type {
 // Score rates a domain.
 func (in *Intel) Score(name string) Risk {
 	name = filter.Normalize(name)
-	for _, t := range *in.trusted.Load() {
-		if name == t || strings.HasSuffix(name, "."+t) {
-			return Risk{}
-		}
+	if in.trustedName(name) {
+		return Risk{}
 	}
 	d := in.cur.Load()
 	mask := d.feeds[name]

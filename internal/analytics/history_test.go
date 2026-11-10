@@ -2,12 +2,15 @@ package analytics
 
 import (
 	"context"
+	"database/sql"
 	"io"
 	"log/slog"
 	"net/netip"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/miekg/dns"
 
 	"github.com/prezmc/dnserve/internal/querylog"
 )
@@ -251,4 +254,69 @@ func BenchmarkWrite(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(b.N*len(batch))/b.Elapsed().Seconds(), "queries/s")
+}
+
+func TestAnswersAndFlags(t *testing.T) {
+	s := open(t, 30, 90)
+	s.SetChecker(func(name string, ips []netip.Addr, cnames []string) (int, string) {
+		for _, ip := range ips {
+			if ip == netip.MustParseAddr("203.0.113.66") {
+				return 90, "Answer 203.0.113.66 is on Feodo"
+			}
+		}
+		return 0, ""
+	})
+	a, _ := dns.NewRR("bad.example. 60 IN CNAME edge.cdn.example.")
+	b, _ := dns.NewRR("edge.cdn.example. 60 IN A 203.0.113.66")
+	c, _ := dns.NewRR("good.example. 60 IN AAAA 2001:db8::1")
+	e := entry(1, "192.168.1.10", "bad.example", querylog.Answered)
+	e.Answer = []dns.RR{a, b}
+	g := entry(2, "192.168.1.10", "good.example", querylog.Answered)
+	g.Answer = []dns.RR{c}
+	s.Record(e)
+	s.Record(g)
+	s.Flush()
+	day := Query{From: base.Add(-time.Hour), To: base.Add(23 * time.Hour)}
+
+	q := day
+	q.Kind, q.Name = KindSearch, "bad"
+	r := run(t, s, q)
+	if len(r.Entries) != 1 || r.Entries[0].IPs[0] != "203.0.113.66" || r.Entries[0].CNAMEs[0] != "edge.cdn.example" {
+		t.Fatalf("search = %+v", r.Entries)
+	}
+	q = day
+	q.Kind, q.By, q.Flags = KindTop, TopDomains, true
+	r = run(t, s, q)
+	if len(r.Flags) != 1 || r.Flags[0].Name != "bad.example" || r.Flags[0].Score != 90 {
+		t.Fatalf("flags = %+v", r.Flags)
+	}
+	q = day
+	q.Kind, q.Name = KindDomain, "good.example"
+	r = run(t, s, q)
+	if len(r.Answers) != 1 || r.Answers[0].IPs[0] != "2001:db8::1" || len(r.Flags) != 0 {
+		t.Fatalf("domain = %+v", r)
+	}
+}
+
+func TestMigrateOldDatabase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE queries (t INTEGER NOT NULL, client TEXT NOT NULL, name TEXT NOT NULL, qtype TEXT NOT NULL, result INTEGER NOT NULL,
+		rcode TEXT NOT NULL, answers INTEGER NOT NULL, ms REAL NOT NULL, allowed INTEGER NOT NULL, rule TEXT, list TEXT);
+		INSERT INTO queries VALUES (1, '192.168.1.1', 'old.example', 'A', 0, 'NOERROR', 1, 1, 0, NULL, NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	s, err := Open(path, func() string { return "n" }, 30, 90, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	r, err := s.Run(context.Background(), Query{Kind: KindSearch, From: time.Unix(0, 0), To: time.Unix(10, 0)})
+	if err != nil || len(r.Entries) != 1 || r.Entries[0].Name != "old.example" {
+		t.Fatalf("after migration: %+v %v", r, err)
+	}
 }

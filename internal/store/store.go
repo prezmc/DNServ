@@ -45,6 +45,9 @@ type State struct {
 	Backup         BackupConfig    `json:"backup"`
 	// SetupDone is set when the first admin finishes MFA enrollment.
 	SetupDone bool `json:"setup_done"`
+	// VirusTotalKey is the owner's own VirusTotal API key ("": off). The
+	// API never returns it.
+	VirusTotalKey string `json:"virustotal_key,omitempty"`
 }
 
 // Device is a named client on the network, recognized by its addresses.

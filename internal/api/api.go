@@ -28,6 +28,7 @@ import (
 	"github.com/prezmc/dnserve/internal/querylog"
 	"github.com/prezmc/dnserve/internal/store"
 	"github.com/prezmc/dnserve/internal/threat"
+	"github.com/prezmc/dnserve/internal/virustotal"
 )
 
 // CookieName is the session cookie.
@@ -55,6 +56,9 @@ type API struct {
 	QueryLog *querylog.Log
 	// CheckDomain explains how the filter treats a name.
 	CheckDomain func(name string) filter.Match
+	// AlsoOn lists every enabled list with a rule for a name, from the
+	// saved list files (nil: unavailable).
+	AlsoOn func(ctx context.Context, name string) []filter.ListHit
 	// UpdateLists re-downloads every list now (runs in the background).
 	UpdateLists func()
 	// LookupName asks the router for a device's name ("" if unknown).
@@ -68,6 +72,9 @@ type API struct {
 	Analytics *analytics.Store
 	// Intel scores domains for risk and names their type (nil: off).
 	Intel *threat.Intel
+	// VirusTotal looks up domains on request with the owner's key (nil:
+	// unavailable).
+	VirusTotal *virustotal.Client
 	// Backups makes and stores this node's backups (nil: downloads and
 	// stored backups are unavailable, as in tests).
 	Backups *backup.Manager

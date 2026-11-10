@@ -17,12 +17,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/miekg/dns"
 	_ "modernc.org/sqlite" // pure Go, so the image stays CGO-free
 
 	"github.com/prezmc/dnserve/internal/querylog"
@@ -95,6 +97,14 @@ CREATE TABLE IF NOT EXISTS hourly (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS hourly_client ON hourly (client, hour);
 CREATE INDEX IF NOT EXISTS hourly_name ON hourly (name, hour);
+-- Domains whose answers looked risky (an address on an IP threat list,
+-- or a CNAME to a risky domain), with the latest reason.
+CREATE TABLE IF NOT EXISTS flagged (
+	name   TEXT PRIMARY KEY,
+	reason TEXT NOT NULL,
+	score  INTEGER NOT NULL,
+	t      INTEGER NOT NULL
+) WITHOUT ROWID;
 -- The rule and list that last blocked each domain ("caught by").
 CREATE TABLE IF NOT EXISTS caught (
 	name TEXT PRIMARY KEY,
@@ -116,6 +126,7 @@ type Store struct {
 
 	days, statsDays atomic.Int64
 
+	checker   atomic.Pointer[Checker]
 	now       func() time.Time
 	pruneCh   chan struct{}
 	flushReq  chan chan struct{}
@@ -137,6 +148,10 @@ func Open(path string, node func() string, days, statsDays int, log *slog.Logger
 	}
 	db.SetMaxOpenConns(4)
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("history: %w", err)
+	}
+	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("history: %w", err)
 	}
@@ -308,7 +323,7 @@ func (s *Store) write(batch []querylog.Entry) error {
 			return err
 		}
 		defer full.Close()
-		args := make([]any, 0, per*11)
+		args := make([]any, 0, per*13)
 		for i := 0; i < len(batch); i += per {
 			chunk := batch[i:min(i+per, len(batch))]
 			args = args[:0]
@@ -318,7 +333,9 @@ func (s *Store) write(batch []querylog.Entry) error {
 				if e.Rule != "" || e.List != "" {
 					rule, list = e.Rule, e.List
 				}
-				args = append(args, e.Time.UnixMicro(), e.Client.String(), e.Name, e.Type, code, e.Rcode, e.Answers, e.Duration, b2i(e.Allowed), rule, list)
+				ips, cn := answerOf(e.Answer)
+				args = append(args, e.Time.UnixMicro(), e.Client.String(), e.Name, e.Type, code, e.Rcode, e.Answers, e.Duration, b2i(e.Allowed), rule, list,
+					joinAddrs(ips), joinNames(cn))
 			}
 			if len(chunk) == per {
 				_, err = full.Exec(args...)
@@ -343,6 +360,9 @@ func (s *Store) write(batch []querylog.Entry) error {
 			if code == codeBlocked && (e.Rule != "" || e.List != "") {
 				caught[e.Name] = e
 			}
+		}
+		if err := s.flag(tx, batch); err != nil {
+			return err
 		}
 		st, err := tx.Prepare(`INSERT INTO hourly (hour, name, client, result, n, ms) VALUES (?,?,?,?,?,?)
 			ON CONFLICT (hour, name, client, result) DO UPDATE SET n = n + excluded.n, ms = ms + excluded.ms`)
@@ -375,15 +395,140 @@ func (s *Store) write(batch []querylog.Entry) error {
 }
 
 func insertRows(n int) string {
-	return `INSERT INTO queries (t, client, name, qtype, result, rcode, answers, ms, allowed, rule, list) VALUES ` +
-		strings.TrimSuffix(strings.Repeat("(?,?,?,?,?,?,?,?,?,?,?),", n), ",")
+	return `INSERT INTO queries (t, client, name, qtype, result, rcode, answers, ms, allowed, rule, list, ips, cnames) VALUES ` +
+		strings.TrimSuffix(strings.Repeat("(?,?,?,?,?,?,?,?,?,?,?,?,?),", n), ",")
 }
+
+// migrate adds columns that later versions keep.
+func migrate(db *sql.DB) error {
+	have := map[string]bool{}
+	rows, err := db.Query(`PRAGMA table_info(queries)`)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var (
+			cid, notnull, pk int
+			name, typ        string
+			def              any
+		)
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		have[name] = true
+	}
+	rows.Close()
+	for _, col := range []string{"ips", "cnames"} {
+		if !have[col] {
+			if _, err := db.Exec(`ALTER TABLE queries ADD COLUMN ` + col + ` TEXT`); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// answerOf reads the addresses and CNAME targets of an answer.
+func answerOf(rrs []dns.RR) (ips []netip.Addr, cnames []string) {
+	for _, rr := range rrs {
+		switch v := rr.(type) {
+		case *dns.A:
+			if a, ok := netip.AddrFromSlice(v.A); ok {
+				ips = append(ips, a.Unmap())
+			}
+		case *dns.AAAA:
+			if a, ok := netip.AddrFromSlice(v.AAAA); ok {
+				ips = append(ips, a)
+			}
+		case *dns.CNAME:
+			cnames = append(cnames, strings.TrimSuffix(strings.ToLower(v.Target), "."))
+		}
+	}
+	return ips, cnames
+}
+
+func joinAddrs(ips []netip.Addr) any {
+	if len(ips) == 0 {
+		return nil
+	}
+	parts := make([]string, len(ips))
+	for i, a := range ips {
+		parts[i] = a.String()
+	}
+	return strings.Join(parts, ",")
+}
+
+func joinNames(n []string) any {
+	if len(n) == 0 {
+		return nil
+	}
+	return strings.Join(n, ",")
+}
+
+// Flag is a risk found in a domain's answers.
+type Flag struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
+	Score  int    `json:"score"`
+}
+
+// Checker rates a domain's answer: addresses and CNAME targets. It runs on
+// the writer goroutine, never on the query path.
+type Checker func(name string, ips []netip.Addr, cnames []string) (score int, reason string)
+
+// SetChecker sets how answers are checked (nil: not checked).
+func (s *Store) SetChecker(c Checker) { s.checker.Store(&c) }
 
 func b2i(b bool) int {
 	if b {
 		return 1
 	}
 	return 0
+}
+
+// flag checks each distinct answer in the batch and records risky ones.
+func (s *Store) flag(tx *sql.Tx, batch []querylog.Entry) error {
+	cp := s.checker.Load()
+	if cp == nil || *cp == nil {
+		return nil
+	}
+	check := *cp
+	type hit struct {
+		Flag
+		t int64
+	}
+	seen := map[string]bool{}
+	var hits []hit
+	for _, e := range batch {
+		if len(e.Answer) == 0 {
+			continue
+		}
+		ips, cn := answerOf(e.Answer)
+		key := e.Name + "|" + fmt.Sprint(joinAddrs(ips), joinNames(cn))
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		if score, reason := check(e.Name, ips, cn); score > 0 {
+			hits = append(hits, hit{Flag{e.Name, reason, score}, e.Time.UnixMicro()})
+		}
+	}
+	if len(hits) == 0 {
+		return nil
+	}
+	st, err := tx.Prepare(`INSERT INTO flagged (name, reason, score, t) VALUES (?,?,?,?)
+		ON CONFLICT (name) DO UPDATE SET reason = excluded.reason, score = excluded.score, t = excluded.t`)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	for _, h := range hits {
+		if _, err := st.Exec(h.Name, h.Reason, h.Score, h.t); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // prune removes history older than the retention, in chunks so queries
@@ -417,6 +562,7 @@ func (s *Store) prune() {
 		removed += n
 	}
 	s.db.Exec(`DELETE FROM caught WHERE t < ?`, hcut*3600*1_000_000)
+	s.db.Exec(`DELETE FROM flagged WHERE t < ?`, hcut*3600*1_000_000)
 	if removed > 0 {
 		s.db.Exec(`PRAGMA incremental_vacuum`)
 		s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)

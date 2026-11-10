@@ -233,8 +233,9 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 	resp, outcome, match := s.resolve(req, client)
 	took := time.Since(start)
 	s.Metrics.observe(outcome, resp, took)
+	resp = s.finalize(req, resp, udp)
 	ql, hist := s.qlog.Load(), s.hist.Load()
-	if ql != nil || hist != nil {
+	if (ql != nil || hist != nil) && resp != nil {
 		q := req.Question[0]
 		e := querylog.Entry{
 			Time: start, Client: client.Unmap(), Name: filter.Normalize(q.Name), Type: dns.TypeToString[q.Qtype],
@@ -251,10 +252,11 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 			ql.Add(e)
 		}
 		if hist != nil {
+			e.Answer = resp.Answer // a slice header; read later, never changed
 			hist.r.Record(e)
 		}
 	}
-	return s.finalize(req, resp, udp)
+	return resp
 }
 
 // Outcome classifies how a query was answered.
