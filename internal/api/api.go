@@ -80,6 +80,7 @@ type API struct {
 	Backups *backup.Manager
 
 	names namesCache
+	imp   imports
 
 	// mfaSteps guards against reuse of authenticator codes when the
 	// cluster can't record them (no leader). Per node, in memory.
@@ -179,6 +180,7 @@ func (a *API) Handler() http.Handler {
 	a.clusterRoutes(m)
 	a.backupRoutes(m)
 	a.analyticsRoutes(m)
+	a.importRoutes(m)
 
 	// Status and audit.
 	m.HandleFunc("GET /api/v1/status", a.authed(store.PermDashboard, a.status))

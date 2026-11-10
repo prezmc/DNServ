@@ -218,3 +218,12 @@ table.top .link.mono { text-align: left; word-break: break-all; padding: 0; }
 ul.plain { list-style: none; padding: 0; margin: .25rem 0 .75rem; }
 ul.plain li { padding: .2rem 0; overflow-wrap: anywhere; }
 .actions.left { align-items: center; margin-top: .5rem; }
+
+/* import */
+.grow { flex: 1; min-width: 140px; }
+.m0 { margin: 0 !important; }
+.tc { text-align: center; }
+.import details { margin-top: .5rem; }
+.import details > summary { cursor: pointer; font-size: .9rem; color: var(--muted); }
+.import ul.plain li label.inline { align-items: flex-start; margin: 0; }
+.import ul.plain li label.inline input { margin-top: .25rem; }
