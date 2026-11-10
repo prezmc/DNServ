@@ -6,8 +6,9 @@ import "github.com/prezmc/dnserv/internal/config"
 // "not set here": the node uses its config file, environment or built-in
 // default. Once a value is saved here it wins over those.
 type Settings struct {
-	UpstreamMode    *string  `json:"upstream_mode,omitempty"`
-	UpstreamServers []string `json:"upstream_servers,omitempty"`
+	UpstreamMode     *string  `json:"upstream_mode,omitempty"`
+	UpstreamServers  []string `json:"upstream_servers,omitempty"`
+	UpstreamStrategy *string  `json:"upstream_strategy,omitempty"`
 
 	TunnelInterface      *string  `json:"tunnel_interface,omitempty"`
 	TunnelExpectedEgress []string `json:"tunnel_expected_egress,omitempty"`
@@ -42,6 +43,9 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.UpstreamServers != nil {
 		c.Upstream.Servers = append([]string(nil), s.UpstreamServers...)
+	}
+	if s.UpstreamStrategy != nil {
+		c.Upstream.Strategy = *s.UpstreamStrategy
 	}
 	if s.TunnelInterface != nil {
 		c.Upstream.Tunnel.Interface = *s.TunnelInterface
@@ -111,6 +115,9 @@ func (s *Settings) Merge(p Settings) {
 	if p.UpstreamServers != nil {
 		s.UpstreamServers = p.UpstreamServers
 	}
+	if p.UpstreamStrategy != nil {
+		s.UpstreamStrategy = p.UpstreamStrategy
+	}
 	if p.TunnelInterface != nil {
 		s.TunnelInterface = p.TunnelInterface
 	}
@@ -172,7 +179,7 @@ func (s *Settings) Merge(p Settings) {
 
 // Touches reports which permission areas a patch changes.
 func (p Settings) Touches() (upstream, network, lists, rules bool) {
-	upstream = p.UpstreamMode != nil || p.UpstreamServers != nil || p.TunnelInterface != nil ||
+	upstream = p.UpstreamMode != nil || p.UpstreamServers != nil || p.UpstreamStrategy != nil || p.TunnelInterface != nil ||
 		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil
 	network = p.AllowedNets != nil || p.LocalDNS != nil || p.TimeZone != nil || p.Records != nil
 	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.BlockedServices != nil || p.SafeSearch != nil || p.FilteringEnabled != nil || p.BlockMode != nil ||

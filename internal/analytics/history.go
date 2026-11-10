@@ -13,6 +13,7 @@
 package analytics
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -134,6 +135,7 @@ type Store struct {
 	now       func() time.Time
 	pruneCh   chan struct{}
 	flushReq  chan chan struct{}
+	clearReq  chan clearReq
 	stop      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
@@ -168,7 +170,7 @@ func Open(path string, node func() string, days, statsDays int, log *slog.Logger
 		db: db, log: log, node: node, in: make(chan querylog.Entry, queueSize),
 		upIn: make(chan upSample, upQueueSize), upPending: map[upKey]*upAgg{},
 		now: time.Now, stop: make(chan struct{}), done: make(chan struct{}),
-		pruneCh: make(chan struct{}, 1), flushReq: make(chan chan struct{}),
+		pruneCh: make(chan struct{}, 1), flushReq: make(chan chan struct{}), clearReq: make(chan clearReq),
 	}
 	s.days.Store(int64(days))
 	s.statsDays.Store(int64(statsDays))
@@ -249,6 +251,67 @@ func (s *Store) Flush() {
 	<-ch
 }
 
+// What Clear can delete.
+const (
+	ClearPerformance = "performance" // response times and upstream timings
+	ClearAll         = "history"     // every query, total and timing
+)
+
+type clearReq struct {
+	what string
+	done chan error
+}
+
+// Clear deletes this node's performance stats (ClearPerformance) or all of
+// its query history (ClearAll). It runs on the writer, after everything
+// recorded so far is written.
+func (s *Store) Clear(ctx context.Context, what string) error {
+	if what != ClearPerformance && what != ClearAll {
+		return fmt.Errorf("history: can't clear %q", what)
+	}
+	c := clearReq{what: what, done: make(chan error, 1)}
+	select {
+	case s.clearReq <- c:
+	case <-s.done:
+		return errors.New("history is closed")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-c.done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err() // it still finishes on the writer
+	}
+}
+
+func (s *Store) clear(what string) error {
+	tables := []string{"perf", "upstream_perf"}
+	if what == ClearAll {
+		tables = append(tables, "queries", "hourly", "flagged", "caught")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, t := range tables {
+		if _, err := tx.Exec("DELETE FROM " + t); err != nil {
+			return fmt.Errorf("history: clear %s: %w", t, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if what == ClearAll {
+		// Give the space back; the file can be large.
+		if _, err := s.db.Exec("VACUUM"); err != nil {
+			s.log.Warn("history: vacuum after clearing failed", "err", err)
+		}
+	}
+	return nil
+}
+
 func (s *Store) run() {
 	defer close(s.done)
 	tick := time.NewTicker(flushEvery)
@@ -285,6 +348,21 @@ func (s *Store) run() {
 			s.addUp(u)
 		case <-tick.C:
 			flush()
+		case c := <-s.clearReq:
+			// Write what is waiting first, so nothing recorded before the
+			// clear turns up after it.
+			for drained := false; !drained; {
+				select {
+				case e := <-s.in:
+					batch = append(batch, e)
+				case u := <-s.upIn:
+					s.addUp(u)
+				default:
+					drained = true
+				}
+			}
+			flush()
+			c.done <- s.clear(c.what)
 		case ch := <-s.flushReq:
 			for drained := false; !drained; {
 				select {

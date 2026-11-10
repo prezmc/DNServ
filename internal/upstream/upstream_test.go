@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -62,7 +63,7 @@ func TestFailover(t *testing.T) {
 		}
 	}
 	st := g.Stats()
-	if st[0].Failures == 0 || st[1].Queries != 3 {
+	if st[0].Failures == 0 || st[1].Queries < 3 {
 		t.Fatalf("stats = %+v", st)
 	}
 	// After a failure the healthy server is ordered first.
@@ -176,5 +177,106 @@ func BenchmarkGroupExchange(b *testing.B) {
 				g.Exchange(context.Background(), q)
 			}
 		})
+	}
+}
+
+// A server that failed once, or was slow once, must be measured again and
+// win back first place; before probes it never got another query.
+func TestRecoversAfterFailure(t *testing.T) {
+	oldEvery, oldBackoff := probeEvery, failBackoff
+	probeEvery, failBackoff = 20*time.Millisecond, time.Hour
+	t.Cleanup(func() { probeEvery, failBackoff = oldEvery, oldBackoff })
+
+	var drop atomic.Bool
+	fast := startUDP(t, func(w dns.ResponseWriter, q *dns.Msg) {
+		if drop.Load() {
+			return // no answer: the client times out
+		}
+		answerA(w, q)
+	})
+	slow := startUDP(t, func(w dns.ResponseWriter, q *dns.Msg) {
+		time.Sleep(15 * time.Millisecond)
+		answerA(w, q)
+	})
+	g, err := NewGroup([]string{"udp://" + fast, "udp://" + slow}, nil, 100*time.Millisecond, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := new(dns.Msg)
+	q.SetQuestion("example.com.", dns.TypeA)
+	ask := func() {
+		t.Helper()
+		if _, err := g.Exchange(context.Background(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ask() // fast answers
+	ask() // slow, not measured yet, goes first once
+	drop.Store(true)
+	ask() // fast times out, slow answers
+	if g.order()[0].ex.String() != "udp://"+slow {
+		t.Fatal("after a failure the other server should be first")
+	}
+	drop.Store(false)
+	deadline := time.Now().Add(2 * time.Second)
+	for g.order()[0].ex.String() != "udp://"+fast {
+		if time.Now().After(deadline) {
+			t.Fatalf("the fast server never got first place back: %+v", g.Stats())
+		}
+		time.Sleep(25 * time.Millisecond)
+		ask()
+	}
+}
+
+func TestStrategies(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var hits [3]atomic.Int64
+	addrs := make([]string, 3)
+	for i := range addrs {
+		delay := time.Duration(2-i) * 20 * time.Millisecond // the last is fastest
+		addrs[i] = "udp://" + startUDP(t, func(w dns.ResponseWriter, q *dns.Msg) {
+			hits[i].Add(1)
+			time.Sleep(delay)
+			answerA(w, q)
+		})
+	}
+	q := new(dns.Msg)
+	q.SetQuestion("example.com.", dns.TypeA)
+	run := func(s Strategy, n int) [3]int64 {
+		t.Helper()
+		for i := range hits {
+			hits[i].Store(0)
+		}
+		g, err := NewGroup(addrs, nil, time.Second, quiet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		g.SetStrategy(s)
+		for i := 0; i < n; i++ {
+			if _, err := g.Exchange(context.Background(), q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(60 * time.Millisecond) // let parallel stragglers land
+		return [3]int64{hits[0].Load(), hits[1].Load(), hits[2].Load()}
+	}
+	if h := run(InOrder, 4); h != [3]int64{4, 0, 0} {
+		t.Errorf("in order: %v", h)
+	}
+	if h := run(RoundRobin, 6); h != [3]int64{2, 2, 2} {
+		t.Errorf("round robin: %v", h)
+	}
+	if h := run(Parallel, 3); h != [3]int64{3, 3, 3} {
+		t.Errorf("parallel: %v", h)
+	}
+	// Parallel answers as fast as the fastest server.
+	g, _ := NewGroup(addrs, nil, time.Second, quiet)
+	g.SetStrategy(Parallel)
+	start := time.Now()
+	if _, err := g.Exchange(context.Background(), q); err != nil || time.Since(start) > 30*time.Millisecond {
+		t.Errorf("parallel took %v (err %v)", time.Since(start), err)
+	}
+	if g.SetStrategy("bogus"); g.strategy != Fastest {
+		t.Errorf("unknown strategy should mean fastest, got %q", g.strategy)
 	}
 }

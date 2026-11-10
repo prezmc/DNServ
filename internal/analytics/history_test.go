@@ -341,3 +341,42 @@ func TestTopLists(t *testing.T) {
 		})
 	}
 }
+
+func TestClear(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "h.db"), func() string { return "n" }, 30, 90, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	now := time.Now()
+	for i := 0; i < 50; i++ {
+		s.Record(querylog.Entry{Time: now.Add(-time.Duration(i) * time.Minute), Client: netip.MustParseAddr("192.168.1.9"), Name: "a.example", Type: "A", Result: querylog.Answered, Rcode: "NOERROR", Duration: 12})
+	}
+	s.ObserveUpstream("udp://192.0.2.1:53", now, 5*time.Millisecond, 0, nil)
+	s.Flush()
+	count := func(table string) (n int) {
+		t.Helper()
+		if err := s.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if count("queries") == 0 || count("perf") == 0 || count("upstream_perf") == 0 {
+		t.Fatalf("nothing recorded: queries %d perf %d upstream %d", count("queries"), count("perf"), count("upstream_perf"))
+	}
+	if err := s.Clear(context.Background(), ClearPerformance); err != nil {
+		t.Fatal(err)
+	}
+	if count("perf") != 0 || count("upstream_perf") != 0 || count("queries") != 50 {
+		t.Fatalf("after clearing performance: perf %d upstream %d queries %d", count("perf"), count("upstream_perf"), count("queries"))
+	}
+	if err := s.Clear(context.Background(), ClearAll); err != nil {
+		t.Fatal(err)
+	}
+	if count("queries") != 0 || count("hourly") != 0 {
+		t.Fatalf("after clearing everything: queries %d hourly %d", count("queries"), count("hourly"))
+	}
+	if err := s.Clear(context.Background(), "nope"); err == nil {
+		t.Fatal("unknown kind should be refused")
+	}
+}

@@ -75,6 +75,8 @@ type Rewrite struct {
 type DNSInfo struct {
 	Upstreams         []string `json:"upstream_dns"`
 	UpstreamsFile     string   `json:"upstream_dns_file"`
+	UpstreamMode      string   `json:"upstream_mode"`     // "load_balance", "parallel", "fastest_addr"
+	ParallelRequests  bool     `json:"parallel_requests"` // older versions
 	LocalPTR          []string `json:"local_ptr_upstreams"`
 	UsePrivatePTR     bool     `json:"use_private_ptr_resolvers"`
 	BlockingMode      string   `json:"blocking_mode"`

@@ -768,3 +768,41 @@ func (a *API) clearCache(w http.ResponseWriter, r *http.Request, p *Principal) {
 	a.Log.Info("answer cache cleared", "by", p.Actor(), "servers", len(out))
 	writeJSON(w, http.StatusOK, map[string]any{"servers": out})
 }
+
+// HistoryCleared is one server's result of clearing history.
+type HistoryCleared struct {
+	Server string `json:"server"`
+	Error  string `json:"error,omitempty"`
+}
+
+// clearHistory deletes performance stats or all query history on every
+// server (admins only) and records it in the audit log.
+func (a *API) clearHistory(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var req struct{ What string }
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if _, ok := store.HistoryClearWhat[req.What]; !ok {
+		writeErr(w, http.StatusBadRequest, `what must be "performance" or "history"`)
+		return
+	}
+	if a.ClearHistory == nil {
+		writeErr(w, http.StatusServiceUnavailable, "query history is off on this node")
+		return
+	}
+	out := a.ClearHistory(r.Context(), req.What)
+	var done []string
+	for _, c := range out {
+		if c.Error == "" {
+			done = append(done, c.Server)
+		}
+	}
+	a.Log.Info("history cleared", "what", req.What, "by", p.Actor(), "servers", done)
+	if len(done) > 0 {
+		// The audit record is best effort: the history is gone either way.
+		if _, err := a.Store.Apply(a.stamp(store.NewCommand(store.OpHistoryClear, p.Actor(), store.HistoryClear{What: req.What, Servers: done}))); err != nil {
+			a.Log.Warn("couldn't add history clearing to the audit log", "err", err)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"servers": out})
+}
