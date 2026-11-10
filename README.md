@@ -467,6 +467,12 @@ resolver by IP. On your router or firewall:
 | `@@\|\|cdn.example^` | never blocks it or its subdomains |
 
 Custom rules beat lists. At the same level, an allow rule beats a block.
+
+Answers are checked too, as in AdGuard Home. A name that is an alias
+(CNAME) for a blocked name is blocked, and so is an answer whose IPv4
+address has a rule of its own (`||203.0.113.9^` or `203.0.113.9`). A name
+you allow keeps its answer whatever it points to. The query log shows the
+rule that matched, so a block "by CNAME" shows the alias's rule.
 Regex rules, cosmetic rules and modifiers other than `$important` are skipped
 and counted, so the index never claims to block something it doesn't.
 
