@@ -104,9 +104,14 @@ func fingerprint(c tls.Certificate) string {
 
 // StartEncrypted serves DNS over TLS and DNS over HTTPS on the configured
 // addresses.
-func (s *Server) StartEncrypted(cert tls.Certificate) error {
+// When pick is set, it chooses the certificate for each connection
+// instead.
+func (s *Server) StartEncrypted(cert tls.Certificate, pick func(*tls.ClientHelloInfo) (*tls.Certificate, error)) error {
 	tc := s.cfg.DNS.TLS
 	base := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	if pick != nil {
+		base.Certificates, base.GetCertificate = nil, pick
+	}
 
 	for _, addr := range tc.DoTListen {
 		ln, err := tls.Listen("tcp", addr, base.Clone())

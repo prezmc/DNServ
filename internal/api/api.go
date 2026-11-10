@@ -67,6 +67,9 @@ type API struct {
 	// ClearHistory deletes performance stats ("performance") or all query
 	// history ("history") on this node and every other server.
 	ClearHistory func(ctx context.Context, what string) []HistoryCleared
+	// HTTPSStatus reports dashboard HTTPS on this node and the others
+	// (nil: none, as in tests).
+	HTTPSStatus func(ctx context.Context) []NodeHTTPS
 	// LookupName asks the router for a device's name ("" if unknown).
 	LookupName func(ctx context.Context, a netip.Addr) string
 
@@ -171,6 +174,7 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/lists/update", a.authed(store.PermLists, a.updateLists))
 	m.HandleFunc("POST /api/v1/cache/clear", a.authed(store.PermLists, a.clearCache))
 	m.HandleFunc("POST /api/v1/analytics/clear", a.authed(store.PermUsers, a.clearHistory))
+	a.routesHTTPS(m)
 	m.HandleFunc("GET /api/v1/domains/check", a.authed(store.PermDashboard, a.checkDomain))
 
 	// Devices and recent queries.

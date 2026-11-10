@@ -73,6 +73,7 @@ Then add the second server as your router's second DNS server. To keep taking ch
 | [Two-server guide](docs/deploy-two-servers.md) | Step-by-step deploy and failure scenarios |
 | [Two floating DNS addresses](docs/floating-dns-addresses.md) | More than two nodes behind keepalived |
 | [Filtering](docs/filtering.md) | Rule syntax, blocked services, safe search, stopping bypass |
+| [Dashboard HTTPS](docs/https.md) | Self-signed, your own certificate, or one from Nginx Proxy Manager |
 | [Backups and history](docs/backups.md) | Encrypted backups, schedules, restore |
 | [Moving from AdGuard Home](docs/adguard-import.md) | What the importer brings across |
 | [Tunnel mode](docs/tunnel-mode.md) | Recursive DNS through a WireGuard VPN |

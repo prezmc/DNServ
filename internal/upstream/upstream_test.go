@@ -233,7 +233,9 @@ func TestStrategies(t *testing.T) {
 	var hits [3]atomic.Int64
 	addrs := make([]string, 3)
 	for i := range addrs {
-		delay := time.Duration(2-i) * 20 * time.Millisecond // the last is fastest
+		// The last is fastest, but slow enough that the others get the
+		// query before parallel mode cancels them.
+		delay := time.Duration(3-i) * 20 * time.Millisecond
 		addrs[i] = "udp://" + startUDP(t, func(w dns.ResponseWriter, q *dns.Msg) {
 			hits[i].Add(1)
 			time.Sleep(delay)
@@ -257,7 +259,7 @@ func TestStrategies(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		time.Sleep(60 * time.Millisecond) // let parallel stragglers land
+		time.Sleep(100 * time.Millisecond) // let parallel stragglers land
 		return [3]int64{hits[0].Load(), hits[1].Load(), hits[2].Load()}
 	}
 	if h := run(InOrder, 4); h != [3]int64{4, 0, 0} {
@@ -273,7 +275,7 @@ func TestStrategies(t *testing.T) {
 	g, _ := NewGroup(addrs, nil, time.Second, quiet)
 	g.SetStrategy(Parallel)
 	start := time.Now()
-	if _, err := g.Exchange(context.Background(), q); err != nil || time.Since(start) > 30*time.Millisecond {
+	if _, err := g.Exchange(context.Background(), q); err != nil || time.Since(start) > 50*time.Millisecond {
 		t.Errorf("parallel took %v (err %v)", time.Since(start), err)
 	}
 	if g.SetStrategy("bogus"); g.strategy != Fastest {

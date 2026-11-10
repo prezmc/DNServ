@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -28,6 +29,7 @@ import (
 	"github.com/prezmc/dnserv/internal/auth"
 	"github.com/prezmc/dnserv/internal/backup"
 	"github.com/prezmc/dnserv/internal/cache"
+	"github.com/prezmc/dnserv/internal/certs"
 	"github.com/prezmc/dnserv/internal/cluster"
 	"github.com/prezmc/dnserv/internal/config"
 	"github.com/prezmc/dnserv/internal/filter"
@@ -204,17 +206,33 @@ func run() error {
 	if err := srv.Start(); err != nil {
 		return err
 	}
+	// Dashboard HTTPS: off until turned on in Settings.
+	httpsMgr := &certs.Manager{
+		DataDir:  cfg.DataDir,
+		Names:    func() []string { return httpsNames(&cfg) },
+		IsLeader: func() bool { return cl.LocalStatus().State == "Leader" },
+		Propose: func(c store.HTTPSCert) error {
+			_, err := st.Apply(store.NewCommand(store.OpHTTPSCert, "system", c))
+			return err
+		},
+		Log: log.With("component", "https"),
+		Off: strings.EqualFold(os.Getenv("DNSERV_HTTPS"), "off"),
+	}
+	httpsMgr.Apply(st.State().HTTPS)
 	if tc := cfg.DNS.TLS; len(tc.DoTListen)+len(tc.DoHListen) > 0 {
 		cert, fp, selfSigned, err := server.LoadOrCreateCert(tc, cfg.DataDir)
 		if err != nil {
 			return err
 		}
+		var pick func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 		if selfSigned {
-			log.Warn("using a self-signed certificate for DNS over TLS/HTTPS; most devices need a trusted one (set dns.tls.cert_file)", "sha256", fp)
+			log.Warn("using a self-signed certificate for DNS over TLS/HTTPS unless dashboard HTTPS has a trusted one; most devices need a trusted one (set dns.tls.cert_file)", "sha256", fp)
+			// A trusted dashboard certificate serves DNS over TLS too.
+			pick = httpsMgr.DNSCertificate(&cert)
 		} else {
 			log.Info("tls certificate loaded", "sha256", fp)
 		}
-		if err := srv.StartEncrypted(cert); err != nil {
+		if err := srv.StartEncrypted(cert, pick); err != nil {
 			return err
 		}
 	}
@@ -316,6 +334,22 @@ func run() error {
 			}
 			return out
 		}
+	}
+	cl.Handle(peerHTTPSStatus, func(context.Context, json.RawMessage) (any, error) {
+		return httpsMgr.Status(), nil
+	})
+	adm.HTTPSStatus = func(ctx context.Context) []api.NodeHTTPS {
+		out := []api.NodeHTTPS{{Server: cl.Name(), Status: httpsMgr.Status()}}
+		for _, r := range cl.AskPeers(ctx, peerHTTPSStatus, nil) {
+			n := api.NodeHTTPS{Server: r.Name}
+			if r.Err != nil {
+				n.Unreachable = r.Err.Error()
+			} else if err := json.Unmarshal(r.Body, &n.Status); err != nil {
+				n.Unreachable = err.Error()
+			}
+			out = append(out, n)
+		}
+		return out
 	}
 	var updating atomic.Bool
 	cl.Handle(peerListsUpdate, func(context.Context, json.RawMessage) (any, error) {
@@ -426,6 +460,9 @@ func run() error {
 			intel.SetTrusted(ac.TrustedDomains)
 			intel.SetEnabled(ac.ThreatFeeds)
 		}
+		if !reflect.DeepEqual(old.HTTPS, new.HTTPS) {
+			httpsMgr.Apply(new.HTTPS)
+		}
 		if !reflect.DeepEqual(old.Settings, new.Settings) {
 			select {
 			case reload <- struct{}{}:
@@ -453,14 +490,27 @@ func run() error {
 		}
 	}()
 
+	// One port serves both HTTP and, when it is on, HTTPS.
+	httpLn, err := net.Listen("tcp", cfg.HTTP.Listen)
+	if err != nil {
+		return fmt.Errorf("listen http %s: %w", cfg.HTTP.Listen, err)
+	}
+	webLn := certs.NewListener(httpLn, &tls.Config{
+		GetCertificate: httpsMgr.Holder.GetCertificate,
+		MinVersion:     tls.VersionTLS12,
+		NextProtos:     []string{"http/1.1"},
+	})
+	httpsMgr.Apply(st.State().HTTPS) // catch changes applied before Subscribe
+	httpsMgr.Attach(webLn)
+	go httpsMgr.Run(ctx)
 	httpSrv := &http.Server{
-		Addr:              cfg.HTTP.Listen,
-		Handler:           httpHandler(srv, c, engine, &up, &filterReady, adm.Handler()),
+		Handler:           httpsMgr.RedirectHTTPS(httpHandler(srv, c, engine, &up, &filterReady, adm.Handler())),
 		ReadHeaderTimeout: 5 * time.Second,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug), // TLS handshake noise
 	}
 	go func() {
-		log.Info("http listening", "addr", cfg.HTTP.Listen)
-		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Info("http listening", "addr", httpLn.Addr())
+		if err := httpSrv.Serve(webLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("http server failed", "err", err)
 			stop()
 		}
@@ -720,6 +770,16 @@ func setLocalDNS(srv *server.Server, cfg config.Config, log *slog.Logger) error 
 	return nil
 }
 
+// httpsNames are the names a self-signed dashboard certificate is made
+// for: this machine's, the cluster address, and DNSERV_HTTPS_NAMES.
+func httpsNames(cfg *config.Config) []string {
+	extra := splitList(os.Getenv("DNSERV_HTTPS_NAMES"))
+	if h, _, err := net.SplitHostPort(cfg.Cluster.Advertise); err == nil && h != "" {
+		extra = append(extra, h)
+	}
+	return certs.LocalNames(extra...)
+}
+
 func splitList(s string) []string {
 	var out []string
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
@@ -940,6 +1000,7 @@ const (
 	peerListsUpdate  = "lists.update"   // download lists now (sent to the leader)
 	peerCacheClear   = "cache.clear"    // empty the answer cache
 	peerHistoryClear = "history.clear"  // delete performance stats or all query history
+	peerHTTPSStatus  = "https.status"   // this node's dashboard HTTPS status
 )
 
 // syncLists makes every node in a cluster filter with exactly the same

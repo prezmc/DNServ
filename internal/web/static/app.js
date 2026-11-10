@@ -2267,6 +2267,12 @@ async function settings(main) {
         clearHistoryButton('history', 'Delete all query history', 'Delete all query history on every server? Every saved query, the Analytics totals and the performance stats are deleted, and everything starts again from now.'))));
   }
 
+  if (isAdmin()) {
+    let hs = null;
+    try { hs = await api('GET', '/https'); } catch (_) { /* unavailable */ }
+    if (hs) sections.push(httpsCard(hs));
+  }
+
   // A row of section chips at the top, so a long settings page is one
   // click from any section (buttons, not links, to keep the #/ routes).
   const secs = sections.flat(Infinity).filter(x => x instanceof Element);
@@ -2275,6 +2281,119 @@ async function settings(main) {
     return t ? h('button', { type: 'button', onclick: () => sec.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, t.firstChild ? t.firstChild.textContent : t.textContent) : null;
   })) : null;
   page(main, 'Settings', jump, sections);
+}
+
+// ---------- dashboard HTTPS ----------
+
+const HTTPS_MODES = [
+  ['', 'Off', 'The dashboard uses plain HTTP. Fine on a home network you trust, or behind a reverse proxy that does HTTPS.'],
+  ['self_signed', 'Self-signed', 'Each server makes its own certificate. Traffic is encrypted, but browsers warn until you accept the certificate once on each device.'],
+  ['upload', 'Upload a certificate', 'Paste a certificate and its private key, for example one from your own certificate authority. You’ll need to paste a new one before it expires.'],
+  ['files', 'Certificate files in a folder', 'Read the certificate from a folder mounted into the container, such as Nginx Proxy Manager’s, Traefik’s, Caddy’s or certbot’s. Renewals are picked up within a minute.'],
+  ['npm', 'From Nginx Proxy Manager', 'Sign in to Nginx Proxy Manager and pick one of its certificates. DNServ downloads it again twice a day, so renewals arrive on their own.'],
+];
+
+function httpsCard(hs) {
+  const s = hs.settings, servers = hs.servers || [];
+  const panels = {}, box = h('div');
+  const mode = h('select', { id: 'hmode', name: 'mode' }, HTTPS_MODES.map(([v, label]) => h('option', { value: v, selected: s.mode === v }, label)));
+  const note = h('p', { class: 'muted small' });
+  const show = () => {
+    const m = mode.value;
+    note.textContent = (HTTPS_MODES.find(x => x[0] === m) || [])[2] || '';
+    for (const [k, el] of Object.entries(panels)) el.hidden = k !== m;
+    redirect.hidden = m === '';
+  };
+  mode.addEventListener('change', show);
+
+  panels.self_signed = h('div', {},
+    h('label', { for: 'hnames' }, 'Extra names for the certificate (one per line, optional)'),
+    h('textarea', { id: 'hnames', name: 'names', class: 'short', spellcheck: 'false', placeholder: 'dns1.example.com' }, (s.names || []).join('\n')),
+    h('p', { class: 'muted small' }, 'Each server already includes its own name and addresses, and the name you opened this page with.'));
+  panels.upload = h('div', {},
+    s.mode === 'upload' && s.has_cert ? h('p', { class: 'muted small' }, 'A certificate is saved. Leave these empty to keep it.') : null,
+    h('label', { for: 'hcert' }, 'Certificate (PEM, with any intermediate certificates after it)'),
+    h('textarea', { id: 'hcert', name: 'cert', class: 'short mono', spellcheck: 'false', placeholder: '-----BEGIN CERTIFICATE-----' }),
+    h('label', { for: 'hkey' }, 'Private key (PEM)'),
+    h('textarea', { id: 'hkey', name: 'key', class: 'short mono', spellcheck: 'false', placeholder: '-----BEGIN PRIVATE KEY-----' }));
+  panels.files = h('div', {},
+    h('label', { for: 'hcf' }, 'Certificate file, as the container sees it'),
+    h('input', { id: 'hcf', name: 'cert_file', type: 'text', spellcheck: 'false', value: s.cert_file || '', placeholder: '/certs/live/npm-3/fullchain.pem' }),
+    h('label', { for: 'hkf' }, 'Key file'),
+    h('input', { id: 'hkf', name: 'key_file', type: 'text', spellcheck: 'false', value: s.key_file || '', placeholder: '/certs/live/npm-3/privkey.pem' }),
+    h('p', { class: 'muted small' }, 'Mount the folder read-only in docker-compose.yml, for example ', h('code', {}, '- /path/to/npm/letsencrypt:/certs:ro'),
+      '. For Nginx Proxy Manager, mount its whole letsencrypt folder: the files in live/ point into archive/. Servers that can’t see the folder use the copy shared by the others.'));
+
+  const npm = s.npm || {};
+  const certSel = h('select', { id: 'hnpmcert', name: 'npm_cert' },
+    npm.cert_id ? h('option', { value: npm.cert_id, selected: true }, npm.cert_name || ('Certificate ' + npm.cert_id)) : h('option', { value: '' }, 'Sign in to list certificates'));
+  const npmMsg = h('div');
+  const listBtn = h('button', { type: 'button', class: 'small', onclick: async () => {
+    const f = listBtn.form;
+    listBtn.disabled = true;
+    fill(npmMsg);
+    try {
+      const r = await api('POST', '/https/npm/certificates', { url: val(f, 'npm_url'), email: val(f, 'npm_email'), password: val(f, 'npm_password') });
+      const list = r.certificates || [];
+      fill(certSel, list.length ? list.map(c => h('option', { value: c.id, selected: c.id === npm.cert_id },
+        c.name + (c.domains && c.domains.length > 1 ? ' (+' + (c.domains.length - 1) + ' more)' : '') + (c.expires && !c.expires.startsWith('0001') ? ', expires ' + new Date(c.expires).toLocaleDateString() : '')))
+        : h('option', { value: '' }, 'Nginx Proxy Manager has no certificates'));
+      fill(npmMsg, msg('ok', 'Found ' + list.length + ' certificate' + (list.length === 1 ? '' : 's') + '. Pick the one for this server’s name.'));
+    } catch (e) { fill(npmMsg, msg('err', e.message)); }
+    listBtn.disabled = false;
+  } }, 'Sign in and list certificates');
+  panels.npm = h('div', {},
+    h('label', { for: 'hnpmurl' }, 'Nginx Proxy Manager admin address'),
+    h('input', { id: 'hnpmurl', name: 'npm_url', type: 'text', spellcheck: 'false', autocomplete: 'off', value: npm.url || '', placeholder: 'http://192.168.1.10:81' }),
+    h('div', { class: 'row' },
+      h('div', { class: 'grow' }, h('label', { for: 'hnpmemail' }, 'Email'), h('input', { id: 'hnpmemail', name: 'npm_email', type: 'text', autocomplete: 'off', value: npm.email || '' })),
+      h('div', { class: 'grow' }, h('label', { for: 'hnpmpw' }, 'Password'), h('input', { id: 'hnpmpw', name: 'npm_password', type: 'password', autocomplete: 'new-password', placeholder: npm.has_password ? 'saved' : '' }))),
+    h('p', { class: 'muted small' }, 'Best: in Nginx Proxy Manager, add a user just for DNServ with Certificates set to View and Visibility set to All items. The password is shared with your other servers so they can renew, never shown again, and not in backups. Needs Nginx Proxy Manager 2.10 or later.'),
+    h('div', { class: 'actions left' }, listBtn), npmMsg,
+    h('label', { for: 'hnpmcert' }, 'Certificate'), certSel,
+    h('p', { class: 'muted small' }, 'Pick a certificate for the name you’ll open the dashboard with, such as dns1.example.com, and point that name at this server in Local names. A wildcard certificate (*.example.com) covers every server.'));
+
+  const redirect = h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'redirect', checked: s.redirect }),
+    h('span', {}, 'Send browsers that open http:// to https://'));
+
+  const status = servers.length ? h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Server'), h('th', {}, 'HTTPS'), h('th', {}, 'Certificate'), h('th', {}, 'Expires'))),
+    h('tbody', {}, servers.map(n => h('tr', {},
+      h('td', {}, n.server),
+      h('td', {}, n.unreachable ? h('span', { class: 'badge warn', title: n.unreachable }, 'unreachable')
+        : n.forced ? h('span', { class: 'badge warn', title: 'DNSERV_HTTPS=off is set on this server' }, 'forced off')
+        : n.on ? h('span', { class: 'badge ' + (n.error ? 'warn' : 'ok'), title: n.error || '' }, n.error ? 'on, with a problem' : 'on') : h('span', { class: 'badge' }, 'off')),
+      h('td', { class: 'small' }, n.cert ? [n.cert.self_signed ? 'self-signed' : (n.cert.issuer || ''), ' · ', (n.cert.names || []).slice(0, 3).join(', ')] : '—'),
+      h('td', { class: 'small' }, n.cert ? new Date(n.cert.not_after).toLocaleDateString() : '—'))))))
+    : null;
+  const problems = servers.filter(n => n.error).map(n => msg('warn', n.server + ': ' + n.error + (n.cert && n.cert.self_signed && s.mode !== 'self_signed' ? ' Using a self-signed certificate until this is fixed.' : '')));
+
+  const card = h('div', { class: 'card' },
+    h('h2', {}, 'Dashboard HTTPS'),
+    h('p', { class: 'muted' }, 'Encrypts the dashboard and its sign-in on your network. HTTPS uses the same port as now (8080): open ', h('code', {}, 'https://'), ' instead of ', h('code', {}, 'http://'), '. Plain HTTP keeps working unless you turn on the redirect.'),
+    form({ 'data-track': true }, [
+      h('label', { for: 'hmode' }, 'Certificate'), mode, note,
+      Object.values(panels), redirect,
+      h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+    ], async (f) => {
+      const m = mode.value, body = { mode: m, redirect: f.elements.redirect.checked };
+      if (m === 'self_signed') body.names = lines(val(f, 'names'));
+      if (m === 'upload') { body.cert_pem = val(f, 'cert'); body.key_pem = val(f, 'key'); }
+      if (m === 'files') { body.cert_file = val(f, 'cert_file').trim(); body.key_file = val(f, 'key_file').trim(); }
+      if (m === 'npm') body.npm = { url: val(f, 'npm_url').trim(), email: val(f, 'npm_email').trim(), password: val(f, 'npm_password'), cert_id: Number(certSel.value) || 0 };
+      const r = await api('PUT', '/https', body);
+      fill(box, httpsCard(r));
+      // Other servers take a moment to switch; show where they got to.
+      setTimeout(async () => { try { fill(box, httpsCard(await api('GET', '/https'))); } catch (_) { /* keep */ } }, 2500);
+      return null;
+    }),
+    s.fetch_error ? msg('warn', 'Last renewal check failed: ' + s.fetch_error) : null,
+    problems,
+    status,
+    h('p', { class: 'muted small' }, 'Locked out by a bad certificate? Plain http:// still works unless the redirect is on. Otherwise start the container with ', h('code', {}, 'DNSERV_HTTPS=off'), '.'));
+  show();
+  fill(box, card);
+  return box;
 }
 
 // ---------- import from AdGuard Home ----------
