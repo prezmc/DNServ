@@ -14,6 +14,10 @@ type Record struct {
 	Name  string `yaml:"name" json:"name"`
 	Value string `yaml:"value" json:"value"`
 	Note  string `yaml:"note,omitempty" json:"note,omitempty"`
+	// Node, when set, is the cluster node this name is for. While Value
+	// is that node's address, it follows the node when the address
+	// changes.
+	Node string `yaml:"node,omitempty" json:"node,omitempty"`
 }
 
 // MaxRecords limits the local records.
@@ -63,7 +67,7 @@ func NormalizeRecords(in []Record) ([]Record, error) {
 	kinds := map[string]map[string]bool{}
 	seen := map[[2]string]bool{}
 	for _, r := range in {
-		r.Name, r.Note = NormalizeName(r.Name), strings.TrimSpace(r.Note)
+		r.Name, r.Note, r.Node = NormalizeName(r.Name), strings.TrimSpace(r.Note), strings.TrimSpace(r.Node)
 		host := strings.TrimPrefix(r.Name, "*.")
 		if !validHostname(host) || strings.Contains(host, "*") {
 			return nil, fmt.Errorf("%q isn't a valid name (use letters, digits and hyphens, like nas.home or *.lab.home)", r.Name)
@@ -105,4 +109,18 @@ func NormalizeRecords(in []Record) ([]Record, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// FollowNode points the records made for node id (Record.Node) at its new
+// address to, where they still point at its old address from. It reports
+// whether any changed; recs is changed in place.
+func FollowNode(recs []Record, id, from, to string) bool {
+	changed := false
+	for i, r := range recs {
+		if r.Node == id && r.Value == from && from != to {
+			recs[i].Value = to
+			changed = true
+		}
+	}
+	return changed
 }
