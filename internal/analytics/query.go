@@ -17,6 +17,7 @@ const (
 	KindDomain  = "domain"  // one domain: totals, series, devices, caught by
 	KindPerf    = "perf"    // response times, upstream health
 	KindFlow    = "flow"    // the traffic map
+	KindReach   = "reach"   // which devices reached given domains, and when
 )
 
 // Top list kinds.
@@ -57,7 +58,12 @@ type Query struct {
 	Baseline int64 `json:"baseline,omitempty"`
 	// Devices (perf) adds each device's response times.
 	Devices bool `json:"devices,omitempty"`
+	// Names are the domains a reach query asks about.
+	Names []string `json:"names,omitempty"`
 }
+
+// MaxNames is how many domains one reach query may name.
+const MaxNames = 1000
 
 // Counts are query totals.
 type Counts struct {
@@ -107,6 +113,10 @@ type Row struct {
 	// Rule and List say what last blocked a domain ("caught by").
 	Rule string `json:"rule,omitempty"`
 	List string `json:"list,omitempty"`
+	// Client and Last (reach): the device, and when it last got an
+	// answer (unix seconds; the hour's start from hourly totals).
+	Client string `json:"client,omitempty"`
+	Last   int64  `json:"last,omitempty"`
 }
 
 // Entry is one query from search.
@@ -185,6 +195,9 @@ func (q *Query) Validate() error {
 		q.Limit = 20
 	}
 	q.Limit = min(q.Limit, 20000)
+	if len(q.Names) > MaxNames {
+		return fmt.Errorf("%w: too many names", ErrBadQuery)
+	}
 	if len(q.Clients) > 256 {
 		return fmt.Errorf("%w: too many clients", ErrBadQuery)
 	}
@@ -193,6 +206,10 @@ func (q *Query) Validate() error {
 	case KindPerf:
 		if q.Baseline < 0 || q.Baseline > 30*86400 {
 			return fmt.Errorf("%w: baseline must be at most 30 days", ErrBadQuery)
+		}
+	case KindReach:
+		if len(q.Names) == 0 || len(q.Names) > MaxNames {
+			return fmt.Errorf("%w: reach needs 1 to %d names", ErrBadQuery, MaxNames)
 		}
 	case KindTop:
 		if q.By != TopDomains && q.By != TopBlocked && q.By != TopClients && q.By != TopLists {
@@ -272,6 +289,8 @@ func (s *Store) Run(ctx context.Context, q Query) (*Result, error) {
 		err = s.perf(ctx, &q, res)
 	case KindFlow:
 		err = s.flow(ctx, &q, res)
+	case KindReach:
+		err = s.reach(ctx, &q, res)
 	}
 	if err != nil {
 		return nil, err
@@ -414,6 +433,12 @@ func (s *Store) search(ctx context.Context, q *Query, res *Result) error {
 		conds = append(conds, "client IN ("+placeholders(len(q.Clients))+")")
 		for _, c := range q.Clients {
 			args = append(args, c)
+		}
+	}
+	if len(q.Names) > 0 {
+		conds = append(conds, "name IN ("+placeholders(len(q.Names))+")")
+		for _, n := range q.Names {
+			args = append(args, n)
 		}
 	}
 	// Every word must appear somewhere in the name, in any order, so
@@ -573,15 +598,16 @@ func Merge(q Query, parts []*Result) *Result {
 			clients[c] = true
 		}
 		for _, r := range p.Rows {
-			if cur, ok := rows[r.Key]; ok {
+			if cur, ok := rows[r.Key+"\x00"+r.Client]; ok {
 				cur.Total += r.Total
 				cur.Blocked += r.Blocked
+				cur.Last = max(cur.Last, r.Last)
 				if cur.Rule == "" {
 					cur.Rule, cur.List = r.Rule, r.List
 				}
 			} else {
 				c := r
-				rows[r.Key] = &c
+				rows[r.Key+"\x00"+r.Client] = &c
 			}
 		}
 		out.Entries = append(out.Entries, p.Entries...)
@@ -629,7 +655,10 @@ func Merge(q Query, parts []*Result) *Result {
 			}
 			return 1
 		}
-		return strings.Compare(a.Key, b.Key)
+		if c := strings.Compare(a.Key, b.Key); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Client, b.Client)
 	})
 	if len(out.Rows) > q.Limit {
 		out.Rows = out.Rows[:q.Limit]

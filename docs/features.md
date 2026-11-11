@@ -132,6 +132,19 @@ Everything DNServ does today, in more detail than the README.
   known botnet server (Feodo Tracker, Spamhaus DROP) or points to a risky
   name is marked too. These checks run in the history writer, never on
   the DNS path.
+- **Security overview.** The Dashboard opens with a verdict for the period:
+  "All clear: nothing risky got through", or how many high-risk domains
+  devices got answers for, who reached them, and how many threats were
+  blocked anyway. **Needs attention** lists each one with its reasons, the
+  devices (each opens its Query log) and when, with **Block**, **Trust**
+  (a false alarm: never mark it again) and **Dismiss** (hidden until a
+  device reaches it again; shared by every server, not in settings history
+  or backups). The queries chart marks the hours when something risky got
+  through, and a domain's details say when it was checked and nothing was
+  found. Missing feeds (no abuse.ch key, a failed download) are named.
+  The Query log filters by risk (low and above, medium and above, high
+  only), for one device or all, and shows low-risk badges too; the CSV
+  export follows the filter.
 - **Also on, and VirusTotal.** A domain's details list every enabled list
   with a rule for it ("on your lists"), read from the saved list files
   only when you open it, so it costs no memory. Add your own free

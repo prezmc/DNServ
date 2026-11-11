@@ -112,6 +112,7 @@ const (
 	OpFilterPause    = "filtering.pause"     // FilterPause
 	OpFilterResume   = "filtering.resume"    // FilterResume
 	OpHistoryClear   = "history.clear"       // HistoryClear (audit record only)
+	OpRiskDismiss    = "risk.dismiss"        // RiskDismiss
 )
 
 // VirusTotalKey sets (or, empty, removes) the VirusTotal API key. It is
@@ -552,6 +553,13 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 			return nil, nil, fmt.Errorf("unknown history %q", d.What)
 		}
 		return nil, audit("cleared "+what+" on "+strings.Join(d.Servers, ", "), nil, d), nil
+
+	case OpRiskDismiss:
+		var d RiskDismiss
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		return applyDismiss(st, c, d)
 
 	case OpVirusTotalKey:
 		var d VirusTotalKey

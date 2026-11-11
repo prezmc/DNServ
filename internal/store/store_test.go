@@ -1,9 +1,11 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prezmc/dnserv/internal/config"
 )
@@ -166,5 +168,30 @@ func TestBackupRestoreKeepsCluster(t *testing.T) {
 	mustApply(t, s, OpBackupConfig, BackupConfig{PublicKey: "pk", Salt: "s", Every: "daily", At: "03:00", Keep: 7})
 	if a := st.Audit; len(a) > 0 && strings.Contains(string(s.State().Audit[len(s.State().Audit)-1].After), "pk") {
 		t.Fatal("audit log holds the backup key")
+	}
+}
+
+func TestRiskDismiss(t *testing.T) {
+	st := NewState()
+	at := time.Date(2026, 11, 10, 20, 0, 0, 0, time.UTC)
+	cmd := func(d RiskDismiss) Command {
+		c := NewCommand(OpRiskDismiss, "admin", d)
+		c.Time = at
+		return c
+	}
+	if _, a, err := apply(st, cmd(RiskDismiss{Name: "Bad.Example."})); err != nil || a == nil {
+		t.Fatalf("dismiss: %v %v", a, err)
+	}
+	if !st.Dismissed["bad.example"].Equal(at) {
+		t.Fatalf("dismissed = %v", st.Dismissed)
+	}
+	if b, _ := json.Marshal(st.BackupData()); strings.Contains(string(b), "bad.example") {
+		t.Error("dismissals are in backups")
+	}
+	if _, _, err := apply(st, cmd(RiskDismiss{Name: "bad.example", Undo: true})); err != nil || st.Dismissed != nil {
+		t.Fatalf("undo: %v %v", st.Dismissed, err)
+	}
+	if _, _, err := apply(st, cmd(RiskDismiss{})); err == nil {
+		t.Error("empty name accepted")
 	}
 }

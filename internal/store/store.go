@@ -55,6 +55,11 @@ type State struct {
 	// every node. They are kept apart from Settings: a pause is not a
 	// configuration change, so it isn't in settings history or backups.
 	Pauses map[string]*Pause `json:"pauses,omitempty"`
+	// Dismissed are risky domains someone set aside on the security
+	// overview, with when. One shows again if a device reaches it after
+	// that. Like pauses, they aren't settings, so they aren't in settings
+	// history or backups.
+	Dismissed map[string]time.Time `json:"dismissed,omitempty"`
 	// HTTPS is how the dashboard does HTTPS (off by default). It holds a
 	// private key, so the API never returns it whole and backups leave it
 	// out.
