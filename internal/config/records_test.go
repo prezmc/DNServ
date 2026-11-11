@@ -5,7 +5,7 @@ import "testing"
 func TestFollowNode(t *testing.T) {
 	recs := []Record{
 		{Name: "dns1.home", Value: "192.168.1.10", Node: "n1"},
-		{Name: "other.home", Value: "192.168.1.10"},              // not made for the node
+		{Name: "other.home", Value: "192.168.1.10"},               // not made for the node
 		{Name: "dns1-old.home", Value: "192.168.1.9", Node: "n1"}, // pointed elsewhere by hand
 		{Name: "dns2.home", Value: "192.168.1.20", Node: "n2"},
 	}
