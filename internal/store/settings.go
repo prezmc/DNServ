@@ -33,6 +33,8 @@ type Settings struct {
 
 	ThreatFeeds    *bool     `json:"threat_feeds,omitempty"`
 	TrustedDomains *[]string `json:"trusted_domains,omitempty"`
+	// RiskScoring replaces the whole scoring when set.
+	RiskScoring *config.RiskScoring `json:"risk_scoring,omitempty"`
 }
 
 // Overlay returns base with every set field replaced.
@@ -103,6 +105,9 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.TrustedDomains != nil {
 		c.Analytics.TrustedDomains = append([]string(nil), (*s.TrustedDomains)...)
+	}
+	if s.RiskScoring != nil {
+		c.Analytics.Scoring = s.RiskScoring.Normalized()
 	}
 	return c
 }
@@ -175,6 +180,9 @@ func (s *Settings) Merge(p Settings) {
 	if p.TrustedDomains != nil {
 		s.TrustedDomains = p.TrustedDomains
 	}
+	if p.RiskScoring != nil {
+		s.RiskScoring = p.RiskScoring
+	}
 }
 
 // Touches reports which permission areas a patch changes.
@@ -183,7 +191,7 @@ func (p Settings) Touches() (upstream, network, lists, rules bool) {
 		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil
 	network = p.AllowedNets != nil || p.LocalDNS != nil || p.TimeZone != nil || p.Records != nil
 	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.BlockedServices != nil || p.SafeSearch != nil || p.FilteringEnabled != nil || p.BlockMode != nil ||
-		p.ThreatFeeds != nil || p.TrustedDomains != nil
+		p.ThreatFeeds != nil || p.TrustedDomains != nil || p.RiskScoring != nil
 	rules = p.Rules != nil
 	return
 }

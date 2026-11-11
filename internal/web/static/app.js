@@ -1553,8 +1553,8 @@ function caughtBy(r) {
 // riskBadge marks a medium or high risk domain (and, with low, a low
 // one); its title says why.
 function riskBadge(r, low) {
-  if (!r || !r.score || (r.score < 40 && !low)) return null;
-  if (r.score < 40) return h('span', { class: 'badge risk-low', title: (r.reasons || []).join('; ') }, 'Low risk ', r.score);
+  if (!r || !r.score || !r.level || (r.level === 'low' && !low)) return null;
+  if (r.level === 'low') return h('span', { class: 'badge risk-low', title: (r.reasons || []).join('; ') }, 'Low risk ', r.score);
   return h('span', { class: 'badge risk-' + r.level, title: (r.reasons || []).join('; ') }, r.level === 'high' ? 'High risk' : 'Risky', ' ', r.score);
 }
 
@@ -1568,6 +1568,143 @@ function bar(part, top, blocked) {
   const s = h('span');
   s.style.width = (top ? Math.max(1, 100 * part / top) : 0) + '%';
   return h('div', { class: 'meter' + (blocked ? ' blocked' : ''), 'aria-hidden': 'true' }, s);
+}
+
+// riskParts shows the arithmetic behind a score, as a small table.
+function riskParts(risk) {
+  const parts = risk.parts || [];
+  if (!parts.length) return null;
+  return h('details', { class: 'small parts' }, h('summary', {}, 'How ', risk.score, ' adds up'),
+    h('table', {}, h('tbody', {}, parts.map(p => h('tr', {}, h('td', {}, p.what, p.note ? h('div', { class: 'muted' }, p.note) : null), h('td', { class: 'num' }, (p.points > 0 ? '+' : p.points < 0 ? '−' : '') + Math.abs(p.points)))),
+      h('tr', { class: 'total' }, h('td', {}, 'Score'), h('td', { class: 'num' }, risk.score)))));
+}
+
+// scoringGuide explains how risk scores are worked out, from the scoring
+// in force, so it always matches what DNServ does.
+async function scoringGuide() {
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
+  const d = dialog('How risk scores work', [body, h('div', { class: 'actions' },
+    can('lists.manage') ? h('button', { class: 'primary', type: 'button', onclick: () => { d.close(); scoringTune(); } }, 'Tune scoring') : null,
+    h('button', { type: 'button', onclick: () => d.close() }, 'Close'))]);
+  d.classList.add('wide');
+  let g;
+  try { g = await api('GET', '/analytics/scoring'); } catch (e) { fill(body, msg('err', e.message)); return; }
+  const sc = g.scoring;
+  const pts = (n) => h('b', {}, '+', n);
+  const domainFeeds = g.sources.filter(x => x.kind === 'domains'), ipFeeds = g.sources.filter(x => x.kind === 'addresses');
+  const feedTable = (rows) => h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Source'), h('th', {}, 'Points'), h('th', {}, 'Entries'))),
+    h('tbody', {}, rows.map(x => h('tr', {}, h('td', {}, x.name), h('td', {}, sc.feeds[x.id] ? sc.feeds[x.id] : h('span', { class: 'muted' }, 'ignored')), h('td', {}, x.ok ? fmtNum(x.entries) : h('span', { class: 'muted' }, 'not loaded')))))));
+  fill(body,
+    g.tuned ? msg('warn', ['Your own scoring is in use; the numbers below are yours. ', can('lists.manage') ? h('button', { class: 'link', type: 'button', onclick: () => { d.close(); scoringTune(); } }, 'Change or reset it') : null]) : null,
+    !g.enabled ? msg('warn', 'Threat feeds are off (Settings → Risk scoring), so only the name checks count.') : null,
+    h('p', {}, 'Every domain your devices look up gets a score from 0 to 100, from public threat lists and a few checks on the name itself. The lists are downloaded and matched on your own servers, so your lookups are never sent to them. ',
+      h('b', {}, 'Scores never block anything'), '; they decide what the Dashboard, Analytics and the Query log point out.'),
+    h('p', { class: 'muted' }, 'There is no standard formula for this. The points are DNServ’s judgment of how much each source can be trusted, and you can change them.'),
+    h('h3', {}, 'Risk levels'),
+    h('div', { class: 'levels' },
+      h('div', {}, h('span', { class: 'badge risk-low' }, 'Low'), ' 1–', sc.medium - 1),
+      h('div', {}, h('span', { class: 'badge risk-medium' }, 'Medium'), ' ', sc.medium, '–', sc.high - 1),
+      h('div', {}, h('span', { class: 'badge risk-high' }, 'High'), ' ', sc.high, '–100')),
+    h('p', { class: 'small muted' }, 'High-risk domains that get an answer appear under Needs attention on the Dashboard. Trusted domains always score 0 (', fmtNum(g.trusted), ' so far).'),
+    h('h3', {}, 'How the points add up'),
+    h('ol', {},
+      h('li', {}, 'The strongest list that has the domain sets the score (its points below). Lists that cover a whole site count for its subdomains too.'),
+      h('li', {}, 'Each further list that also has it adds ', pts(sc.corroboration), '.'),
+      h('li', {}, 'Name checks add their points: at most ', pts(sc.name_cap), ' on their own (so a name alone reaches ', levelName(sc.name_cap, sc), ' at most), and at most ', pts(sc.name_cap_listed), ' on top of a list. Domains of companies in AdGuard’s companies database skip the name checks.'),
+      h('li', {}, 'The total is capped at 100.')),
+    h('p', { class: 'small muted' }, 'Every domain’s details show this arithmetic for that domain.'),
+    h('h3', {}, 'Threat lists (domains)'), feedTable(domainFeeds),
+    h('h3', {}, 'What a domain answered with'),
+    h('p', {}, 'When history is saved, each answer is checked too. A domain that answers with an address on one of these lists, or is an alias (CNAME) for a Medium-or-higher domain, gets that score if it is higher. These are scored as lookups happen, so a change to their points applies to new lookups.'),
+    feedTable(ipFeeds),
+    h('h3', {}, 'Name checks'),
+    h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Check'), h('th', {}, 'Points'), h('th', {}, 'What it looks for'))),
+      h('tbody', {}, g.names.map(n => h('tr', {}, h('td', {}, n.name), h('td', {}, sc.names[n.id] || h('span', { class: 'muted' }, 'off')), h('td', { class: 'small' }, n.detail)))))),
+    h('h3', {}, 'Not part of the score'),
+    h('p', {}, 'Whether a domain was blocked, which of your blocklists have it, and its type (advertising, analytics and so on) are shown separately. Blocklists block ads and trackers as well as threats, so being blocked doesn’t make a domain risky.'));
+}
+
+function levelName(score, sc) { return score >= sc.high ? 'High' : score >= sc.medium ? 'Medium' : score > 0 ? 'Low' : 'nothing'; }
+
+// scoringTune changes the scoring: presets, every number, and a preview
+// of what would change on the last 7 days.
+async function scoringTune() {
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
+  const saveBtn = h('button', { class: 'primary', type: 'button', disabled: true }, 'Save');
+  const resetBtn = h('button', { type: 'button', hidden: true }, 'Back to defaults');
+  const d = dialog('Tune scoring', [body, h('div', { class: 'actions' }, saveBtn, resetBtn, h('button', { type: 'button', onclick: () => d.close() }, 'Cancel'))]);
+  d.classList.add('wide');
+  let g;
+  try { g = await api('GET', '/analytics/scoring'); } catch (e) { fill(body, msg('err', e.message)); return; }
+  const draft = JSON.parse(JSON.stringify(g.scoring));
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  resetBtn.hidden = !g.tuned;
+  const preview = h('div', { class: 'preview' });
+  let timer = null, seq = 0;
+  const refresh = () => {
+    saveBtn.disabled = same(draft, g.scoring);
+    presetRow.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(same(draft, g.presets.find(p => p.id === b.dataset.id).scoring))));
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const my = ++seq;
+      if (same(draft, g.scoring)) { fill(preview, h('p', { class: 'muted small' }, 'Change something to see what it would do to the domains seen in the last 7 days.')); return; }
+      fill(preview, h('p', { class: 'muted small' }, 'Working out what would change…'));
+      let r;
+      try { r = await api('POST', '/analytics/scoring/preview', draft); } catch (e) { if (my === seq) fill(preview, msg('err', e.message)); return; }
+      if (my !== seq) return;
+      const lv = (k) => h('tr', {}, h('td', {}, h('span', { class: 'badge risk-' + k }, k[0].toUpperCase() + k.slice(1))), h('td', { class: 'num' }, fmtNum(r.before[k] || 0)), h('td', { class: 'num' }, fmtNum(r.after[k] || 0)));
+      const change = (c) => h('li', {}, h('span', { class: 'mono' }, c.name), ' ', h('span', { class: 'muted' }, (c.from_level || 'clean') + ' ' + c.from + ' → ' + (c.to_level || 'clean') + ' ' + c.to, ' · ', fmtNum(c.queries), ' lookups'));
+      fill(preview, h('h3', {}, 'Impact on the last 7 days'),
+        h('p', { class: 'small muted' }, fmtNum(r.domains), ' domains seen. Answer checks count as before.'),
+        h('table', { class: 'small' }, h('thead', {}, h('tr', {}, h('th', {}, 'Level'), h('th', {}, 'Now'), h('th', {}, 'With this'))), h('tbody', {}, ['high', 'medium', 'low'].map(lv))),
+        r.up.length ? [h('h3', {}, 'Would rise (', fmtNum(r.up_total), ')'), h('ul', { class: 'plain small' }, r.up.map(change))] : null,
+        r.down.length ? [h('h3', {}, 'Would drop (', fmtNum(r.down_total), ')'), h('ul', { class: 'plain small' }, r.down.map(change))] : null,
+        !r.up.length && !r.down.length ? h('p', { class: 'small' }, 'No domain seen lately would change level.') : null);
+    }, 350);
+  };
+  const num = (label, get, set, lo, hi, hint) => {
+    const id = 'sc-' + Math.random().toString(36).slice(2, 8);
+    const inp = h('input', { id, type: 'number', min: lo, max: hi, step: 1, value: get(), class: 'num-in', oninput: (ev) => {
+      const v = Math.max(lo, Math.min(hi, parseInt(ev.target.value, 10) || 0));
+      set(v); refresh();
+    } });
+    inputs.push(() => { inp.value = get(); });
+    return h('div', { class: 'tune-row' }, h('label', { for: id }, label, hint ? h('div', { class: 'muted small' }, hint) : null), inp);
+  };
+  const inputs = [];
+  const presetRow = h('div', { class: 'seg presets', role: 'group', 'aria-label': 'Presets' }, g.presets.map(p => h('button', { type: 'button', 'data-id': p.id, title: p.about, onclick: () => {
+    Object.assign(draft, JSON.parse(JSON.stringify(p.scoring)));
+    inputs.forEach(f => f());
+    fill(about, p.about);
+    refresh();
+  } }, p.label)));
+  const about = h('p', { class: 'muted small' }, 'Start from a preset, then change any number.');
+  fill(body,
+    h('h3', {}, 'Start from a preset'), presetRow, about,
+    h('div', { class: 'tune' },
+      h('div', {},
+        h('h3', {}, 'Risk levels'),
+        num('Medium starts at', () => draft.medium, v => { draft.medium = v; }, 2, 98),
+        num('High starts at', () => draft.high, v => { draft.high = v; }, 3, 100, 'High-risk domains that get through go under Needs attention.'),
+        h('h3', {}, 'How evidence combines'),
+        num('Each further list adds', () => draft.corroboration, v => { draft.corroboration = v; }, 0, 30),
+        num('Name checks add at most', () => draft.name_cap, v => { draft.name_cap = v; }, 0, 100),
+        num('…on top of a list', () => draft.name_cap_listed, v => { draft.name_cap_listed = v; }, 0, 50),
+        h('h3', {}, 'Name checks'),
+        g.names.map(n => num(n.name, () => draft.names[n.id] || 0, v => { draft.names[n.id] = v; }, 0, 50))),
+      h('div', {},
+        h('h3', {}, 'Threat lists'),
+        h('p', { class: 'muted small' }, 'Points when a list has the domain (or, for address lists, what it answered with). 0 ignores a list.'),
+        g.sources.map(x => num(x.name, () => draft.feeds[x.id] || 0, v => { draft.feeds[x.id] = v; }, 0, 100)))),
+    preview);
+  refresh();
+  saveBtn.addEventListener('click', async () => {
+    if (draft.high <= draft.medium) { toast('High must start above Medium.', 'err'); return; }
+    try { await api('PATCH', '/settings', { risk_scoring: draft }); toast('Scoring saved. It applies everywhere right away.'); d.close(); route(); } catch (e) { toast(e.message, 'err'); }
+  });
+  resetBtn.addEventListener('click', async () => {
+    try { await api('POST', '/settings/reset', { fields: ['risk_scoring'] }); toast('Back to the default scoring.'); d.close(); route(); } catch (e) { toast(e.message, 'err'); }
+  });
 }
 
 async function domainDialog(name, range) {
@@ -1605,8 +1742,10 @@ async function domainDialog(name, range) {
     h('p', {}, now.allowed ? ['Allowed now', now.rule ? [' by ', h('code', {}, now.rule)] : null, now.list ? [' (', now.custom ? 'your custom rules' : now.list, ')'] : null]
       : now.blocked ? ['Blocked now by ', h('code', {}, now.rule), ' on ', now.custom ? 'your custom rules' : now.list] : 'Not blocked now.', ' ', domainButton(name, now)),
     r.type ? h('p', {}, r.type.category !== 'Other' ? h('span', { class: 'badge' }, r.type.category) : 'Run by', r.type.company ? [r.type.category !== 'Other' ? ' run by ' : ' ', r.type.url ? h('a', { href: r.type.url, target: '_blank', rel: 'noopener noreferrer' }, r.type.company) : r.type.company] : null) : null,
-    r.risk && r.risk.score > 0 ? h('div', { class: 'msg ' + (r.risk.score >= 70 ? 'err' : r.risk.score >= 40 ? 'warn' : 'ok') },
-      h('b', {}, 'Risk ' + r.risk.score + ' of 100. '), (r.risk.reasons || []).join(' \u00b7 '), ' ',
+    r.risk && r.risk.score > 0 ? h('div', { class: 'msg ' + (r.risk.level === 'high' ? 'err' : r.risk.level === 'medium' ? 'warn' : 'ok') },
+      h('b', {}, 'Risk ' + r.risk.score + ' of 100' + (r.risk.level ? ' (' + r.risk.level + ')' : '') + '. '), (r.risk.reasons || []).join(' \u00b7 '), ' ',
+      riskParts(r.risk), ' ',
+      h('button', { class: 'link', type: 'button', onclick: () => scoringGuide() }, 'How scoring works'), ' ',
       can('lists.manage') ? h('button', { class: 'link', type: 'button', onclick: async (ev) => {
         try {
           const cur = (await api('GET', '/settings')).effective.Analytics.TrustedDomains || [];
@@ -2473,7 +2612,9 @@ async function settings(main) {
     let intel = { sources: [] };
     try { intel = await api('GET', '/analytics/intel'); } catch (_) { /* status unknown */ }
     sections.push(h('div', { class: 'card' },
-      h('h2', {}, 'Risk scoring ', origin('threat_feeds', 'trusted_domains')),
+      h('h2', {}, 'Risk scoring ', origin('threat_feeds', 'trusted_domains', 'risk_scoring')),
+      h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => scoringGuide() }, 'How risk scores work'),
+        h('button', { type: 'button', onclick: () => scoringTune() }, 'Tune scoring')),
       form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'Analytics marks risky domains using public malware and phishing feeds and how a name looks. It never blocks on its own.'),
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'feeds', checked: ac.ThreatFeeds }), 'Download threat feeds (about 30 MB of memory)'),

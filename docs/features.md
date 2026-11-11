@@ -145,6 +145,17 @@ Everything DNServ does today, in more detail than the README.
   The Query log filters by risk (low and above, medium and above, high
   only), for one device or all, and shows low-risk badges too; the CSV
   export follows the filter.
+- **How scores work, and tuning.** Settings → Risk scoring → **How risk
+  scores work** explains the scoring from the numbers in force: the risk
+  levels, how points add up, each list's points and entries, the answer
+  checks and the name checks. Each domain's details show its own
+  arithmetic. **Tune scoring** starts from a preset (Balanced, Sensitive,
+  Quieter) and lets you change every number: where Medium and High
+  start, each list's points (0 ignores a list), what further lists add,
+  each name check and their caps. Before saving it shows what would
+  change on the domains seen in the last 7 days. The scoring is a
+  setting like any other: shared by every server, in settings history and
+  backups, and resettable. In a config file it's `analytics.risk_scoring`.
 - **Also on, and VirusTotal.** A domain's details list every enabled list
   with a rule for it ("on your lists"), read from the saved list files
   only when you open it, so it costs no memory. Add your own free

@@ -465,3 +465,16 @@ td a:hover { text-decoration: underline; }
 .att .acts button.icon { padding: .25rem .55rem; }
 .chart .risk-dot { fill: var(--bad); stroke: var(--panel); stroke-width: 1.5; }
 .key.risk { background: var(--bad); border-radius: 50%; }
+
+/* Risk scoring guide and tuning */
+.levels { display: flex; gap: 1.2rem; flex-wrap: wrap; margin: .3rem 0; }
+details.parts { margin-top: .4rem; }
+details.parts table { margin-top: .3rem; width: auto; min-width: 16rem; }
+details.parts td { padding: .15rem .6rem .15rem 0; }
+details.parts tr.total td { font-weight: 700; border-top: 1px solid currentColor; }
+.tune { display: grid; grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: 0 2rem; }
+.tune-row { display: flex; align-items: center; justify-content: space-between; gap: .8rem; padding: .25rem 0; }
+.tune-row label { margin: 0; flex: 1; }
+.tune-row input.num-in { width: 5rem; flex: none; text-align: right; }
+.seg.presets { margin-bottom: .3rem; }
+.preview { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .5rem; }

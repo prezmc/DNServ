@@ -591,6 +591,10 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 		}
 		patch.TrustedDomains = &out
 	}
+	if patch.RiskScoring != nil {
+		n := patch.RiskScoring.Normalized()
+		patch.RiskScoring = &n
+	}
 	if patch.Records != nil {
 		recs, err := config.NormalizeRecords(*patch.Records)
 		if err != nil {

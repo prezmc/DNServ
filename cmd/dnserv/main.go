@@ -271,6 +271,7 @@ func run() error {
 	intel := threat.New(filepath.Join(cfg.DataDir, "threat"), nil, log.With("component", "threat"))
 	intel.SetEnabled(cfg.Analytics.ThreatFeeds)
 	intel.SetTrusted(cfg.Analytics.TrustedDomains)
+	intel.SetScoring(cfg.Analytics.Scoring)
 	intel.SetAbuseCHKey(st.State().AbuseCHKey)
 	go intel.Run(ctx)
 	adm.Intel = intel
@@ -457,9 +458,11 @@ func run() error {
 			h := new.Settings.Overlay(base).History
 			hist.SetRetention(h.Days, h.StatsDays)
 		}
-		if !reflect.DeepEqual(old.Settings.ThreatFeeds, new.Settings.ThreatFeeds) || !reflect.DeepEqual(old.Settings.TrustedDomains, new.Settings.TrustedDomains) {
+		if !reflect.DeepEqual(old.Settings.ThreatFeeds, new.Settings.ThreatFeeds) || !reflect.DeepEqual(old.Settings.TrustedDomains, new.Settings.TrustedDomains) ||
+			!reflect.DeepEqual(old.Settings.RiskScoring, new.Settings.RiskScoring) {
 			ac := new.Settings.Overlay(base).Analytics
 			intel.SetTrusted(ac.TrustedDomains)
+			intel.SetScoring(ac.Scoring)
 			intel.SetEnabled(ac.ThreatFeeds)
 		}
 		if old.AbuseCHKey != new.AbuseCHKey {
