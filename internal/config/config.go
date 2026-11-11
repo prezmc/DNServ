@@ -217,6 +217,8 @@ type AnalyticsConfig struct {
 	ThreatFeeds bool `yaml:"threat_feeds"`
 	// TrustedDomains (and their subdomains) are never flagged as risky.
 	TrustedDomains []string `yaml:"trusted_domains"`
+	// Scoring is how risk is scored (the defaults when left out).
+	Scoring RiskScoring `yaml:"risk_scoring"`
 }
 
 // History limits.
@@ -277,7 +279,7 @@ func Default() Config {
 		HTTP:      HTTPConfig{Listen: ":8080"},
 		Cluster:   ClusterConfig{Listen: ":8081"},
 		History:   HistoryConfig{Days: 30, StatsDays: 90},
-		Analytics: AnalyticsConfig{ThreatFeeds: true},
+		Analytics: AnalyticsConfig{ThreatFeeds: true, Scoring: DefaultRiskScoring()},
 		DataDir:   "/data",
 	}
 }

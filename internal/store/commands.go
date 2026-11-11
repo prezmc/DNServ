@@ -675,6 +675,8 @@ func changedFields(p Settings) []string {
 
 func clearField(s *Settings, f string) error {
 	switch f {
+	case "risk_scoring":
+		s.RiskScoring = nil
 	case "upstream_mode":
 		s.UpstreamMode = nil
 	case "upstream_servers":

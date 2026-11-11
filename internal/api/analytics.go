@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/config"
 	"github.com/prezmc/dnserv/internal/filter"
 	"github.com/prezmc/dnserv/internal/store"
 	"github.com/prezmc/dnserv/internal/threat"
@@ -41,6 +42,8 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/analytics/flow", a.authed(store.PermDashboard, a.analyticsFlow))
 	m.HandleFunc("GET /api/v1/analytics/security", a.authed(store.PermDashboard, a.analyticsSecurity))
 	m.HandleFunc("POST /api/v1/analytics/dismiss", a.authed(store.PermAllowBlock, a.riskDismiss))
+	m.HandleFunc("GET /api/v1/analytics/scoring", a.authed(store.PermDashboard, a.scoringInfo))
+	m.HandleFunc("POST /api/v1/analytics/scoring/preview", a.authed(store.PermDashboard, a.scoringPreview))
 }
 
 // PeerHandler answers another node's analytics query from this node's
@@ -336,14 +339,16 @@ type topRow struct {
 }
 
 // withFlag raises a name's risk to what its answers showed.
-func withFlag(r threat.Risk, f *analytics.Flag) threat.Risk {
+func (a *API) withFlag(r threat.Risk, f *analytics.Flag) threat.Risk {
 	if f == nil {
 		return r
 	}
 	r.Reasons = append(r.Reasons, f.Reason)
 	if f.Score > r.Score {
+		// The answer check scores higher than the name, so it alone counts.
+		r.Parts = []threat.Part{{What: f.Reason, Points: f.Score, Note: "answer check, higher than the name's " + strconv.Itoa(r.Score)}}
 		r.Score = f.Score
-		r.Level = threat.Level(r.Score)
+		r.Level = a.Intel.Level(r.Score)
 	}
 	return r
 }
@@ -438,7 +443,7 @@ func (a *API) analyticsDomain(w http.ResponseWriter, r *http.Request, p *Princip
 		if len(res.Flags) > 0 {
 			f = &res.Flags[0]
 		}
-		out["risk"], out["type"] = withFlag(a.Intel.Score(q.Name), f), a.Intel.TypeOf(q.Name)
+		out["risk"], out["type"] = a.withFlag(a.Intel.Score(q.Name), f), a.Intel.TypeOf(q.Name)
 		out["feeds"] = a.Intel.Enabled()
 	}
 	out["answers"] = orEmpty(res.Answers)
@@ -546,7 +551,7 @@ func (a *API) searchQuery(w http.ResponseWriter, r *http.Request, p *Principal) 
 	q.Name, q.Result = v.Get("search"), v.Get("result")
 	q.Before, _ = strconv.ParseInt(v.Get("before"), 10, 64)
 	if lv := v.Get("risk"); lv != "" {
-		least, ok := riskLevels[lv]
+		least, ok := a.riskLevel(lv)
 		if !ok {
 			writeErr(w, http.StatusBadRequest, "risk must be low, medium or high")
 			return q, false
@@ -564,8 +569,22 @@ func (a *API) searchQuery(w http.ResponseWriter, r *http.Request, p *Principal) 
 	return q, true
 }
 
-// riskLevels are the lowest scores of the Query log's risk filter.
-var riskLevels = map[string]int{"low": 1, "medium": threat.Medium, "high": threat.High}
+// riskLevel is the lowest score of a level of the Query log's risk filter.
+func (a *API) riskLevel(lv string) (int, bool) {
+	sc := config.DefaultRiskScoring()
+	if a.Intel != nil {
+		sc = a.Intel.Scoring()
+	}
+	switch lv {
+	case "low":
+		return 1, true
+	case "medium":
+		return sc.Medium, true
+	case "high":
+		return sc.High, true
+	}
+	return 0, false
+}
 
 // riskyNames lists the domains looked up in the query's period (and for
 // its devices) that score at least least, riskiest first.
@@ -586,7 +605,7 @@ func (a *API) riskyNames(w http.ResponseWriter, r *http.Request, sq analytics.Qu
 	score := map[string]int{}
 	var names []string
 	for _, row := range res.Rows {
-		if s := withFlag(a.Intel.Score(row.Key), flags[row.Key]).Score; s >= least {
+		if s := a.withFlag(a.Intel.Score(row.Key), flags[row.Key]).Score; s >= least {
 			score[row.Key] = s
 			names = append(names, row.Key)
 		}
@@ -632,7 +651,7 @@ func (a *API) analyticsQueries(w http.ResponseWriter, r *http.Request, p *Princi
 					}
 				}
 				if sc, why := a.Intel.CheckAnswer(e.Name, ips, e.CNAMEs); sc > risk[e.Name].Score {
-					risk[e.Name] = withFlag(risk[e.Name], &analytics.Flag{Name: e.Name, Reason: why, Score: sc})
+					risk[e.Name] = a.withFlag(risk[e.Name], &analytics.Flag{Name: e.Name, Reason: why, Score: sc})
 				}
 			}
 		}
@@ -720,8 +739,8 @@ func (a *API) analyticsRisky(w http.ResponseWriter, r *http.Request, p *Principa
 			flags[res.Flags[i].Name] = &res.Flags[i]
 		}
 		for _, row := range res.Rows {
-			risk := withFlag(a.Intel.Score(row.Key), flags[row.Key])
-			if risk.Score < threat.Medium {
+			risk := a.withFlag(a.Intel.Score(row.Key), flags[row.Key])
+			if risk.Score < a.Intel.Scoring().Medium {
 				continue
 			}
 			queries += row.Total

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/prezmc/dnserv/internal/config"
 	"time"
 )
 
@@ -225,5 +227,31 @@ func TestDownloadErrorHidesURL(t *testing.T) {
 	err := in.download(context.Background(), "http://127.0.0.1:1/v2/files/exports/secret-key/hostfile.txt", filepath.Join(in.dir, "x"))
 	if err == nil || strings.Contains(err.Error(), "secret-key") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestScoringTuned(t *testing.T) {
+	in := seeded(t)
+	if r := in.Score("malware.example"); r.Score != 95 || len(r.Parts) != 2 || r.Parts[1].Points != 5 {
+		t.Fatalf("default = %+v", r)
+	}
+	s := config.DefaultRiskScoring()
+	s.Feeds["urlhaus"] = 0
+	s.Corroboration = 0
+	s.Medium, s.High = 30, 95
+	in.SetScoring(s)
+	if r := in.Score("malware.example"); r.Score != 90 || r.Level != "medium" || strings.Contains(strings.Join(r.Reasons, " "), "URLhaus") {
+		t.Fatalf("tuned = %+v", r)
+	}
+	// Name checks are capped, and the cap shows in the parts.
+	in.SetScoring(config.DefaultRiskScoring())
+	r := in.Score("qzxvkrtplmnbwqj.top")
+	if r.Score != 40 || len(r.Parts) != 2 {
+		t.Fatalf("names = %+v", r)
+	}
+	// Normalizing keeps Medium below High and fills missing values.
+	n := config.RiskScoring{Medium: 90, High: 50, Names: map[string]int{"tld": 99}}.Normalized()
+	if n.High <= n.Medium || n.Names["tld"] != 50 || n.Feeds["urlhaus"] != 90 {
+		t.Fatalf("normalized = %+v", n)
 	}
 }

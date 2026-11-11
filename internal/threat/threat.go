@@ -28,6 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prezmc/dnserv/internal/config"
 	"github.com/prezmc/dnserv/internal/filter"
 )
 
@@ -69,15 +70,14 @@ type IPFeed struct {
 	ID     string
 	Name   string
 	URL    string
-	Score  int
 	Reason string // "a botnet command server"
 }
 
 // IPFeeds are the address lists DNServ uses.
 var IPFeeds = []IPFeed{
-	{ID: "feodo", Name: "Feodo Tracker (abuse.ch) botnet C2 servers", URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Score: 90, Reason: "a botnet command server (Feodo Tracker)"},
-	{ID: "drop4", Name: "Spamhaus DROP (IPv4)", URL: "https://www.spamhaus.org/drop/drop_v4.json", Score: 85, Reason: "a hijacked or criminal network (Spamhaus DROP)"},
-	{ID: "drop6", Name: "Spamhaus DROP (IPv6)", URL: "https://www.spamhaus.org/drop/drop_v6.json", Score: 85, Reason: "a hijacked or criminal network (Spamhaus DROP)"},
+	{ID: "feodo", Name: "Feodo Tracker (abuse.ch) botnet C2 servers", URL: "https://feodotracker.abuse.ch/downloads/ipblocklist.txt", Reason: "a botnet command server (Feodo Tracker)"},
+	{ID: "drop4", Name: "Spamhaus DROP (IPv4)", URL: "https://www.spamhaus.org/drop/drop_v4.json", Reason: "a hijacked or criminal network (Spamhaus DROP)"},
+	{ID: "drop6", Name: "Spamhaus DROP (IPv6)", URL: "https://www.spamhaus.org/drop/drop_v6.json", Reason: "a hijacked or criminal network (Spamhaus DROP)"},
 }
 
 // Companies database (CC BY-SA 4.0, AdGuard).
@@ -91,6 +91,16 @@ type Risk struct {
 	Score   int      `json:"score"`
 	Level   string   `json:"level"` // "", low, medium, high
 	Reasons []string `json:"reasons,omitempty"`
+	// Parts are the points behind the score, in the order they count.
+	Parts []Part `json:"parts,omitempty"`
+}
+
+// Part is one step of a score: what counted and how many points it gave
+// (or, with Cap, the most it could give).
+type Part struct {
+	What   string `json:"what"`
+	Points int    `json:"points"`
+	Note   string `json:"note,omitempty"`
 }
 
 // Type says what a domain is for and who runs it.
@@ -98,27 +108,6 @@ type Type struct {
 	Category string `json:"category"`          // e.g. Advertising
 	Company  string `json:"company,omitempty"` // e.g. Google
 	URL      string `json:"url,omitempty"`
-}
-
-// Levels.
-const (
-	High   = 70
-	Medium = 40
-)
-
-// Level names a score: "", low, medium or high.
-func Level(score int) string { return level(score) }
-
-func level(score int) string {
-	switch {
-	case score >= High:
-		return "high"
-	case score >= Medium:
-		return "medium"
-	case score > 0:
-		return "low"
-	}
-	return ""
 }
 
 // db is one compiled snapshot of every source.
@@ -163,7 +152,8 @@ type Intel struct {
 	enabled atomic.Bool
 	trusted atomic.Pointer[[]string]
 	abuseCH atomic.Pointer[string] // abuse.ch Auth-Key, "" for none
-	mu      sync.Mutex             // one refresh at a time
+	scoring atomic.Pointer[config.RiskScoring]
+	mu      sync.Mutex // one refresh at a time
 	kick    chan struct{}
 }
 
@@ -177,6 +167,8 @@ func New(dir string, client *http.Client, log *slog.Logger) *Intel {
 	in.status.Store(&[]SourceStatus{})
 	in.trusted.Store(&[]string{})
 	in.abuseCH.Store(new(string))
+	d := config.DefaultRiskScoring()
+	in.scoring.Store(&d)
 	return in
 }
 
@@ -508,17 +500,18 @@ func (in *Intel) CheckAnswer(name string, ips []netip.Addr, cnames []string) (in
 		return 0, ""
 	}
 	d := in.cur.Load()
+	sc := in.scoring.Load()
 	best, why := 0, ""
 	for _, a := range ips {
 		m := d.ipFeeds(a)
 		for i, f := range IPFeeds {
-			if i < 8 && m&(1<<i) != 0 && f.Score > best {
-				best, why = f.Score, "Answered with "+a.String()+", "+f.Reason
+			if pts := sc.Feeds[f.ID]; i < 8 && m&(1<<i) != 0 && pts > best {
+				best, why = pts, "Answered with "+a.String()+", "+f.Reason
 			}
 		}
 	}
 	for _, c := range cnames {
-		if r := in.Score(c); r.Score >= Medium && r.Score > best {
+		if r := in.Score(c); r.Score >= sc.Medium && r.Score > best {
 			best, why = r.Score, "Points to "+c+" ("+strings.Join(r.Reasons, "; ")+")"
 		}
 	}
@@ -622,107 +615,6 @@ func (in *Intel) TypeOf(name string) *Type {
 		return true
 	})
 	return out
-}
-
-// Score rates a domain.
-func (in *Intel) Score(name string) Risk {
-	name = filter.Normalize(name)
-	if in.trustedName(name) {
-		return Risk{}
-	}
-	d := in.cur.Load()
-	mask := d.feeds[name]
-	parents(name, func(n string) bool {
-		mask |= d.wildcard[n]
-		return true
-	})
-	var kinds Kind
-	var lists []string
-	for i, f := range Feeds {
-		if i < 8 && mask&(1<<i) != 0 {
-			kinds |= f.Kind
-			lists = append(lists, f.Name)
-		}
-	}
-	score := 0
-	var reasons []string
-	switch {
-	case kinds&KindMalware != 0:
-		score = 90
-	case kinds&KindPhishing != 0:
-		score = 80
-	case kinds&KindThreat != 0:
-		score = 70
-	}
-	if score > 0 {
-		score = min(100, score+5*(len(lists)-1))
-		reasons = append(reasons, "On "+strings.Join(lists, ", "))
-	}
-	// Heuristics, unless the domain belongs to a known company.
-	known := false
-	parents(name, func(n string) bool {
-		_, known = d.trackers[n]
-		return !known
-	})
-	if !known {
-		h, why := heuristics(name)
-		if score > 0 {
-			h = min(h, 10)
-		}
-		score = min(100, score+h)
-		reasons = append(reasons, why...)
-	}
-	return Risk{Score: score, Level: level(score), Reasons: reasons}
-}
-
-// riskyTLDs are top-level domains that host a large share of abuse
-// relative to legitimate use.
-var riskyTLDs = map[string]bool{
-	"zip": true, "mov": true, "top": true, "xyz": true, "tk": true, "ml": true, "ga": true, "cf": true, "gq": true,
-	"click": true, "country": true, "work": true, "rest": true, "cam": true, "loan": true, "men": true, "buzz": true,
-	"icu": true, "cyou": true, "sbs": true, "bond": true, "monster": true, "quest": true, "su": true,
-}
-
-// heuristics scores how suspicious a name looks, up to 45.
-func heuristics(name string) (int, []string) {
-	labels := strings.Split(name, ".")
-	if len(labels) < 2 {
-		return 0, nil
-	}
-	tld := labels[len(labels)-1]
-	reg := labels[len(labels)-2] // the label people register
-	score := 0
-	var why []string
-	if riskyTLDs[tld] {
-		score += 15
-		why = append(why, "Often-abused top-level domain ."+tld)
-	}
-	if dga(reg) {
-		score += 25
-		why = append(why, "Looks machine-generated")
-	}
-	for _, l := range labels {
-		if strings.HasPrefix(l, "xn--") {
-			score += 15
-			why = append(why, "Uses look-alike (international) characters")
-			break
-		}
-	}
-	digits := 0
-	for _, r := range reg {
-		if r >= '0' && r <= '9' {
-			digits++
-		}
-	}
-	if digits >= 5 && digits*2 >= len(reg) {
-		score += 10
-		why = append(why, "Mostly digits")
-	}
-	if len(name) > 70 || len(labels) > 7 {
-		score += 10
-		why = append(why, "Unusually long name")
-	}
-	return min(score, 45), why
 }
 
 // dga reports whether a label looks randomly generated: long, high

@@ -18,6 +18,7 @@ import (
 	"github.com/miekg/dns"
 
 	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/config"
 	"github.com/prezmc/dnserv/internal/filter"
 	"github.com/prezmc/dnserv/internal/querylog"
 	"github.com/prezmc/dnserv/internal/threat"
@@ -302,6 +303,44 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 		t.Fatalf("risk=high for one device = %+v", ql.Queries)
 	}
 	admin.want(400, "GET", "/api/v1/analytics/queries?risk=extreme", nil, nil)
+
+	// Scoring: the guide's data, a preview, and saving through settings.
+	var info struct {
+		Scoring config.RiskScoring
+		Tuned   bool
+		Presets []threat.Preset
+		Sources []scoringSource
+	}
+	admin.want(200, "GET", "/api/v1/analytics/scoring", nil, &info)
+	if info.Tuned || info.Scoring.High != 70 || len(info.Presets) != 3 || len(info.Sources) != 7 {
+		t.Fatalf("scoring info = %+v", info)
+	}
+	strict := config.DefaultRiskScoring()
+	strict.High = 85
+	var pv struct {
+		Down      []scoreChange
+		DownTotal int `json:"down_total"`
+		Before    map[string]int
+		After     map[string]int
+	}
+	admin.want(200, "POST", "/api/v1/analytics/scoring/preview", strict, &pv)
+	if pv.DownTotal != 1 || pv.Down[0].Name != "login-bank.example" || pv.Before["high"] != 3 || pv.After["medium"] != 1 {
+		t.Fatalf("preview = %+v", pv)
+	}
+	admin.want(200, "PATCH", "/api/v1/settings", map[string]any{"risk_scoring": strict}, nil)
+	e.api.Intel.SetScoring(e.api.Effective().Analytics.Scoring) // as main does on a settings change
+	if e.api.Intel.Scoring().High != 85 {
+		t.Fatalf("scoring not applied: %+v", e.api.Intel.Scoring())
+	}
+	admin.want(200, "GET", "/api/v1/analytics/security?range=24h", nil, &sec)
+	if len(sec.Through) != 2 {
+		t.Fatalf("after raising High to 85: %+v", sec.Through)
+	}
+	admin.want(200, "POST", "/api/v1/settings/reset", map[string]any{"fields": []string{"risk_scoring"}}, nil)
+	e.api.Intel.SetScoring(e.api.Effective().Analytics.Scoring)
+	if e.api.Intel.Scoring().High != 70 {
+		t.Fatal("reset didn't restore the default scoring")
+	}
 
 	// Trusting a domain clears its score; it's a lists setting.
 	admin.want(400, "PATCH", "/api/v1/settings", map[string]any{"trusted_domains": []string{"not a domain"}}, nil)

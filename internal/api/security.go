@@ -85,20 +85,21 @@ func (a *API) analyticsSecurity(w http.ResponseWriter, r *http.Request, p *Princ
 	for i := range res.Flags {
 		flags[res.Flags[i].Name] = &res.Flags[i]
 	}
+	sc := a.Intel.Scoring()
 	risks := map[string]threat.Risk{}
 	var high []string
 	var blocked, watch tally
 	for _, row := range res.Rows {
-		risk := withFlag(a.Intel.Score(row.Key), flags[row.Key])
+		risk := a.withFlag(a.Intel.Score(row.Key), flags[row.Key])
 		switch {
-		case risk.Score >= threat.High:
+		case risk.Score >= sc.High:
 			risks[row.Key] = risk
 			high = append(high, row.Key)
 			if row.Blocked > 0 {
 				blocked.Domains++
 				blocked.Queries += row.Blocked
 			}
-		case risk.Score >= threat.Medium && row.Total > row.Blocked:
+		case risk.Score >= sc.Medium && row.Total > row.Blocked:
 			watch.Domains++
 			watch.Queries += row.Total - row.Blocked
 		}
