@@ -37,6 +37,11 @@ authenticator code).
 
 Leadership controls, under **Cluster**:
 
+- **Rename** changes the node's name. Tick **Also add a local name** to
+  make a name like `dns1.home` point at the server, so you can open its
+  dashboard by name (and use a certificate for that name, see
+  [Dashboard HTTPS](https.md)). The name is listed under Local names and
+  follows the server if its cluster address changes.
 - **Make leader** hands leadership to another node now.
 - **Prefer as leader**: the node leads whenever it is up and caught up.
 - **Never lead**: the node keeps a full copy and answers DNS, but never

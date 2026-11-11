@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -460,6 +461,9 @@ func run() error {
 			intel.SetTrusted(ac.TrustedDomains)
 			intel.SetEnabled(ac.ThreatFeeds)
 		}
+		if !reflect.DeepEqual(old.Cluster.Nodes, new.Cluster.Nodes) {
+			go followNodeAddrs(old.Cluster.Nodes, new.Cluster.Nodes, cl, st, adm, log)
+		}
 		if !reflect.DeepEqual(old.HTTPS, new.HTTPS) {
 			httpsMgr.Apply(new.HTTPS)
 		}
@@ -768,6 +772,46 @@ func setLocalDNS(srv *server.Server, cfg config.Config, log *slog.Logger) error 
 	srv.SetLocalDNS(g)
 	log.Info("local names go to the router", "addr", addr)
 	return nil
+}
+
+// followNodeAddrs moves local names made for a cluster node (Record.Node)
+// to the node's new address when it changes. Only the leader does it, so
+// the change is made once.
+func followNodeAddrs(old, new map[string]*store.Node, cl *cluster.Cluster, st *store.Store, adm *api.API, log *slog.Logger) {
+	if cl.LocalStatus().State != "Leader" {
+		return
+	}
+	host := func(n *store.Node) string {
+		if n == nil {
+			return ""
+		}
+		h, _, err := net.SplitHostPort(n.Addr)
+		if err != nil {
+			return ""
+		}
+		if ip, err := netip.ParseAddr(h); err != nil || ip.IsLoopback() || ip.IsUnspecified() {
+			return "" // only follow real addresses
+		}
+		return h
+	}
+	recs := append([]config.Record(nil), adm.Effective().DNS.Records...)
+	changed := false
+	for id, n := range new {
+		from, to := host(old[id]), host(n)
+		if from == "" || to == "" || from == to {
+			continue
+		}
+		if config.FollowNode(recs, id, from, to) {
+			changed = true
+			log.Info("local names follow their server", "node", n.Name, "from", from, "to", to)
+		}
+	}
+	if !changed {
+		return
+	}
+	if _, err := st.Apply(store.NewCommand(store.OpSettingsUpdate, "system", store.Settings{Records: &recs})); err != nil {
+		log.Warn("updating local names for a moved server", "err", err)
+	}
 }
 
 // httpsNames are the names a self-signed dashboard certificate is made

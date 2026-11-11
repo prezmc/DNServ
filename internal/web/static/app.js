@@ -2743,12 +2743,46 @@ async function clusterPage(main) {
   }, 5000);
   function strip(d) { return (d.cluster.nodes || []).map(n => [n.id, n.role, n.reachable, n.leader, n.preferred, n.never_leader, n.name, n.behind > 20]).concat([d.cluster.healthy, d.cluster.left_out]); }
 
-  function renameNode(n) {
+  async function renameNode(n) {
+    // A local name for the server, so it can be opened by name (and get a
+    // matching HTTPS certificate).
+    let recs = null;
+    try { recs = ((await api('GET', '/settings')).effective.DNS.Records || []).slice(); } catch (_) { /* no settings access */ }
+    const mine = recs ? recs.find(r => r.node === n.id) : null;
+    const host = (n.addr || '').replace(/:\d+$/, '').replace(/^\[|\]$/g, '');
+    const slug = (s) => s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    const suffix = (() => {
+      const counts = {};
+      for (const r of recs || []) { const i = r.name.indexOf('.'); if (i > 0 && !r.name.startsWith('*')) { const sfx = r.name.slice(i + 1); counts[sfx] = (counts[sfx] || 0) + 1; } }
+      const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+      return best ? best[0] : 'home';
+    })();
+    const nameIn = h('input', { name: 'name', type: 'text', value: n.name, maxlength: 64, required: true, autofocus: true, 'aria-label': 'Node name' });
+    const dnsIn = h('input', { id: 'nlname', name: 'lname', type: 'text', spellcheck: 'false', autocapitalize: 'off', value: mine ? mine.name : slug(n.name) + '.' + suffix });
+    const ipIn = h('input', { id: 'nlip', name: 'lip', type: 'text', spellcheck: 'false', value: mine ? mine.value : (isIP(host) ? host : ''), placeholder: '192.168.1.20' });
+    let touched = !!mine;
+    dnsIn.addEventListener('input', () => { touched = true; });
+    nameIn.addEventListener('input', () => { if (!touched) dnsIn.value = slug(nameIn.value) + '.' + suffix; });
+    const tick = h('input', { type: 'checkbox', name: 'local', checked: !!mine });
+    const extra = h('div', { hidden: !mine },
+      h('label', { for: 'nlname' }, 'Name'), dnsIn,
+      h('label', { for: 'nlip' }, 'Points to'), ipIn,
+      h('p', { class: 'muted small' }, 'The server\u2019s own address. If it changes, the name follows. It\u2019s listed under Local names with your other names.'));
+    tick.addEventListener('change', () => { extra.hidden = !tick.checked; });
     const d = dialog('Rename ' + n.name, form({}, [
-      h('input', { name: 'name', type: 'text', value: n.name, maxlength: 64, required: true, autofocus: true, 'aria-label': 'Node name' }),
+      nameIn,
+      recs && !n.witness ? [h('label', { class: 'inline' }, tick, h('span', {}, 'Also add a local name for this server')), extra] : null,
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
     ], async (f) => {
-      await api('PUT', '/cluster/nodes/' + n.id, { name: val(f, 'name').trim() });
+      const name = val(f, 'name').trim();
+      if (recs && !n.witness) {
+        const rest = recs.filter(r => r.node !== n.id);
+        const want = tick.checked ? { name: dnsIn.value.trim(), value: ipIn.value.trim(), note: 'Server ' + name, node: n.id } : null;
+        if (want && (!want.name || !want.value)) throw new Error('Enter a name and the address it points to.');
+        const changed = want ? !mine || mine.name !== want.name || mine.value !== want.value || mine.note !== want.note : !!mine;
+        if (changed) await api('PATCH', '/settings', { records: want ? rest.concat([want]) : rest });
+      }
+      if (name !== n.name) await api('PUT', '/cluster/nodes/' + n.id, { name });
       d.close();
       route();
     }));
@@ -2797,7 +2831,7 @@ async function localNames(main) {
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel'))],
     async (f) => {
       const next = recs.slice();
-      next[i] = read(f);
+      next[i] = Object.assign(recs[i].node ? { node: recs[i].node } : {}, read(f));
       await api('PATCH', '/settings', { records: next });
       d.close();
       toast('Saved ' + next[i].name);
