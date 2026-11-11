@@ -1,5 +1,6 @@
 # Publishes the project website (site/) to GitHub Pages. Turn it on once
-# under Settings > Pages > Source: GitHub Actions.
+# under Settings > Pages > Source: GitHub Actions. The custom domain
+# (dnserv.dev) is set on that same page.
 name: Website
 
 on:
