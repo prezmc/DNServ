@@ -30,9 +30,10 @@ The dashboard has pages for status, checking and blocking domains,
 devices, recent queries, settings,
 users (admins), the audit log (admins), and your own password, sessions
 and API tokens. It is a small built-in page with no external scripts or
-fonts, so it works without internet access. Port 8080 is plain HTTP: keep
-it on your LAN, or put it behind a reverse proxy with HTTPS (set
-`DNSERV_ALLOWED_ORIGINS` to the proxy's host name).
+fonts, so it works without internet access. Port 8080 is plain HTTP until
+you turn on HTTPS under Settings → Dashboard HTTPS (see
+[Dashboard HTTPS](https.md)), or put it behind a reverse proxy with HTTPS
+(set `DNSERV_ALLOWED_ORIGINS` to the proxy's host name).
 
 Settings you save are stored in the data volume and win over the config
 file and environment variables, which only provide the starting values. A
@@ -79,6 +80,8 @@ Notes:
 | `DNSERV_JOIN` | `DNSJ1-…` | witness only: the join code it uses the first time it starts |
 | `DNSERV_NODE_NAME` | `pi-kitchen` | this node's name when it is first created (rename it under Cluster) |
 | `DNSERV_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
+| `DNSERV_HTTPS` | `off` | turns dashboard HTTPS off on this server whatever Settings say, to get back in after a bad certificate |
+| `DNSERV_HTTPS_NAMES` | `dns1.example.com` | extra names for this server's self-signed dashboard certificate |
 
 Environment variables override the optional config file; settings saved in
 the dashboard or API override both.

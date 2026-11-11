@@ -31,7 +31,7 @@ func startEncrypted(t *testing.T, up *fakeResolver) (*Server, string) {
 	if _, fp2, _, _ := LoadOrCreateCert(s.cfg.DNS.TLS, dir); fp2 != fp {
 		t.Fatal("self-signed certificate should be reused across restarts")
 	}
-	if err := s.StartEncrypted(cert); err != nil {
+	if err := s.StartEncrypted(cert, nil); err != nil {
 		t.Fatal(err)
 	}
 	return s, filepath.Join(dir, "tls")
