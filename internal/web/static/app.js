@@ -2219,10 +2219,28 @@ async function settings(main) {
         h('textarea', { id: 'trusted', name: 'trusted', spellcheck: 'false', class: 'short' }, (ac.TrustedDomains || []).join('\n')),
         intel.sources.length ? h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Source'), h('th', {}, 'Entries'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
           h('tbody', {}, intel.sources.map(x => h('tr', {}, h('td', {}, x.name), h('td', {}, fmtNum(x.entries)), h('td', {}, x.updated ? ago(x.updated) : '\u2014'),
-            h('td', {}, x.error ? h('span', { class: 'badge bad', title: x.error }, x.entries ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok'))))))) : null,
+            h('td', {}, x.needs_key ? h('span', { class: 'badge warn', title: x.error }, 'needs abuse.ch key') : x.error ? h('span', { class: 'badge bad', title: x.error }, x.entries ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok'))))))) : null,
         h('p', { class: 'muted small' }, 'Domain types and owners come from AdGuard\u2019s companies database (CC BY-SA 4.0).'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ threat_feeds: f.elements.feeds.checked, trusted_domains: lines(val(f, 'trusted')) }, { threat_feeds: ac.ThreatFeeds, trusted_domains: norm(ac.TrustedDomains) }))));
+  }
+
+  if (can('lists.manage') && eff.Analytics.ThreatFeeds) {
+    const set = async (key) => {
+      try { await api('PUT', '/abusech', { key }); toast(key ? 'abuse.ch key saved. URLhaus and ThreatFox download in a moment.' : 'abuse.ch key removed.'); route(); } catch (e) { toast(e.message, 'err'); }
+    };
+    let ik = false;
+    try { ik = (await api('GET', '/analytics/intel')).abusech_key; } catch (_) { /* unknown */ }
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'abuse.ch key'),
+      form({}, [
+        h('p', { class: 'muted' }, 'The URLhaus and ThreatFox malware feeds need a free abuse.ch Auth-Key. Sign in at ', h('a', { href: 'https://auth.abuse.ch/', target: '_blank', rel: 'noopener' }, 'auth.abuse.ch'), ' (a GitHub, Google or Microsoft account works) and copy the Auth-Key from your profile. The free key is for non-commercial use.'),
+        ik ? h('p', {}, h('span', { class: 'badge ok' }, 'Key saved'), ' ', h('button', { class: 'link', type: 'button', onclick: () => set('') }, 'Remove key')) : null,
+        h('label', { for: 'ackey' }, ik ? 'Replace the key' : 'Auth-Key'),
+        h('input', { id: 'ackey', name: 'ackey', type: 'password', autocomplete: 'off', spellcheck: 'false' }),
+        h('p', { class: 'muted small' }, 'The key is shared with your other servers and never shown again. It isn\u2019t part of backups.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save key')),
+      ], (f) => { const k = val(f, 'ackey').trim(); if (k) return set(k); })));
   }
 
   if (can('lists.manage')) {

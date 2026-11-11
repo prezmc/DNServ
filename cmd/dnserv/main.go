@@ -271,6 +271,7 @@ func run() error {
 	intel := threat.New(filepath.Join(cfg.DataDir, "threat"), nil, log.With("component", "threat"))
 	intel.SetEnabled(cfg.Analytics.ThreatFeeds)
 	intel.SetTrusted(cfg.Analytics.TrustedDomains)
+	intel.SetAbuseCHKey(st.State().AbuseCHKey)
 	go intel.Run(ctx)
 	adm.Intel = intel
 	if hist != nil {
@@ -460,6 +461,9 @@ func run() error {
 			ac := new.Settings.Overlay(base).Analytics
 			intel.SetTrusted(ac.TrustedDomains)
 			intel.SetEnabled(ac.ThreatFeeds)
+		}
+		if old.AbuseCHKey != new.AbuseCHKey {
+			intel.SetAbuseCHKey(new.AbuseCHKey)
 		}
 		if !reflect.DeepEqual(old.Cluster.Nodes, new.Cluster.Nodes) {
 			go followNodeAddrs(old.Cluster.Nodes, new.Cluster.Nodes, cl, st, adm, log)

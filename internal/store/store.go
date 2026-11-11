@@ -48,6 +48,9 @@ type State struct {
 	// VirusTotalKey is the owner's own VirusTotal API key ("": off). The
 	// API never returns it.
 	VirusTotalKey string `json:"virustotal_key,omitempty"`
+	// AbuseCHKey is the owner's abuse.ch Auth-Key for the URLhaus and
+	// ThreatFox feeds ("": none). The API never returns it.
+	AbuseCHKey string `json:"abusech_key,omitempty"`
 	// Pauses turn filtering off for a while, by node ID, or AllNodes for
 	// every node. They are kept apart from Settings: a pause is not a
 	// configuration change, so it isn't in settings history or backups.
