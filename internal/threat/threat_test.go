@@ -176,3 +176,54 @@ func TestCheckAnswer(t *testing.T) {
 		t.Error("trusted domain flagged")
 	}
 }
+
+func TestAbuseCHKey(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Path)
+		if !strings.Contains(r.URL.Path, "/good-key/") {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		io.WriteString(w, "127.0.0.1 keyed.example\n")
+	}))
+	defer srv.Close()
+	old, oldIP := Feeds, IPFeeds
+	defer func() { Feeds, IPFeeds = old, oldIP }()
+	Feeds = []Feed{{ID: "keyed", Name: "Keyed feed", URL: "https://example.org/", KeyedURL: srv.URL + "/v2/files/exports/{key}/hostfile.txt", Kind: KindMalware}}
+	IPFeeds = nil
+	in := New(t.TempDir(), srv.Client(), quiet())
+	in.SetEnabled(true)
+
+	// No key: nothing is downloaded and the status says why.
+	in.Refresh(context.Background(), false)
+	if st := in.Status()[0]; !st.NeedsKey || st.Entries != 0 || len(got) != 0 {
+		t.Fatalf("without key: status %+v, requests %v", st, got)
+	}
+
+	// A wrong key: the error mentions the key but never contains it.
+	in.SetAbuseCHKey("bad-key")
+	in.Refresh(context.Background(), false)
+	st := in.Status()[0]
+	if st.NeedsKey || !strings.Contains(st.Error, "HTTP 401") || strings.Contains(st.Error, "bad-key") {
+		t.Fatalf("wrong key: status %+v", st)
+	}
+
+	// The right key downloads the feed.
+	in.SetAbuseCHKey(" good-key ")
+	in.Refresh(context.Background(), false)
+	if st := in.Status()[0]; st.Error != "" || st.Entries != 1 || in.Score("keyed.example").Level != "high" {
+		t.Fatalf("good key: status %+v", st)
+	}
+	if !in.HasAbuseCHKey() {
+		t.Fatal("HasAbuseCHKey = false")
+	}
+}
+
+func TestDownloadErrorHidesURL(t *testing.T) {
+	in := New(t.TempDir(), &http.Client{Timeout: time.Second}, quiet())
+	err := in.download(context.Background(), "http://127.0.0.1:1/v2/files/exports/secret-key/hostfile.txt", filepath.Join(in.dir, "x"))
+	if err == nil || strings.Contains(err.Error(), "secret-key") {
+		t.Fatalf("err = %v", err)
+	}
+}

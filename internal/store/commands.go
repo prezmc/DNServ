@@ -108,6 +108,7 @@ const (
 	OpGroupSave      = "group.save"          // Group (creates or replaces)
 	OpGroupDelete    = "group.delete"        // IDOnly
 	OpVirusTotalKey  = "virustotal.key"      // VirusTotalKey
+	OpAbuseCHKey     = "abusech.key"         // AbuseCHKey
 	OpFilterPause    = "filtering.pause"     // FilterPause
 	OpFilterResume   = "filtering.resume"    // FilterResume
 	OpHistoryClear   = "history.clear"       // HistoryClear (audit record only)
@@ -117,6 +118,12 @@ const (
 // kept apart from Settings so it never shows in settings, their history
 // or the audit log.
 type VirusTotalKey struct {
+	Key string `json:"key"`
+}
+
+// AbuseCHKey sets (or, empty, removes) the abuse.ch Auth-Key. Like the
+// VirusTotal key, it is kept apart from Settings.
+type AbuseCHKey struct {
 	Key string `json:"key"`
 }
 
@@ -556,6 +563,17 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 			return nil, audit("removed the VirusTotal key", nil, nil), nil
 		}
 		return nil, audit("set the VirusTotal key", nil, nil), nil
+
+	case OpAbuseCHKey:
+		var d AbuseCHKey
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		st.AbuseCHKey = strings.TrimSpace(d.Key)
+		if st.AbuseCHKey == "" {
+			return nil, audit("removed the abuse.ch key", nil, nil), nil
+		}
+		return nil, audit("set the abuse.ch key", nil, nil), nil
 	}
 	return nil, nil, fmt.Errorf("unknown command %q", c.Op)
 }

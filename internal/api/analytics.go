@@ -35,6 +35,7 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/v1/analytics/virustotal", a.authed(store.PermDashboard, a.virusTotalLookup))
 	m.HandleFunc("GET /api/v1/virustotal", a.authed(store.PermDashboard, a.virusTotalStatus))
 	m.HandleFunc("PUT /api/v1/virustotal", a.authed(store.PermLists, a.virusTotalSetKey))
+	m.HandleFunc("PUT /api/v1/abusech", a.authed(store.PermLists, a.abuseCHSetKey))
 	m.HandleFunc("GET /api/v1/analytics/risky", a.authed(store.PermDashboard, a.analyticsRisky))
 	m.HandleFunc("GET /api/v1/analytics/intel", a.authed(store.PermDashboard, a.intelStatus))
 }
@@ -686,5 +687,26 @@ func (a *API) intelStatus(w http.ResponseWriter, r *http.Request, p *Principal) 
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "sources": []any{}})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": a.Intel.Enabled(), "sources": a.Intel.Status()})
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": a.Intel.Enabled(), "sources": a.Intel.Status(),
+		"abusech_key": a.Store.State().AbuseCHKey != ""})
+}
+
+// abuseCHSetKey stores (or, empty, removes) the abuse.ch Auth-Key for the
+// URLhaus and ThreatFox feeds. The key is never returned.
+func (a *API) abuseCHSetKey(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var in struct {
+		Key string `json:"key"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	in.Key = strings.TrimSpace(in.Key)
+	if len(in.Key) > 128 || strings.ContainsAny(in.Key, " \t\r\n/?#%") {
+		writeErr(w, http.StatusBadRequest, "that doesn't look like an abuse.ch Auth-Key")
+		return
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpAbuseCHKey, p.Actor(), store.AbuseCHKey{Key: in.Key})); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"configured": in.Key != ""})
 }

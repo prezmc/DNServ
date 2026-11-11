@@ -248,6 +248,22 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 	if !st.Enabled || len(st.Sources) != 8 {
 		t.Fatalf("intel = %+v", st)
 	}
+
+	// The abuse.ch key is stored but never returned.
+	admin.want(400, "PUT", "/api/v1/abusech", map[string]string{"key": "has/slash"}, nil)
+	admin.want(200, "PUT", "/api/v1/abusech", map[string]string{"key": "abc-123-key"}, nil)
+	if got := e.api.Store.State().AbuseCHKey; got != "abc-123-key" {
+		t.Fatalf("stored key = %q", got)
+	}
+	var raw map[string]any
+	admin.want(200, "GET", "/api/v1/analytics/intel", nil, &raw)
+	if raw["abusech_key"] != true || func() bool { b, _ := json.Marshal(raw); return strings.Contains(string(b), "abc-123-key") }() {
+		t.Fatalf("intel = %v", raw)
+	}
+	admin.want(200, "PUT", "/api/v1/abusech", map[string]string{"key": ""}, nil)
+	if e.api.Store.State().AbuseCHKey != "" {
+		t.Fatal("key not removed")
+	}
 }
 
 func TestAlsoOn(t *testing.T) {

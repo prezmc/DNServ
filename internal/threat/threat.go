@@ -20,6 +20,7 @@ import (
 	"math"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,12 +48,17 @@ type Feed struct {
 	Kind Kind   `json:"-"`
 	// Wildcard feeds list registrable domains that cover every subdomain.
 	Wildcard bool `json:"-"`
+	// KeyedURL, when set, is where the feed is downloaded with an
+	// abuse.ch Auth-Key, "{key}" standing for the key. Without a key the
+	// feed is skipped. abuse.ch stopped keyless downloads on 21 October
+	// 2026 (the old addresses answer 410 Gone).
+	KeyedURL string `json:"-"`
 }
 
 // Feeds are the threat feeds DNServ uses.
 var Feeds = []Feed{
-	{ID: "urlhaus", Name: "URLhaus (abuse.ch) malware hosts", URL: "https://urlhaus.abuse.ch/downloads/hostfile/", Kind: KindMalware},
-	{ID: "threatfox", Name: "ThreatFox (abuse.ch) malware and C2 hosts", URL: "https://threatfox.abuse.ch/downloads/hostfile/", Kind: KindMalware},
+	{ID: "urlhaus", Name: "URLhaus (abuse.ch) malware hosts", URL: "https://urlhaus.abuse.ch/", KeyedURL: "https://urlhaus-api.abuse.ch/v2/files/exports/{key}/hostfile.txt", Kind: KindMalware},
+	{ID: "threatfox", Name: "ThreatFox (abuse.ch) malware and C2 hosts", URL: "https://threatfox.abuse.ch/", KeyedURL: "https://threatfox-api.abuse.ch/v2/files/exports/{key}/hostfile.txt", Kind: KindMalware},
 	{ID: "phishingarmy", Name: "Phishing Army", URL: "https://phishing.army/download/phishing_army_blocklist.txt", Kind: KindPhishing},
 	{ID: "hagezi-tif", Name: "HaGeZi Threat Intelligence Feeds (medium)", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/tif.medium-onlydomains.txt", Kind: KindThreat, Wildcard: true},
 }
@@ -140,7 +146,12 @@ type SourceStatus struct {
 	Entries int       `json:"entries"`
 	Updated time.Time `json:"updated,omitzero"`
 	Error   string    `json:"error,omitempty"`
+	// NeedsKey is set for an abuse.ch feed while no Auth-Key is set.
+	NeedsKey bool `json:"needs_key,omitempty"`
 }
+
+// ErrNeedsKey is the status of an abuse.ch feed without an Auth-Key.
+var ErrNeedsKey = errors.New("needs a free abuse.ch Auth-Key (Settings > abuse.ch key)")
 
 // Intel holds the current sources. Lookups are lock-free.
 type Intel struct {
@@ -151,7 +162,8 @@ type Intel struct {
 	status  atomic.Pointer[[]SourceStatus]
 	enabled atomic.Bool
 	trusted atomic.Pointer[[]string]
-	mu      sync.Mutex // one refresh at a time
+	abuseCH atomic.Pointer[string] // abuse.ch Auth-Key, "" for none
+	mu      sync.Mutex             // one refresh at a time
 	kick    chan struct{}
 }
 
@@ -164,8 +176,34 @@ func New(dir string, client *http.Client, log *slog.Logger) *Intel {
 	in.cur.Store(&db{})
 	in.status.Store(&[]SourceStatus{})
 	in.trusted.Store(&[]string{})
+	in.abuseCH.Store(new(string))
 	return in
 }
+
+// SetAbuseCHKey sets the abuse.ch Auth-Key used for the URLhaus and
+// ThreatFox feeds ("" for none). A new key downloads them again now.
+func (in *Intel) SetAbuseCHKey(key string) {
+	key = strings.TrimSpace(key)
+	old := in.abuseCH.Swap(&key)
+	if *old == key {
+		return
+	}
+	for _, f := range Feeds {
+		if *old == "" {
+			break // first key (or startup): cached copies, if any, are fine
+		}
+		if f.KeyedURL != "" {
+			os.Remove(filepath.Join(in.dir, f.ID+".txt"))
+		}
+	}
+	select {
+	case in.kick <- struct{}{}:
+	default:
+	}
+}
+
+// HasAbuseCHKey reports whether an abuse.ch Auth-Key is set.
+func (in *Intel) HasAbuseCHKey() bool { return *in.abuseCH.Load() != "" }
 
 // SetEnabled turns the threat feeds on or off. Domain types stay on (they
 // are small and say nothing about risk).
@@ -231,7 +269,24 @@ func (in *Intel) Refresh(ctx context.Context, force bool) {
 	if in.enabled.Load() {
 		for i, f := range Feeds {
 			st := SourceStatus{ID: f.ID, Name: f.Name}
-			path, updated, err := in.fetch(ctx, f.ID+".txt", f.URL, force)
+			src := f.URL
+			if f.KeyedURL != "" {
+				key := *in.abuseCH.Load()
+				if key == "" {
+					// Keep using a copy saved before keyless downloads ended.
+					st.Error, st.NeedsKey = ErrNeedsKey.Error(), true
+					path := filepath.Join(in.dir, f.ID+".txt")
+					if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+						st.Updated = fi.ModTime()
+						st.Entries, _ = loadFeed(path, i, f, next)
+					}
+					feedIDs[f.ID] = f.Name
+					status = append(status, st)
+					continue
+				}
+				src = strings.ReplaceAll(f.KeyedURL, "{key}", url.PathEscape(key))
+			}
+			path, updated, err := in.fetch(ctx, f.ID+".txt", src, force)
 			st.Updated = updated
 			if err != nil {
 				st.Error = err.Error()
@@ -297,35 +352,47 @@ func (in *Intel) Refresh(ctx context.Context, force bool) {
 	in.status.Store(&status)
 }
 
-// fetch returns the local copy of url, downloading it when missing,
+// fetch returns the local copy of src, downloading it when missing,
 // older than 12 hours (force) or empty.
-func (in *Intel) fetch(ctx context.Context, file, url string, force bool) (string, time.Time, error) {
+func (in *Intel) fetch(ctx context.Context, file, src string, force bool) (string, time.Time, error) {
 	path := filepath.Join(in.dir, file)
 	fi, statErr := os.Stat(path)
 	have := statErr == nil && fi.Size() > 0
 	if have && (!force || time.Since(fi.ModTime()) < 11*time.Hour) {
 		return path, fi.ModTime(), nil
 	}
-	err := in.download(ctx, url, path)
+	err := in.download(ctx, src, path)
 	if fi2, e := os.Stat(path); e == nil && fi2.Size() > 0 {
 		return path, fi2.ModTime(), err
 	}
 	return "", time.Time{}, err
 }
 
-func (in *Intel) download(ctx context.Context, url, path string) error {
+// download saves src to path. Errors never include src, which can hold
+// an Auth-Key.
+func (in *Intel) download(ctx context.Context, src, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
 	if err != nil {
-		return err
+		return errors.New("download failed: bad address")
 	}
 	resp, err := in.client.Do(req)
 	if err != nil {
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		return fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		if strings.Contains(src, ".abuse.ch/v2/") {
+			return fmt.Errorf("download failed: HTTP %d, check the abuse.ch Auth-Key", resp.StatusCode)
+		}
+		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
+	case resp.StatusCode != http.StatusOK:
 		return fmt.Errorf("download failed: HTTP %d", resp.StatusCode)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".dl-*")

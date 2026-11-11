@@ -112,7 +112,10 @@ Everything DNServ does today, in more detail than the README.
   4.0). A **Risky domains** list sits at the top of Analytics, and the
   domain detail and Query log show scores and reasons. Scores never block
   anything. Turn the feeds off, or list trusted domains, under Settings →
-  Risk scoring. Each node downloads the sources itself, keeps them in
+  Risk scoring. URLhaus and ThreatFox need a free abuse.ch Auth-Key
+  (from [auth.abuse.ch](https://auth.abuse.ch/), non-commercial use),
+  entered under Settings → abuse.ch key; it is shared with your other
+  servers, never shown again and not part of backups. Each node downloads the sources itself, keeps them in
   `/data/threat` and refreshes them twice a day (about 30 MB of memory).
   History also keeps each answer's addresses and aliases (about 33 MB a
   day per 100,000 queries), so a harmless-looking name that answers with a
