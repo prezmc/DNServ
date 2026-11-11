@@ -67,7 +67,13 @@ type Group struct {
 	next     atomic.Uint64 // round robin turn
 	log      *slog.Logger
 	obs      atomic.Pointer[Observer]
+	label    string // names the group in place of the answering server
 }
+
+// SetLabel makes ExchangeFrom name the group as label rather than the
+// server that answered (for the local Unbound, "Recursive (Unbound)").
+// Call it before the group is used.
+func (g *Group) SetLabel(label string) { g.label = label }
 
 // SetStrategy sets how servers are picked. Call it before the group is
 // used; an unknown or empty strategy means Fastest.
@@ -138,6 +144,12 @@ var (
 // Exchange sends q to the fastest healthy upstream, then the others in
 // order of measured latency until one answers.
 func (g *Group) Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, error) {
+	resp, _, err := g.ExchangeFrom(ctx, q)
+	return resp, err
+}
+
+// ExchangeFrom is Exchange that also says which server answered.
+func (g *Group) ExchangeFrom(ctx context.Context, q *dns.Msg) (*dns.Msg, string, error) {
 	order := g.order()
 	if g.strategy == Parallel && len(order) > 1 {
 		return g.parallel(ctx, order, q)
@@ -155,12 +167,12 @@ func (g *Group) Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, error) {
 			errs = append(errs, fmt.Errorf("%s: %w", m.ex, err))
 			continue
 		}
-		return resp, nil
+		return resp, g.name(m), nil
 	}
 	if ctx.Err() != nil {
 		errs = append(errs, ctx.Err())
 	}
-	return nil, errors.Join(errs...)
+	return nil, "", errors.Join(errs...)
 }
 
 // try sends q to one member and records how it went.
@@ -235,7 +247,7 @@ func (m *member) observe(us int64) {
 
 // parallel asks every healthy member at once (every member, if none is
 // healthy) and returns the first answer.
-func (g *Group) parallel(ctx context.Context, order []*member, q *dns.Msg) (*dns.Msg, error) {
+func (g *Group) parallel(ctx context.Context, order []*member, q *dns.Msg) (*dns.Msg, string, error) {
 	now := time.Now().UnixNano()
 	ask := order[:0:0]
 	for _, m := range order {
@@ -264,11 +276,18 @@ func (g *Group) parallel(ctx context.Context, order []*member, q *dns.Msg) (*dns
 	for range ask {
 		r := <-results
 		if r.err == nil {
-			return r.resp, nil
+			return r.resp, g.name(r.m), nil
 		}
 		errs = append(errs, fmt.Errorf("%s: %w", r.m.ex, r.err))
 	}
-	return nil, errors.Join(errs...)
+	return nil, "", errors.Join(errs...)
+}
+
+func (g *Group) name(m *member) string {
+	if g.label != "" {
+		return g.label
+	}
+	return m.ex.String()
 }
 
 // order returns the members in the order to try them: healthy ones first,

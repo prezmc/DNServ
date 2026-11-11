@@ -78,6 +78,22 @@ func (t *Tunnel) Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, error) {
 	return nil, ErrTunnelDown
 }
 
+// ExchangeFrom is Exchange that also says which path answered: the
+// tunnel, or the fallback's server.
+func (t *Tunnel) ExchangeFrom(ctx context.Context, q *dns.Msg) (*dns.Msg, string, error) {
+	if t.up.Load() {
+		resp, err := t.Primary.Exchange(ctx, q)
+		return resp, "Recursive (through the tunnel)", err
+	}
+	if f, ok := t.Fallback.(interface {
+		ExchangeFrom(context.Context, *dns.Msg) (*dns.Msg, string, error)
+	}); ok {
+		return f.ExchangeFrom(ctx, q)
+	}
+	resp, err := t.Exchange(ctx, q)
+	return resp, "", err
+}
+
 // Check runs the tunnel checks once and updates the state.
 func (t *Tunnel) Check(ctx context.Context) bool {
 	ok, why := t.check(ctx)

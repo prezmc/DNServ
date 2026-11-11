@@ -37,6 +37,8 @@ type Entry struct {
 	List     string     `json:"list,omitempty"` // where the rule came from
 	Allowed  bool       `json:"allowed,omitempty"`
 	Duration float64    `json:"ms"`
+	// Upstream is the server that answered, for answers from upstream.
+	Upstream string `json:"upstream,omitempty"`
 	// Answer is the answer section as sent, for the long-term history to
 	// read addresses and CNAMEs from off the query path. The records are
 	// shared, never modified.

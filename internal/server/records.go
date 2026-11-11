@@ -142,7 +142,7 @@ func (s *Server) recordAnswer(req *dns.Msg, name string, client netip.Addr) (*dn
 				if o := req.IsEdns0(); o != nil {
 					sub.SetEdns0(o.UDPSize(), o.Do())
 				}
-				resp, _, _ := s.resolve(sub, client)
+				resp, _, _, _ := s.resolve(sub, client)
 				m.Answer = append(m.Answer, resp.Answer...)
 				m.Ns = resp.Ns
 				m.Rcode = resp.Rcode

@@ -31,6 +31,18 @@ type Resolver interface {
 	Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, error)
 }
 
+// sourced is a Resolver that can say which server answered (upstream
+// groups, the tunnel), for the query history.
+type sourced interface {
+	ExchangeFrom(ctx context.Context, q *dns.Msg) (*dns.Msg, string, error)
+}
+
+// fetched is an upstream answer and the server it came from.
+type fetched struct {
+	msg  *dns.Msg
+	from string
+}
+
 // Filter is the blocking engine.
 type Filter interface {
 	Lookup(name string) filter.Match
@@ -234,7 +246,7 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 	if req.Opcode != dns.OpcodeQuery || len(req.Question) != 1 || req.Response {
 		return s.finalize(req, rcodeMsg(req, dns.RcodeFormatError), udp)
 	}
-	resp, outcome, match := s.resolve(req, client)
+	resp, outcome, match, from := s.resolve(req, client)
 	took := time.Since(start)
 	s.Metrics.observe(outcome, resp, took)
 	resp = s.finalize(req, resp, udp)
@@ -244,7 +256,7 @@ func (s *Server) Handle(req *dns.Msg, client netip.Addr, udp bool) *dns.Msg {
 		e := querylog.Entry{
 			Time: start, Client: client.Unmap(), Name: filter.Normalize(q.Name), Type: dns.TypeToString[q.Qtype],
 			Result: outcomeResults[outcome], Rcode: dns.RcodeToString[resp.Rcode], Answers: len(resp.Answer),
-			Duration: float64(took.Microseconds()) / 1000, Allowed: match.Allowed,
+			Duration: float64(took.Microseconds()) / 1000, Allowed: match.Allowed, Upstream: from,
 		}
 		if match.Blocked || match.Allowed {
 			e.List = match.Source
@@ -280,22 +292,24 @@ var outcomeResults = [...]string{
 	OutBlocked: querylog.Blocked, OutLocal: querylog.Local, OutError: querylog.Failed,
 }
 
-func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, filter.Match) {
+// resolve answers req. from names the upstream server that answered, when
+// one did.
+func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, filter.Match, string) {
 	q := req.Question[0]
 	name := filter.Normalize(q.Name)
 
 	if m, ok := s.recordAnswer(req, name, client); ok {
-		return m, OutLocal, filter.Match{}
+		return m, OutLocal, filter.Match{}, ""
 	}
 	if m, ok := s.localAnswer(req, name); ok {
-		return m, OutLocal, filter.Match{}
+		return m, OutLocal, filter.Match{}, ""
 	}
 
 	// Paused: answer everything as if there were no filtering. One atomic
 	// load when not paused; the clock is read only while a pause is set.
 	if s.Paused() {
-		m, out := s.answer(req, name)
-		return m, out, filter.Match{}
+		m, out, from := s.answer(req, name)
+		return m, out, filter.Match{}, from
 	}
 
 	// Firefox's canary domain: NXDOMAIN tells it not to switch on its own
@@ -304,7 +318,7 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 		m := new(dns.Msg)
 		m.SetRcode(req, dns.RcodeNameError)
 		m.Ns = []dns.RR{s.blockSOA(q.Name)}
-		return m, OutBlocked, filter.Match{Blocked: true, Source: "Firefox DoH canary", Rule: filter.Rule{Domain: "use-application-dns.net", Kind: filter.Suffix}}
+		return m, OutBlocked, filter.Match{Blocked: true, Source: "Firefox DoH canary", Rule: filter.Rule{Domain: "use-application-dns.net", Kind: filter.Suffix}}, ""
 	}
 
 	g := s.policy.Load().For(client)
@@ -317,15 +331,16 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 	}
 	match := s.check(g, name, now)
 	if match.Blocked {
-		return s.blocked(req), OutBlocked, match
+		return s.blocked(req), OutBlocked, match, ""
 	}
 
 	var m *dns.Msg
 	var out Outcome
+	var from string
 	if t := s.safeSearchFor(g, name); t != "" {
-		m, out = s.safeSearchAnswer(req, t)
+		m, out, from = s.safeSearchAnswer(req, t)
 	} else {
-		m, out = s.answer(req, name)
+		m, out, from = s.answer(req, name)
 	}
 	// Answer checks, as AdGuard Home does: a name that is an alias (CNAME)
 	// for a blocked name is blocked too, and so is an answer with an
@@ -345,14 +360,14 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 				continue
 			}
 			if cm.Blocked {
-				return s.blocked(req), OutBlocked, cm
+				return s.blocked(req), OutBlocked, cm, ""
 			}
 			if cm.Allowed {
 				break // an allowed alias or address: the answer stands
 			}
 		}
 	}
-	return m, out, match
+	return m, out, match, from
 }
 
 // checkIP checks an answer address. Only a rule for exactly that address
@@ -388,8 +403,9 @@ func (s *Server) check(g *policy.Group, name string, now time.Time) filter.Match
 	return match
 }
 
-// answer gets the real answer for name, from the cache or upstream.
-func (s *Server) answer(req *dns.Msg, name string) (*dns.Msg, Outcome) {
+// answer gets the real answer for name, from the cache or upstream, and
+// the upstream server that answered.
+func (s *Server) answer(req *dns.Msg, name string) (*dns.Msg, Outcome, string) {
 	q := req.Question[0]
 	key := ""
 	if s.cache != nil {
@@ -401,25 +417,25 @@ func (s *Server) answer(req *dns.Msg, name string) (*dns.Msg, Outcome) {
 			res.Msg.Id = req.Id
 			res.Msg.Question = req.Question
 			if res.State == cache.Stale {
-				return res.Msg, OutStale
+				return res.Msg, OutStale, ""
 			}
-			return res.Msg, OutCached
+			return res.Msg, OutCached, ""
 		}
 	}
 
-	resp, err := s.fetch(key, req)
+	resp, from, err := s.fetch(key, req)
 	if err != nil {
 		s.log.Debug("upstream failed", "name", name, "type", dns.TypeToString[q.Qtype], "err", err)
-		return rcodeMsg(req, dns.RcodeServerFailure), OutError
+		return rcodeMsg(req, dns.RcodeServerFailure), OutError, ""
 	}
 	out := resp.Copy()
 	out.Id = req.Id
 	out.Question = req.Question
-	return out, OutUpstream
+	return out, OutUpstream, from
 }
 
 // fetch asks upstream, collapsing identical concurrent queries into one.
-func (s *Server) fetch(key string, req *dns.Msg) (*dns.Msg, error) {
+func (s *Server) fetch(key string, req *dns.Msg) (*dns.Msg, string, error) {
 	sfKey := key
 	if sfKey == "" {
 		sfKey = cache.Key(req)
@@ -427,25 +443,34 @@ func (s *Server) fetch(key string, req *dns.Msg) (*dns.Msg, error) {
 	v, err, _ := s.group.Do(sfKey, func() (any, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.Upstream.Timeout*2)
 		defer cancel()
-		return s.exchange(ctx, key, req)
+		resp, from, err := s.exchange(ctx, key, req)
+		return fetched{resp, from}, err
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return v.(*dns.Msg), nil
+	f := v.(fetched)
+	return f.msg, f.from, nil
 }
 
-func (s *Server) exchange(ctx context.Context, key string, req *dns.Msg) (*dns.Msg, error) {
+func (s *Server) exchange(ctx context.Context, key string, req *dns.Msg) (*dns.Msg, string, error) {
 	up := upstreamQuery(req)
-	resp, err := s.live.Load().resolver.Exchange(ctx, up)
+	var resp *dns.Msg
+	var from string
+	var err error
+	if r, ok := s.live.Load().resolver.(sourced); ok {
+		resp, from, err = r.ExchangeFrom(ctx, up)
+	} else {
+		resp, err = s.live.Load().resolver.Exchange(ctx, up)
+	}
 	if err != nil {
 		s.Metrics.upstreamErrors.Add(1)
-		return nil, err
+		return nil, "", err
 	}
 	if s.cache != nil && key != "" {
 		s.cache.Set(key, resp)
 	}
-	return resp, nil
+	return resp, from, nil
 }
 
 // refresh revalidates an entry in the background (prefetch or stale).
@@ -454,7 +479,7 @@ func (s *Server) refresh(key string, req *dns.Msg) {
 	go func() {
 		ctx, cancel := context.WithTimeout(s.refreshCtx, s.cfg.Upstream.Timeout*2)
 		defer cancel()
-		if _, err := s.exchange(ctx, key, r); err != nil {
+		if _, _, err := s.exchange(ctx, key, r); err != nil {
 			s.cache.Done(key)
 		}
 	}()
