@@ -63,7 +63,7 @@ header nav a:hover { color: var(--text); text-decoration: none; }
 section { padding: 72px 0 0; }
 section h2 { font-size: 2rem; margin: 0 0 8px; letter-spacing: -.01em; }
 section p.sub { color: var(--muted); margin: 0 0 32px; max-width: 720px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
 .card h3 { margin: 10px 0 6px; font-size: 1.05rem; }
 .card p { margin: 0; color: var(--muted); font-size: .95rem; }
@@ -136,7 +136,8 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
     <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></div><h3>Fast</h3><p>A two-layer cache, prefetching of popular names, and old answers kept ready if the internet drops.</p></div>
     <div class="card"><div class="ico red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg></div><h3>Blocks ads, trackers and malware</h3><p>Any hosts file, domain list or AdGuard-style list, with wildcards and regex, plus your own allow and block rules.</p></div>
     <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div><h3>Rules per device</h3><p>Groups like Kids, with their own blocked services, safe search, and schedules for bedtime or homework.</p></div>
-    <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19V5M4 19h16M8 15v-4M12 15V8M16 15v-6"/></svg></div><h3>See what's going on</h3><p>Query log, analytics, response times and risk scores from public threat feeds, kept for 30 days.</p></div>
+    <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19V5M4 19h16M8 15v-4M12 15V8M16 15v-6"/></svg></div><h3>See what's going on</h3><p>Query log, analytics, response times, and a traffic map from every device through your servers to the services it reaches.</p></div>
+    <div class="card"><div class="ico red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M12 8v5M12 16h0"/></svg></div><h3>Spots threats</h3><p>Every lookup is scored against public malware and phishing feeds. See what got through, who reached it, and block it in one click.</p></div>
     <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="8" height="16" rx="2"/><rect x="13" y="4" width="8" height="16" rx="2"/><path d="M7 8h0M17 8h0"/></svg></div><h3>Keeps working when a server fails</h3><p>Run two or more nodes. Settings stay in sync, and any node can take over as leader.</p></div>
     <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div><h3>Private</h3><p>Encrypted DNS to Cloudflare or Quad9, or its own recursive resolver (Unbound), optionally through a VPN.</p></div>
     <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Safe to run</h3><p>Two-factor sign-in for every account, admin, power-user and viewer roles, an audit log, encrypted backups, and HTTPS.</p></div>
@@ -148,12 +149,14 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
   <h2>A dashboard you'll actually open</h2>
   <p class="sub">Light and dark themes, made for a phone as much as a desktop.</p>
   <div class="gallery">
+    <figure><img src="images/security.png" alt="Security card" loading="lazy"><figcaption><b>Security</b> says whether anything risky got through, and who reached it.</figcaption></figure>
+    <figure><img src="images/traffic-map.png" alt="Traffic map" loading="lazy"><figcaption><b>Traffic map</b> follows lookups from devices to servers to services.</figcaption></figure>
     <figure><img src="images/query-log.png" alt="Query log" loading="lazy"><figcaption><b>Query log</b> searches every server's history.</figcaption></figure>
     <figure><img src="images/analytics.png" alt="Analytics" loading="lazy"><figcaption><b>Analytics</b> shows top domains, what blocked them, and busy devices.</figcaption></figure>
     <figure><img src="images/performance.png" alt="Performance" loading="lazy"><figcaption><b>Performance</b> tracks response times, upstream health and anything unusual.</figcaption></figure>
     <figure><img src="images/cluster.png" alt="Cluster" loading="lazy"><figcaption><b>Cluster</b> shows your servers, with leader controls and join codes.</figcaption></figure>
     <figure><img src="images/group.png" alt="Group settings with schedules" loading="lazy"><figcaption><b>Groups</b> get blocked services, safe search and schedules.</figcaption></figure>
-    <figure><img src="images/dashboard-light.png" alt="Light theme" loading="lazy"><figcaption><b>Light theme</b>, following your system setting.</figcaption></figure>
+    <figure><img src="images/scoring.png" alt="Tune risk scoring" loading="lazy"><figcaption><b>Risk scoring</b> explains every score, with presets and a preview when you tune it.</figcaption></figure>
   </div>
 </div></section>
 
@@ -187,6 +190,7 @@ docker logs dnserv 2>&amp;1 | grep setup_code</pre>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/deploy-two-servers.md">Two-server guide<span>Deploy and failure scenarios</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/clustering.md">Clustering<span>Nodes, witnesses, recovery</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/filtering.md">Filtering<span>Rules, services, safe search</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/security.md">Security<span>Threat feeds and risk scores</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/https.md">Dashboard HTTPS<span>Self-signed, your own, or NPM</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/backups.md">Backups<span>Encrypted, scheduled, restorable</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/adguard-import.md">From AdGuard Home<span>What the importer brings</span></a>

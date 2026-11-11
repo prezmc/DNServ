@@ -19,7 +19,8 @@
 - **Fast.** About 51,000 queries a second on a 4-core machine, with a median answer of 0.14 ms. Popular names are prefetched before they expire, and old answers are served if the internet is down.
 - **Blocks ads, trackers and malware.** Use any hosts file, domain list or AdGuard-style list (wildcards and regex included), plus your own allow and block rules.
 - **Rules per device.** Put devices in groups like Kids, with their own blocked services, safe search, and schedules such as bedtime or homework time.
-- **Shows what's going on.** Query log, analytics, response times, and risk scores from public threat feeds, kept for 30 days.
+- **Shows what's going on.** Query log, analytics, response times and a traffic map from each device, through your servers, out to the services it reaches. History is kept for 30 days.
+- **Spots threats.** Every lookup is scored against public malware and phishing feeds. The Dashboard tells you when something risky got through, who reached it, and lets you block it in one click. You can see and tune how scores add up.
 - **Keeps working when a server fails.** Run two or more nodes. Settings stay in sync and any node can take over.
 - **Private.** Uses encrypted DNS to Cloudflare by default, or resolves on its own with the bundled Unbound, optionally through a VPN.
 - **Safe to run.** Two-factor sign-in is required for every account. Roles are admin, power user and viewer. Every change is in the audit log, and backups are encrypted.
@@ -60,9 +61,11 @@ Then add the second server as your router's second DNS server. To keep taking ch
 
 | | |
 |---|---|
+| <img src="docs/images/security.png" alt="Security card" width="420"><br>**Security** says whether anything risky got through, and who reached it | <img src="docs/images/traffic-map.png" alt="Traffic map" width="420"><br>**Traffic map** follows lookups from devices to servers to services |
 | <img src="docs/images/query-log.png" alt="Query log" width="420"><br>**Query log** searches every server's history | <img src="docs/images/analytics.png" alt="Analytics" width="420"><br>**Analytics** shows top domains, what blocked them, and busy devices |
 | <img src="docs/images/performance.png" alt="Performance" width="420"><br>**Performance** shows response times, upstream health and anything unusual | <img src="docs/images/cluster.png" alt="Cluster" width="420"><br>**Cluster** shows your nodes, with leader controls and join codes |
-| <img src="docs/images/group.png" alt="Group with schedules" width="420"><br>**Groups** have blocked services, safe search and schedules | <img src="docs/images/dashboard-light.png" alt="Light theme" width="420"><br>**Light theme**, which follows your system setting |
+| <img src="docs/images/group.png" alt="Group with schedules" width="420"><br>**Groups** have blocked services, safe search and schedules | <img src="docs/images/scoring.png" alt="Tune risk scoring" width="420"><br>**Risk scoring** explains every score, with presets and a preview when you tune it |
+| <img src="docs/images/dashboard-light.png" alt="Light theme" width="420"><br>**Light theme**, which follows your system setting | |
 
 ## Documentation
 
@@ -74,6 +77,7 @@ Then add the second server as your router's second DNS server. To keep taking ch
 | [Two-server guide](docs/deploy-two-servers.md) | Step-by-step deploy and failure scenarios |
 | [Two floating DNS addresses](docs/floating-dns-addresses.md) | More than two nodes behind keepalived |
 | [Filtering](docs/filtering.md) | Rule syntax, blocked services, safe search, stopping bypass |
+| [Security and risk scoring](docs/security.md) | Threat feeds, the Security card, how scores add up, tuning |
 | [Dashboard HTTPS](docs/https.md) | Self-signed, your own certificate, or one from Nginx Proxy Manager |
 | [Backups and history](docs/backups.md) | Encrypted backups, schedules, restore |
 | [Moving from AdGuard Home](docs/adguard-import.md) | What the importer brings across |
