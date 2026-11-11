@@ -291,4 +291,3 @@ func TestRedirect(t *testing.T) {
 		t.Error("redirected a request a proxy sent")
 	}
 }
-
