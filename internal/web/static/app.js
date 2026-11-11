@@ -767,6 +767,7 @@ async function dashboard(main) {
   const devBox = h('div');
   const chartBox = h('div');
   const flowBox = h('div');
+  const secBox = h('div');
   const extraBox = h('div');
   const ver = h('p', { class: 'muted small d-ver' });
   // The period applies to the tiles, chart and top lists, like the time
@@ -782,7 +783,7 @@ async function dashboard(main) {
         shownHash = location.hash;
         route();
       } }, k))) : null);
-  fill(main, head, h('div', { class: 'dash' }, pauseBox, body, chartBox, flowBox, extraBox, devBox, checkDomainCard(), ver));
+  fill(main, head, h('div', { class: 'dash' }, pauseBox, body, secBox, chartBox, flowBox, extraBox, devBox, checkDomainCard(), ver));
   const pause = pauseControl(pauseBtn, pauseBox, () => load());
 
   // The tiles and upstream counts come from the saved query history (the
@@ -884,14 +885,17 @@ async function dashboard(main) {
       deviceTable(seen.slice(0, 5), { compact: true }),
       seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null));
   };
+  // The security overview feeds both its card and the chart's risk dots.
+  const security = () => (can('dashboard.view') ? api('GET', '/analytics/security?range=' + range).catch(() => null) : Promise.resolve(null));
+  const charts = () => { const p = security(); p.then(sec => securityCard(secBox, range, sec, charts)); return dashboardChart(chartBox, range, p); };
   const extras = () => (can('dashboard.view') ? Promise.all([dashboardExtras(extraBox, range), dashboardFlow(flowBox, range)]) : null);
-  await Promise.all([load(), loadDevices(), dashboardChart(chartBox, range), extras()]);
+  await Promise.all([load(), loadDevices(), charts(), extras()]);
   let tick = 0;
   timer = setInterval(() => {
     if (document.hidden) return;
     load();
     if (++tick % 3 === 0) loadDevices();
-    if (tick % 12 === 0) { dashboardChart(chartBox, range); extras(); }
+    if (tick % 12 === 0) { charts(); extras(); }
   }, 5000);
 }
 
@@ -1449,7 +1453,10 @@ function bucketLabel(t, step, long) {
 
 // queryChart draws allowed and blocked queries per bucket as stacked
 // bars, with a tooltip per bar and a table for screen readers.
-function queryChart(sum) {
+// queryChart draws queries over time. opts.risky (bucket start -> count)
+// marks the buckets where a high-risk domain got an answer.
+function queryChart(sum, opts) {
+  const risky = (opts && opts.risky) || new Map();
   const step = sum.step;
   const from = Math.floor(new Date(sum.from).getTime() / 1000), to = Math.floor(new Date(sum.to).getTime() / 1000);
   const byT = new Map(sum.series.map(p => [p.t, p]));
@@ -1479,11 +1486,14 @@ function queryChart(sum) {
     const yA = y(allowed), yB = y(p.total);
     if (allowed > 0) g.push(svg('rect', { x, y: yA, width: barW, height: Math.max(1, y(0) - yA), rx: r, class: 'bar-allowed' }));
     if (p.blocked > 0) g.push(svg('rect', { x, y: yB, width: barW, height: Math.max(1, yA - yB - (allowed > 0 ? 2 : 0)), rx: r, class: 'bar-blocked' }));
+    const rn = risky.get(p.t);
+    if (rn) g.push(svg('circle', { cx: x + barW / 2, cy: Math.max(4, yB - 6), r: 3.5, class: 'risk-dot' }));
     if (i % every === 0) g.push(svg('text', { x: x + barW / 2, y: H - 6, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(bucketLabel(p.t, step))));
     const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - padB, class: 'hit' });
     const show = () => {
       fill(tip, h('b', {}, bucketLabel(p.t, step, true)), h('div', {}, fmtNum(p.total), ' queries'),
         h('div', {}, h('span', { class: 'key blocked' }), fmtNum(p.blocked), ' blocked', p.total ? ' (' + (100 * p.blocked / p.total).toFixed(1) + '%)' : ''),
+        rn ? h('div', {}, h('span', { class: 'key risk' }), fmtNum(rn), ' risky ', rn === 1 ? 'answer' : 'answers') : null,
         p.total ? h('div', { class: 'muted' }, (p.ms_sum / p.total).toFixed(1), ' ms average') : null);
       tip.hidden = false;
       const left = ((padL + i * bw + bw / 2) / W) * 100;
@@ -1499,7 +1509,8 @@ function queryChart(sum) {
     h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'))),
       h('tbody', {}, pts.filter(p => p.total).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.total)), h('td', {}, fmtNum(p.blocked))))))));
   return h('div', {},
-    h('div', { class: 'legend small' }, h('span', {}, h('span', { class: 'key allowed' }), 'Allowed'), h('span', {}, h('span', { class: 'key blocked' }), 'Blocked')),
+    h('div', { class: 'legend small' }, h('span', {}, h('span', { class: 'key allowed' }), 'Allowed'), h('span', {}, h('span', { class: 'key blocked' }), 'Blocked'),
+      risky.size ? h('span', {}, h('span', { class: 'key risk' }), 'A risky domain got through') : null),
     h('div', { class: 'chart-wrap' }, chart, tip), table);
 }
 
@@ -1594,7 +1605,8 @@ async function domainDialog(name, range) {
           await api('PATCH', '/settings', { trusted_domains: cur.concat([name]) });
           ev.target.replaceWith(h('span', { class: 'small' }, 'Trusted. It won\u2019t be marked risky again.'));
         } catch (e) { toast(e.message, 'err'); }
-      } }, 'I trust this domain') : null) : null,
+      } }, 'I trust this domain') : null)
+      : r.feeds ? h('p', { class: 'muted small' }, h('span', { class: 'dot ok' }), 'Checked against the threat feeds and name checks: nothing found.') : null,
     r.caught_by && !now.blocked ? h('p', { class: 'muted small' }, 'Was last blocked by ', h('code', {}, r.caught_by.rule), ' on ', r.caught_by.list, '.') : null,
     h('div', { class: 'grid' },
       h('div', { class: 'tile' }, h('div', { class: 'label' }, RANGES[range]), h('div', { class: 'value' }, fmtNum(c.total))),
@@ -1687,16 +1699,95 @@ async function analyticsPage(main) {
   timer = setInterval(() => { if (!document.hidden && !document.querySelector('dialog[open]')) load(); }, 30000);
 }
 
+// securityCard is the Dashboard's security overview, as a security
+// product's front page shows it: a verdict for the period, the high-risk
+// domains devices got answers for (block, trust or dismiss each), and
+// how many were blocked anyway.
+let secShowDismissed = false;
+function securityCard(box, range, sec, reload) {
+  if (!sec) { box.replaceChildren(); return; }
+  const win = (RANGES[range] || range).toLowerCase();
+  if (!sec.feeds) {
+    box.replaceChildren(h('div', { class: 'card d-security' }, h('h2', {}, 'Security'),
+      h('p', { class: 'muted' }, 'Risk scoring is off, so lookups aren’t checked against malware and phishing feeds. ',
+        can('lists.manage') ? h('a', { href: '#/settings' }, 'Turn it on in Settings') : 'An admin can turn it on.')));
+    return;
+  }
+  const active = sec.through.filter(x => !x.dismissed), dismissed = sec.through.length - active.length;
+  const who = [...new Set(active.flatMap(x => (x.who || []).map(w => w.label)))];
+  const b = sec.blocked, wt = sec.watch;
+  const plural = (n, one, many) => fmtNum(n) + ' ' + (n === 1 ? one : many);
+  const agoUnix = (t) => ago(new Date(t * 1000).toISOString());
+  const meta = [];
+  if (active.length && who.length) meta.push('Reached by ' + who.slice(0, 3).join(', ') + (who.length > 3 ? ' +' + (who.length - 3) + ' more' : ''));
+  meta.push(plural(b.domains, 'threat', 'threats') + ' blocked automatically' + (b.queries ? ' (' + plural(b.queries, 'lookup', 'lookups') + ')' : ''));
+  const verdict = h('div', { class: 'verdict ' + (active.length ? 'bad' : 'good') },
+    h('div', { class: 'ic', 'aria-hidden': 'true' }, active.length ? '!' : '✓'),
+    h('div', { class: 'grow' },
+      h('h2', {}, active.length ? plural(active.length, 'risky domain', 'risky domains') + ' got through in the ' + win : 'All clear: nothing risky got through in the ' + win),
+      h('div', { class: 'muted small' }, meta.join(' · '),
+        wt.domains ? [' · ', h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range) }, plural(wt.domains, 'medium-risk domain', 'medium-risk domains'), ' worth a look')] : null)));
+  const warn = [];
+  if (sec.needs_key) warn.push(msg('warn', ['URLhaus and ThreatFox aren’t checked until a free abuse.ch key is added. ', can('lists.manage') ? h('a', { href: '#/settings' }, 'Add it in Settings') : null]));
+  if (sec.failed && sec.failed.length) warn.push(msg('warn', 'Couldn’t download ' + sec.failed.join(', ') + ', so those aren’t checked.'));
+  const act = async (fn) => { try { await fn(); reload(); } catch (e) { toast(e.message, 'err'); } };
+  const dismiss = (name, undo) => act(() => api('POST', '/analytics/dismiss', { name, undo }));
+  const row = (x) => {
+    const shown = x.who || [];
+    const actions = [];
+    if (x.dismissed) {
+      if (can('domains.allowblock')) actions.push(h('button', { type: 'button', onclick: () => dismiss(x.name, true) }, 'Restore'));
+    } else {
+      if (can('domains.allowblock') && !(x.now && x.now.blocked)) {
+        actions.push(h('button', { class: 'danger', type: 'button', title: 'Block it and its subdomains for every device', onclick: async () => {
+          if (!(await ask('Block ' + x.name + ' and its subdomains for every device?', 'Block', true))) return;
+          act(async () => { await api('POST', '/domains', { domain: x.name, action: 'block' }); await api('POST', '/analytics/dismiss', { name: x.name }); });
+        } }, 'Block'));
+      }
+      if (can('lists.manage')) {
+        actions.push(h('button', { type: 'button', title: 'A false alarm: never mark it risky again', onclick: async () => {
+          if (!(await ask('Trust ' + x.name + '? It won’t be marked risky again. Filtering doesn’t change.', 'Trust', false))) return;
+          act(async () => {
+            const cur = (await api('GET', '/settings')).effective.Analytics.TrustedDomains || [];
+            await api('PATCH', '/settings', { trusted_domains: cur.concat([x.name]) });
+          });
+        } }, 'Trust'));
+      }
+      if (can('domains.allowblock')) actions.push(h('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss', title: 'Dismiss until a device reaches it again', onclick: () => dismiss(x.name, false) }, '✕'));
+    }
+    return h('div', { class: 'att' + (x.dismissed ? ' dim' : '') },
+      h('div', {}, riskBadge(x.risk)),
+      h('div', { class: 'grow' },
+        h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(x.name, range) }, x.name),
+        x.now && x.now.blocked ? h('span', { class: 'badge ok' }, 'blocked now') : null,
+        typeLine(x.type),
+        h('div', { class: 'small' }, (x.risk.reasons || []).join(' · ')),
+        h('div', { class: 'muted small' }, plural(x.passed, 'lookup', 'lookups'), ' got through',
+          shown.length ? [' from ', shown.map((w, i) => [i ? ', ' : '', h('a', { href: '#/queries?' + new URLSearchParams({ client: w.key, search: x.name, range }) }, w.label)])] : null,
+          x.devices > shown.length && shown.length ? ' +' + (x.devices - shown.length) : '',
+          !shown.length ? ' (' + plural(x.devices, 'device', 'devices') + ')' : '',
+          ' · last ', agoUnix(x.last), x.blocked ? ' · ' + fmtNum(x.blocked) + ' blocked' : '')),
+      actions.length ? h('div', { class: 'acts' }, actions) : null);
+  };
+  const list = sec.through.filter(x => secShowDismissed || !x.dismissed);
+  box.replaceChildren(h('div', { class: 'card d-security' }, verdict, warn,
+    list.length ? h('div', { class: 'atts' }, h('div', { class: 'row spread' }, h('h3', {}, 'Needs attention'),
+      dismissed ? h('button', { class: 'link small', type: 'button', onclick: () => { secShowDismissed = !secShowDismissed; securityCard(box, range, sec, reload); } },
+        secShowDismissed ? 'Hide dismissed' : 'Show ' + dismissed + ' dismissed') : null), list.map(row))
+      : dismissed ? h('p', { class: 'small' }, h('button', { class: 'link', type: 'button', onclick: () => { secShowDismissed = true; securityCard(box, range, sec, reload); } }, 'Show ' + dismissed + ' dismissed')) : null,
+    coverage(sec.nodes)));
+}
+
 // dashboardChart is the dashboard's queries-over-time card.
-async function dashboardChart(box, range) {
+async function dashboardChart(box, range, secP) {
   range = range || '24h';
-  let sum;
-  try { sum = await api('GET', '/analytics/summary?range=' + range); } catch (_) { return; }
+  let sum, sec;
+  try { [sum, sec] = await Promise.all([api('GET', '/analytics/summary?range=' + range), secP || null]); } catch (_) { return; }
   if (!sum.counts || !sum.counts.total) { box.replaceChildren(); return; }
   box.replaceChildren(h('div', { class: 'card d-chart' },
     h('div', { class: 'row spread' }, h('h2', {}, RANGES[range]), h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range), class: 'small' }, 'Analytics')),
     h('p', { class: 'muted small' }, fmtNum(sum.counts.total), ' queries, ', fmtNum(sum.counts.blocked), ' blocked, from ', fmtNum(sum.devices), sum.devices === 1 ? ' device.' : ' devices.'),
-    queryChart(sum)));
+    queryChart(sum, { risky: new Map(((sec && sec.series) || []).map(p => [p.t, p.n])) })));
 }
 
 // ---------- traffic map ----------

@@ -39,6 +39,8 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/analytics/risky", a.authed(store.PermDashboard, a.analyticsRisky))
 	m.HandleFunc("GET /api/v1/analytics/intel", a.authed(store.PermDashboard, a.intelStatus))
 	m.HandleFunc("GET /api/v1/analytics/flow", a.authed(store.PermDashboard, a.analyticsFlow))
+	m.HandleFunc("GET /api/v1/analytics/security", a.authed(store.PermDashboard, a.analyticsSecurity))
+	m.HandleFunc("POST /api/v1/analytics/dismiss", a.authed(store.PermAllowBlock, a.riskDismiss))
 }
 
 // PeerHandler answers another node's analytics query from this node's
@@ -428,6 +430,7 @@ func (a *API) analyticsDomain(w http.ResponseWriter, r *http.Request, p *Princip
 			f = &res.Flags[0]
 		}
 		out["risk"], out["type"] = withFlag(a.Intel.Score(q.Name), f), a.Intel.TypeOf(q.Name)
+		out["feeds"] = a.Intel.Enabled()
 	}
 	out["answers"] = orEmpty(res.Answers)
 	if res.Rule != "" || res.List != "" {

@@ -234,6 +234,58 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 		t.Fatalf("query log risk = %+v", q.Risk)
 	}
 
+	// The security overview: what got through, who reached it, what was
+	// blocked anyway, and dismissing.
+	hs.Record(querylog.Entry{Time: e.now.Add(-time.Minute), Client: netip.MustParseAddr("192.168.1.12"), Name: "login-bank.example", Type: "A", Result: querylog.Blocked, Rule: "||login-bank.example^", List: "x"})
+	hs.Flush()
+	type secResp struct {
+		Feeds   bool
+		Through []reached
+		Blocked tally
+		Series  []riskPoint
+	}
+	var sec secResp
+	admin.want(200, "GET", "/api/v1/analytics/security?range=24h", nil, &sec)
+	if !sec.Feeds || len(sec.Through) != 3 || sec.Through[0].Name != "malware.example" || sec.Blocked != (tally{Domains: 1, Queries: 1}) {
+		t.Fatalf("security = %+v", sec)
+	}
+	var mal *reached
+	for i := range sec.Through {
+		if sec.Through[i].Name == "malware.example" {
+			mal = &sec.Through[i]
+		}
+	}
+	if mal == nil || mal.Passed != 2 || mal.Devices != 1 || len(mal.Who) != 1 || mal.Who[0].Key != "192.168.1.10" || mal.Last == 0 || mal.Now == nil {
+		t.Fatalf("malware.example = %+v", mal)
+	}
+	var n int64
+	for _, p := range sec.Series {
+		n += p.N
+	}
+	if n != 4 {
+		t.Fatalf("series = %+v, want 4 risky answers", sec.Series)
+	}
+	admin.want(204, "POST", "/api/v1/analytics/dismiss", map[string]any{"name": "malware.example"}, nil)
+	admin.want(200, "GET", "/api/v1/analytics/security?range=24h", nil, &sec)
+	if last := sec.Through[len(sec.Through)-1]; last.Name != "malware.example" || !last.Dismissed {
+		t.Fatalf("dismissed not last: %+v", sec.Through)
+	}
+	admin.want(204, "POST", "/api/v1/analytics/dismiss", map[string]any{"name": "malware.example", "undo": true}, nil)
+	if len(e.api.Store.State().Dismissed) != 0 {
+		t.Fatal("undo kept the dismissal")
+	}
+	// Dashboard-only viewers see the verdict but not which devices.
+	var tok struct{ Token string }
+	admin.want(201, "POST", "/api/v1/tokens", map[string]any{"name": "dash", "perms": []string{"dashboard.view"}}, &tok)
+	dash := e.client()
+	dash.token = tok.Token
+	sec = secResp{}
+	dash.want(200, "GET", "/api/v1/analytics/security?range=24h", nil, &sec)
+	if len(sec.Through) != 3 || sec.Through[0].Who != nil || sec.Through[0].Devices != 1 {
+		t.Fatalf("dashboard-only view = %+v", sec.Through)
+	}
+	dash.want(403, "POST", "/api/v1/analytics/dismiss", map[string]any{"name": "malware.example"}, nil)
+
 	// Trusting a domain clears its score; it's a lists setting.
 	admin.want(400, "PATCH", "/api/v1/settings", map[string]any{"trusted_domains": []string{"not a domain"}}, nil)
 	admin.want(200, "PATCH", "/api/v1/settings", map[string]any{"trusted_domains": []string{"Malware.Example"}}, nil)
