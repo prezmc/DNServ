@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNServ: fast, filtered DNS for homes and small offices</title>
+<meta name="description" content="Blocklists, per-device rules, analytics and two-server failover, in one container you set up from the browser.">
+<meta property="og:title" content="DNServ">
+<meta property="og:description" content="Fast, filtered DNS for homes and small offices. Blocklists, per-device rules, analytics and two-server failover, in one container.">
+<meta property="og:image" content="https://dnserv.dev/images/social-preview.png">
+<link rel="canonical" href="https://dnserv.dev/">
+<meta property="og:url" content="https://dnserv.dev/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<style>
+:root {
+  --bg: #0f0f0e; --panel: #191917; --panel-2: #1f1e1b; --text: #ecebe6; --muted: #a19c90;
+  --line: #2b2a26; --amber: #f5a524; --amber-2: #ffd27a; --red: #ef5b4c; --sage: #6cc4a1;
+  --code: #23221e; --radius: 14px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f3f1ec; --panel: #fffdf8; --panel-2: #f8f5ee; --text: #1d1b17; --muted: #6b665c;
+    --line: #e3ded3; --amber: #a35f00; --amber-2: #c27a12; --red: #c8402f; --sage: #3f8f6f; --code: #efebe2; color-scheme: light; }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+a { color: var(--amber); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 20px; }
+header.top { position: sticky; top: 0; z-index: 5; backdrop-filter: blur(10px); background: color-mix(in srgb, var(--bg) 82%, transparent); border-bottom: 1px solid var(--line); }
+header.top .wrap { display: flex; align-items: center; gap: 12px; height: 60px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 1.15rem; color: var(--text); }
+.brand img { width: 28px; height: 28px; }
+.brand b { background: linear-gradient(90deg, #f5a524, #ffd27a); -webkit-background-clip: text; background-clip: text; color: transparent; }
+header nav { margin-left: auto; display: flex; gap: 22px; font-size: .95rem; }
+header nav a { color: var(--muted); }
+header nav a:hover { color: var(--text); text-decoration: none; }
+@media (max-width: 640px) { header nav a:not(.gh) { display: none; } }
+
+.hero { position: relative; padding: 72px 0 40px; text-align: center; overflow: hidden; }
+.hero::before { content: ""; position: absolute; inset: -40% -10% auto; height: 520px; background: radial-gradient(closest-side, rgb(245 165 36 / .16), transparent), radial-gradient(closest-side at 70% 60%, rgb(108 196 161 / .10), transparent); pointer-events: none; }
+.hero img.logo { width: 88px; height: 88px; position: relative; }
+.hero h1 { position: relative; font-size: clamp(2.2rem, 5vw, 3.6rem); line-height: 1.1; margin: 18px 0 14px; letter-spacing: -.02em; }
+.hero h1 span { background: linear-gradient(90deg, #f5a524, #e06c2f); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.hero p.lead { position: relative; font-size: 1.2rem; color: var(--muted); max-width: 680px; margin: 0 auto 28px; }
+.cta { position: relative; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 10px; font-weight: 600; border: 1px solid var(--line); color: var(--text); background: var(--panel); }
+.btn:hover { text-decoration: none; border-color: var(--amber); }
+.btn.primary { background: #f5a524; color: #1a1200; border-color: transparent; }
+.btn.primary:hover { background: #ffb43f; }
+.shot { position: relative; margin: 48px auto 0; max-width: 1040px; border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden; box-shadow: 0 30px 80px rgb(0 0 0 / .35); }
+.shot img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top; }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; margin: 56px 0 0; }
+.stats div { background: var(--panel); padding: 22px; text-align: center; }
+.stats b { display: block; font-size: 1.8rem; color: var(--amber); }
+.stats span { color: var(--muted); font-size: .9rem; }
+@media (max-width: 720px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+
+section { padding: 72px 0 0; }
+section h2 { font-size: 2rem; margin: 0 0 8px; letter-spacing: -.01em; }
+section p.sub { color: var(--muted); margin: 0 0 32px; max-width: 720px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+.card h3 { margin: 10px 0 6px; font-size: 1.05rem; }
+.card p { margin: 0; color: var(--muted); font-size: .95rem; }
+.ico { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: rgb(245 165 36 / .12); color: var(--amber); }
+.ico.red { background: rgb(239 91 76 / .12); color: var(--red); }
+.ico.sage { background: rgb(108 196 161 / .12); color: var(--sage); }
+.ico svg { width: 20px; height: 20px; }
+
+.gallery { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.gallery figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.gallery img { display: block; width: 100%; aspect-ratio: 16 / 10; object-fit: cover; object-position: top left; border-bottom: 1px solid var(--line); }
+.gallery figcaption { padding: 12px 16px; font-size: .95rem; color: var(--muted); }
+.gallery figcaption b { color: var(--text); }
+@media (max-width: 720px) { .gallery { grid-template-columns: 1fr; } }
+
+.steps { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+@media (max-width: 860px) { .steps { grid-template-columns: 1fr; } }
+pre { position: relative; margin: 0; background: var(--code); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; overflow-x: auto; font: 14px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre .c { color: var(--muted); }
+.copy { position: absolute; top: 10px; right: 10px; font: 600 12px system-ui, sans-serif; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; }
+.copy:hover { color: var(--text); }
+ol.how { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+ol.how li { counter-increment: s; position: relative; padding: 0 0 18px 44px; }
+ol.how li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%; background: rgb(245 165 36 / .14); color: var(--amber); font-weight: 700; display: grid; place-items: center; font-size: .9rem; }
+ol.how b { display: block; }
+ol.how span { color: var(--muted); font-size: .95rem; }
+
+.docs { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.docs a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; color: var(--text); }
+.docs a:hover { border-color: var(--amber); text-decoration: none; }
+.docs a span { display: block; color: var(--muted); font-size: .88rem; }
+footer { margin-top: 80px; border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: .9rem; }
+footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; }
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="brand" href="#"><img src="logo.svg" alt=""><span>DN<b>Serv</b></span></a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#screens">Screenshots</a>
+    <a href="#start">Get started</a>
+    <a href="#docs">Docs</a>
+    <a class="gh" href="https://github.com/prezmc/DNServ">GitHub</a>
+  </nav>
+</div></header>
+
+<main>
+<div class="hero"><div class="wrap">
+  <img class="logo" src="logo.svg" alt="DNServ logo">
+  <h1>Fast, filtered DNS<br>for <span>homes and small offices</span></h1>
+  <p class="lead">Blocklists, per-device rules, analytics and two-server failover, in one container you set up from the browser.</p>
+  <div class="cta">
+    <a class="btn primary" href="#start">Get started</a>
+    <a class="btn" href="https://github.com/prezmc/DNServ">View on GitHub</a>
+  </div>
+  <div class="shot"><img src="images/dashboard.png" alt="The DNServ dashboard: queries over time, blocked share, top domains and servers"></div>
+  <div class="stats">
+    <div><b>51,000</b><span>queries a second on 4 cores</span></div>
+    <div><b>0.14 ms</b><span>median answer</span></div>
+    <div><b>~2 s</b><span>to fail over to the other server</span></div>
+    <div><b>0</b><span>config files to write</span></div>
+  </div>
+</div></div>
+
+<section id="features"><div class="wrap">
+  <h2>Everything a home network needs</h2>
+  <p class="sub">The filtering you'd expect from Pi-hole or AdGuard Home, built for two servers from the start, with nothing to set up outside the browser.</p>
+  <div class="grid">
+    <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9z"/></svg></div><h3>Fast</h3><p>A two-layer cache, prefetching of popular names, and old answers kept ready if the internet drops.</p></div>
+    <div class="card"><div class="ico red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg></div><h3>Blocks ads, trackers and malware</h3><p>Any hosts file, domain list or AdGuard-style list, with wildcards and regex, plus your own allow and block rules.</p></div>
+    <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div><h3>Rules per device</h3><p>Groups like Kids, with their own blocked services, safe search, and schedules for bedtime or homework.</p></div>
+    <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 19V5M4 19h16M8 15v-4M12 15V8M16 15v-6"/></svg></div><h3>See what's going on</h3><p>Query log, analytics, response times and risk scores from public threat feeds, kept for 30 days.</p></div>
+    <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="8" height="16" rx="2"/><rect x="13" y="4" width="8" height="16" rx="2"/><path d="M7 8h0M17 8h0"/></svg></div><h3>Keeps working when a server fails</h3><p>Run two or more nodes. Settings stay in sync, and any node can take over as leader.</p></div>
+    <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div><h3>Private</h3><p>Encrypted DNS to Cloudflare or Quad9, or its own recursive resolver (Unbound), optionally through a VPN.</p></div>
+    <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Safe to run</h3><p>Two-factor sign-in for every account, admin, power-user and viewer roles, an audit log, encrypted backups, and HTTPS.</p></div>
+    <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></div><h3>No config files</h3><p>Pull the image, start it, finish setup in the browser. Bring your AdGuard Home setup across in one step.</p></div>
+  </div>
+</div></section>
+
+<section id="screens"><div class="wrap">
+  <h2>A dashboard you'll actually open</h2>
+  <p class="sub">Light and dark themes, made for a phone as much as a desktop.</p>
+  <div class="gallery">
+    <figure><img src="images/query-log.png" alt="Query log" loading="lazy"><figcaption><b>Query log</b> searches every server's history.</figcaption></figure>
+    <figure><img src="images/analytics.png" alt="Analytics" loading="lazy"><figcaption><b>Analytics</b> shows top domains, what blocked them, and busy devices.</figcaption></figure>
+    <figure><img src="images/performance.png" alt="Performance" loading="lazy"><figcaption><b>Performance</b> tracks response times, upstream health and anything unusual.</figcaption></figure>
+    <figure><img src="images/cluster.png" alt="Cluster" loading="lazy"><figcaption><b>Cluster</b> shows your servers, with leader controls and join codes.</figcaption></figure>
+    <figure><img src="images/group.png" alt="Group settings with schedules" loading="lazy"><figcaption><b>Groups</b> get blocked services, safe search and schedules.</figcaption></figure>
+    <figure><img src="images/dashboard-light.png" alt="Light theme" loading="lazy"><figcaption><b>Light theme</b>, following your system setting.</figcaption></figure>
+  </div>
+</div></section>
+
+<section id="start"><div class="wrap">
+  <h2>Up and running in five minutes</h2>
+  <p class="sub">Any Linux machine with Docker: a mini PC, a NAS, a Raspberry Pi 4 or a VM.</p>
+  <div class="steps">
+    <pre id="qs"><button class="copy" type="button" data-copy="qs">Copy</button>docker run -d --name dnserv --restart unless-stopped \
+  -p 53:53/udp -p 53:53/tcp -p 853:853 \
+  -p 8080:8080 -p 8081:8081 \
+  -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
+
+<span class="c"># the setup code is in the log</span>
+docker logs dnserv 2>&amp;1 | grep setup_code</pre>
+    <ol class="how">
+      <li><b>Open http://&lt;server&gt;:8080</b><span>Enter the setup code from the log.</span></li>
+      <li><b>Create your account</b><span>Scan the QR code with any authenticator app.</span></li>
+      <li><b>Pick your blocklists and how lookups leave your network</b><span>Encrypted to a provider, or fully recursive.</span></li>
+      <li><b>Point your router's DHCP DNS at the server</b><span>Devices switch over as they reconnect.</span></li>
+      <li><b>Add a second server any time</b><span>Make a join code on the Cluster page and paste it into the new one.</span></li>
+    </ol>
+  </div>
+</div></section>
+
+<section id="docs"><div class="wrap">
+  <h2>Documentation</h2>
+  <p class="sub">Everything beyond the basics, on GitHub.</p>
+  <div class="docs">
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/features.md">Features<span>Everything DNServ does</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/install.md">Installing<span>Ports, hosts and settings</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/deploy-two-servers.md">Two-server guide<span>Deploy and failure scenarios</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/clustering.md">Clustering<span>Nodes, witnesses, recovery</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/filtering.md">Filtering<span>Rules, services, safe search</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/https.md">Dashboard HTTPS<span>Self-signed, your own, or NPM</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/backups.md">Backups<span>Encrypted, scheduled, restorable</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/adguard-import.md">From AdGuard Home<span>What the importer brings</span></a>
+  </div>
+</div></section>
+</main>
+
+<footer><div class="wrap">
+  <span>DNServ is open source under the Apache License 2.0.</span>
+  <span><a href="https://github.com/prezmc/DNServ">GitHub</a> · <a href="https://github.com/prezmc/DNServ/issues">Report an issue</a></span>
+</div></footer>
+
+<script>
+document.querySelectorAll('.copy').forEach(b => b.addEventListener('click', async () => {
+  const pre = document.getElementById(b.dataset.copy);
+  const text = [...pre.childNodes].filter(n => n !== b).map(n => n.textContent).join('');
+  try { await navigator.clipboard.writeText(text.trim()); b.textContent = 'Copied'; } catch (_) { b.textContent = 'Select and copy'; }
+  setTimeout(() => (b.textContent = 'Copy'), 1500);
+}));
+</script>
+</body>
+</html>

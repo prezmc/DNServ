@@ -1,0 +1,37 @@
+# Publishes the project website (site/) to GitHub Pages. Turn it on once
+# under Settings > Pages > Source: GitHub Actions. The custom domain
+# (dnserv.dev) is set on that same page.
+name: Website
+
+on:
+  push:
+    branches: [main]
+    paths: [site/**, docs/images/**, internal/web/static/logo.svg, .github/workflows/pages.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assemble the site
+        run: |
+          mkdir -p _site/images
+          cp site/* _site/
+          cp docs/images/*.png _site/images/
+          cp internal/web/static/logo.svg internal/web/static/favicon-32.png internal/web/static/apple-touch-icon.png _site/
+      - uses: actions/upload-pages-artifact@v5
+      - id: deploy
+        uses: actions/deploy-pages@v5

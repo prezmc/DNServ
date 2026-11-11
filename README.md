@@ -6,7 +6,8 @@
 
 <p align="center">
   Fast, filtered DNS for homes and small offices.<br>
-  Blocklists, per-device rules, analytics and two-server failover, in one container you set up from the browser.
+  Blocklists, per-device rules, analytics and two-server failover, in one container you set up from the browser.<br>
+  <a href="https://dnserv.dev"><b>dnserv.dev</b></a>
 </p>
 
 <p align="center">

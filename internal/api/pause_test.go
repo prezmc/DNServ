@@ -103,7 +103,7 @@ func TestPauseOneNode(t *testing.T) {
 	admin, _ := e.setupAdmin()
 	st := e.api.Store.State().Clone()
 	st.Cluster.ID = "c1"
-	for _, n := range []*store.Node{{ID: "n1", Name: "container1"}, {ID: "n2", Name: "container2"}, {ID: "w", Name: "witness", Witness: true}} {
+	for _, n := range []*store.Node{{ID: "n1", Name: "node-a"}, {ID: "n2", Name: "node-b"}, {ID: "w", Name: "witness", Witness: true}} {
 		st.Cluster.Nodes[n.ID] = n
 	}
 	if err := e.api.Store.Replace(st); err != nil {
@@ -112,36 +112,36 @@ func TestPauseOneNode(t *testing.T) {
 
 	var v pauseView
 	admin.want(200, "GET", "/api/v1/pause", nil, &v)
-	if len(v.Nodes) != 2 || v.Nodes[0].Name != "container1" {
+	if len(v.Nodes) != 2 || v.Nodes[0].Name != "node-a" {
 		t.Fatalf("nodes offered: %+v", v.Nodes)
 	}
 	admin.want(400, "POST", "/api/v1/pause", map[string]any{"minutes": 5, "node": "w"}, nil)
 	admin.want(400, "POST", "/api/v1/pause", map[string]any{"minutes": 5, "node": "nope"}, nil)
 	admin.want(200, "POST", "/api/v1/pause", map[string]any{"minutes": 5, "node": "n2"}, &v)
-	if len(v.Pauses) != 1 || v.Pauses[0].Node != "n2" || v.Pauses[0].NodeName != "container2" {
+	if len(v.Pauses) != 1 || v.Pauses[0].Node != "n2" || v.Pauses[0].NodeName != "node-b" {
 		t.Fatalf("one-node pause: %+v", v.Pauses)
 	}
 	now := e.now
 	if _, ok := e.api.Store.State().PauseFor("n1", now); ok {
-		t.Fatal("container1 paused too")
+		t.Fatal("node-a paused too")
 	}
 	if p, ok := e.api.Store.State().PauseFor("n2", now); !ok || !p.Until.Equal(now.Add(5*time.Minute)) {
-		t.Fatal("container2 not paused")
+		t.Fatal("node-b not paused")
 	}
 
-	// An every-node pause covers both; the longer one wins on container2.
+	// An every-node pause covers both; the longer one wins on node-b.
 	admin.want(200, "POST", "/api/v1/pause", map[string]any{"minutes": 0}, &v)
 	if len(v.Pauses) != 2 || v.Pauses[0].Node != store.AllNodes {
 		t.Fatalf("pauses: %+v", v.Pauses)
 	}
 	if p, ok := e.api.Store.State().PauseFor("n2", now); !ok || !p.Until.IsZero() {
-		t.Fatal("container2 should be off until turned back on")
+		t.Fatal("node-b should be off until turned back on")
 	}
 
 	// Resuming one node leaves the every-node pause.
 	admin.want(200, "DELETE", "/api/v1/pause?node=n2", nil, &v)
 	if len(v.Pauses) != 1 || v.Pauses[0].Node != store.AllNodes {
-		t.Fatalf("after resuming container2: %+v", v.Pauses)
+		t.Fatalf("after resuming node-b: %+v", v.Pauses)
 	}
 	admin.want(200, "POST", "/api/v1/pause", map[string]any{"minutes": 1, "node": "n1"}, nil)
 	admin.want(200, "DELETE", "/api/v1/pause", nil, &v)
@@ -155,8 +155,8 @@ func TestPauseOneNode(t *testing.T) {
 		}
 	}
 	want := []string{
-		"paused filtering on container2 for 5 minutes", "paused filtering on all servers until turned back on",
-		"turned filtering back on for container2", "paused filtering on container1 for 1 minute", "turned filtering back on for all servers",
+		"paused filtering on node-b for 5 minutes", "paused filtering on all servers until turned back on",
+		"turned filtering back on for node-b", "paused filtering on node-a for 1 minute", "turned filtering back on for all servers",
 	}
 	if strings.Join(audited, "|") != strings.Join(want, "|") {
 		t.Fatalf("audit: %q", audited)
