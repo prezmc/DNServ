@@ -1009,6 +1009,7 @@ func buildResolver(ctx context.Context, cfg config.Config, log *slog.Logger, reu
 		return fail(err)
 	}
 	observe(local)
+	local.SetLabel("Recursive (Unbound)")
 	set.groups = append(set.groups, local)
 	if u.Mode == "recursive" {
 		set.resolver = local

@@ -103,6 +103,16 @@ Everything DNServ does today, in more detail than the README.
   updating, response times are rebuilt from the existing query history.
   Admins can clear the performance stats (Performance page) or all query
   history (Settings → Query history) on every server.
+- **Traffic map.** A Dashboard card draws every lookup as a flow: the
+  busiest devices, the DNS server that answered, how it was answered (cache,
+  each upstream server, blocked, local names) and the services the lookups
+  were for, grouped by company or by type (AdGuard's companies database,
+  else the site's own domain). Switches hide internet, internal or blocked
+  lookups; hovering shows counts and shares; clicking a device, an answer
+  or a service opens the matching Query log. Each server works out its part
+  from its own history when the card is opened, so DNS answers never wait
+  for it. History records which upstream server answered each lookup
+  (older history shows as "Upstream").
 - **Risk scores and domain types.** Analytics marks risky domains (0-100)
   from public threat feeds (URLhaus and ThreatFox from abuse.ch, Phishing
   Army, HaGeZi's Threat Intelligence Feeds) plus a few signs in the name

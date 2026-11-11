@@ -79,17 +79,17 @@ func (s *Server) safeSearchOn(g *policy.Group) bool {
 
 // safeSearchAnswer answers req (for a search site) with a CNAME to target
 // followed by target's own answer, from the cache or upstream.
-func (s *Server) safeSearchAnswer(req *dns.Msg, target string) (*dns.Msg, Outcome) {
+func (s *Server) safeSearchAnswer(req *dns.Msg, target string) (*dns.Msg, Outcome, string) {
 	q := req.Question[0]
 	treq := req.Copy()
 	treq.Question[0].Name = dns.Fqdn(target)
-	m, out := s.answer(treq, target)
+	m, out, from := s.answer(treq, target)
 	r := m.Copy()
 	r.Id = req.Id
 	r.Question = req.Question
 	cname := &dns.CNAME{Hdr: dns.RR_Header{Name: q.Name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300}, Target: dns.Fqdn(target)}
 	r.Answer = append([]dns.RR{cname}, r.Answer...)
-	return r, out
+	return r, out, from
 }
 
 // safeSearchFor returns the safe-search target for name when safe search

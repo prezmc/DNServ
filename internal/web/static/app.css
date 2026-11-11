@@ -178,6 +178,7 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dash .d-tiles { order: 1; }
 .dash .d-wait { order: 2; }
 .dash .d-chart { order: 3; }
+.dash .d-flow { order: 4; }
 .dash .d-health { order: 4; }
 .dash .d-servers { order: 5; }
 .dash .d-domains { order: 6; }
@@ -415,3 +416,30 @@ td a:hover { text-decoration: underline; }
 .combo-list li.on, .combo-list li:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .combo-list li[aria-selected="true"] { font-weight: 600; }
 .combo-list li.empty { cursor: default; }
+
+/* traffic map */
+.flow-wrap { position: relative; }
+.flow { display: block; }
+.flow .band { fill: none; stroke-opacity: .32; transition: stroke-opacity .15s; }
+.flow .band:hover { stroke-opacity: .55; }
+.flow .band.on { stroke-opacity: .62; }
+.flow .band.off { stroke-opacity: .08; }
+.flow text { fill: var(--text); font-size: 12.5px; }
+.flow text.n { fill: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.flow .flow-node { cursor: pointer; outline: none; }
+.flow .flow-node:hover text:not(.n), .flow .flow-node:focus-visible text:not(.n), .flow .flow-node.sel text:not(.n) { font-weight: 700; }
+.flow-tip {
+  position: absolute; z-index: 2; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  padding: .45rem .65rem; font-size: .85rem; box-shadow: 0 6px 18px rgb(0 0 0 / .18); max-width: 320px;
+}
+.flow-kinds { gap: .4rem; margin: .1rem 0 .6rem; flex-wrap: wrap; }
+.flow-kinds .chip { display: inline-flex; align-items: center; gap: .3rem; padding: .2rem .65rem .2rem .45rem; border: 1px solid var(--line); border-radius: 99px; font-size: .85rem; cursor: pointer; }
+.flow-kinds .chip input { margin: 0; }
+.flow-kinds .chip .dot { margin-right: 0; }
+.flow-k-internet { background: var(--s-allowed); }
+.flow-k-internal { background: var(--s-4); }
+.flow-k-blocked { background: var(--s-blocked); }
+.flow-tip .mono { font-size: .78rem; }
+.flow-detail:not(:empty) { border-top: 1px solid var(--line); margin-top: .6rem; padding-top: .5rem; }
+.flow-acts { gap: .35rem .8rem; flex-wrap: wrap; }
+.d-flow:fullscreen { overflow: auto; padding: 1.5rem; background: var(--panel); }

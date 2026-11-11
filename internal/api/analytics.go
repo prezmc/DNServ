@@ -38,6 +38,7 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/v1/abusech", a.authed(store.PermLists, a.abuseCHSetKey))
 	m.HandleFunc("GET /api/v1/analytics/risky", a.authed(store.PermDashboard, a.analyticsRisky))
 	m.HandleFunc("GET /api/v1/analytics/intel", a.authed(store.PermDashboard, a.intelStatus))
+	m.HandleFunc("GET /api/v1/analytics/flow", a.authed(store.PermDashboard, a.analyticsFlow))
 }
 
 // PeerHandler answers another node's analytics query from this node's

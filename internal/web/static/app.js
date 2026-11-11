@@ -766,6 +766,7 @@ async function dashboard(main) {
   const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
   const devBox = h('div');
   const chartBox = h('div');
+  const flowBox = h('div');
   const extraBox = h('div');
   const ver = h('p', { class: 'muted small d-ver' });
   // The period applies to the tiles, chart and top lists, like the time
@@ -781,7 +782,7 @@ async function dashboard(main) {
         shownHash = location.hash;
         route();
       } }, k))) : null);
-  fill(main, head, h('div', { class: 'dash' }, pauseBox, body, chartBox, extraBox, devBox, checkDomainCard(), ver));
+  fill(main, head, h('div', { class: 'dash' }, pauseBox, body, chartBox, flowBox, extraBox, devBox, checkDomainCard(), ver));
   const pause = pauseControl(pauseBtn, pauseBox, () => load());
 
   // The tiles and upstream counts come from the saved query history (the
@@ -883,7 +884,7 @@ async function dashboard(main) {
       deviceTable(seen.slice(0, 5), { compact: true }),
       seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null));
   };
-  const extras = () => (can('dashboard.view') ? dashboardExtras(extraBox, range) : null);
+  const extras = () => (can('dashboard.view') ? Promise.all([dashboardExtras(extraBox, range), dashboardFlow(flowBox, range)]) : null);
   await Promise.all([load(), loadDevices(), dashboardChart(chartBox, range), extras()]);
   let tick = 0;
   timer = setInterval(() => {
@@ -1336,7 +1337,7 @@ async function queries(main) {
         ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name]),
         (e.ips || []).length || (e.cnames || []).length ? h('div', { class: 'muted small mono', title: (e.cnames || []).concat(e.ips || []).join('\n') },
           (e.cnames || []).length ? '\u2192 ' + e.cnames[e.cnames.length - 1] + ' ' : '', (e.ips || []).slice(0, 2).join(', '), (e.ips || []).length > 2 ? ' +' + ((e.ips.length) - 2) : '') : null),
-      h('td', {}, h('span', { class: 'badge ' + kind, title: why || null }, label, e.allowed ? ' · allowed' : ''),
+      h('td', {}, h('span', { class: 'badge ' + kind, title: why || (e.upstream ? 'Answered by ' + upstreamLabel(e.upstream) : null) }, label, e.allowed ? ' · allowed' : ''),
         why ? h('div', { class: 'muted small' }, why) : null),
       can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
         const action = blocked ? 'allow' : 'block';
@@ -1696,6 +1697,168 @@ async function dashboardChart(box, range) {
     h('div', { class: 'row spread' }, h('h2', {}, RANGES[range]), h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range), class: 'small' }, 'Analytics')),
     h('p', { class: 'muted small' }, fmtNum(sum.counts.total), ' queries, ', fmtNum(sum.counts.blocked), ' blocked, from ', fmtNum(sum.devices), sum.devices === 1 ? ' device.' : ' devices.'),
     queryChart(sum)));
+}
+
+// ---------- traffic map ----------
+
+// FLOW_KINDS are the kinds of lookup the traffic map can show or hide.
+const FLOW_KINDS = [['internet', 'Internet', 'Sites outside your network, answered from the cache or upstream'], ['internal', 'Internal', 'Local names and reverse lookups of your own addresses'], ['blocked', 'Blocked', 'Blocked lookups']];
+
+// flowColor is a band's color: by how it was answered once it reaches a
+// server, by kind of lookup before that.
+function flowColor(kind) {
+  return { cache: 'var(--s-3)', upstream: 'var(--s-allowed)', blocked: 'var(--s-blocked)', local: 'var(--s-4)', internal: 'var(--s-4)', internet: 'var(--muted)', failed: 'var(--muted)' }[kind] || 'var(--muted)';
+}
+
+// dashboardFlow draws the traffic map: devices → DNS servers → how each
+// lookup was answered → the services it was for, as bands sized by the
+// number of lookups. Kinds of lookup can be hidden; clicking a box
+// highlights its bands and offers the matching Query log.
+async function dashboardFlow(box, range) {
+  range = range || '24h';
+  const st = box.flowState || (box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '' });
+  let data;
+  try { data = await api('GET', '/analytics/flow?range=' + range + '&group=' + st.group); } catch (_) { box.replaceChildren(); return; }
+  if (!data.total) { box.replaceChildren(); return; }
+  const rq = range === '24h' ? '' : 'range=' + range;
+  const area = h('div', { class: 'flow-area' });
+  const tip = h('div', { class: 'flow-tip', hidden: true });
+  const wrap = h('div', { class: 'flow-wrap' }, h('div', { class: 'scroll' }, area), tip);
+  // showTip places the hover card next to the pointer, inside the map.
+  const showTip = (e, kids) => {
+    fill(tip, kids);
+    tip.hidden = false;
+    const r = wrap.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    tip.style.left = Math.max(4, Math.min(x + 14, r.width - tip.offsetWidth - 4)) + 'px';
+    tip.style.top = Math.max(4, Math.min(y + 14, r.height - tip.offsetHeight - 4)) + 'px';
+  };
+  const hideTip = () => { tip.hidden = true; };
+  const detail = h('div', { class: 'flow-detail' });
+  const kindBoxes = FLOW_KINDS.map(([k, label, tip]) => h('label', { class: 'chip', title: tip },
+    h('input', { type: 'checkbox', checked: st.kinds[k], onchange: (e) => { st.kinds[k] = e.target.checked; draw(); } }),
+    h('span', { class: 'dot flow-k-' + k }), label));
+  const groupSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Group services by' }, [['company', 'By company'], ['type', 'By type']].map(([k, label]) =>
+    h('button', { type: 'button', 'aria-pressed': String(st.group === k), onclick: () => { if (st.group !== k) { st.group = k; st.sel = ''; dashboardFlow(box, range); } } }, label)));
+  const card = h('div', { class: 'card d-flow' },
+    h('div', { class: 'row spread' }, h('h2', {}, 'Traffic map'),
+      h('div', { class: 'row' }, groupSeg, h('button', { type: 'button', class: 'small', title: 'Full screen', onclick: () => {
+        if (document.fullscreenElement) document.exitFullscreen(); else if (card.requestFullscreen) card.requestFullscreen();
+      } }, 'Full screen'))),
+    h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device, an answer or a service to follow it.' : 'Click an answer or a service to follow it.'),
+    h('div', { class: 'row flow-kinds' }, kindBoxes),
+    wrap, detail);
+  box.replaceChildren(card);
+
+  const byId = Object.fromEntries(data.nodes.map(n => [n.id, n]));
+  function draw() {
+    const links = data.links.filter(l => st.kinds[l.kind]);
+    const val = {};
+    for (const l of links) {
+      val[l.s] = val[l.s] || { in: 0, out: 0 }; val[l.t] = val[l.t] || { in: 0, out: 0 };
+      val[l.s].out += l.n; val[l.t].in += l.n;
+    }
+    const nodes = data.nodes.filter(n => val[n.id]).map(n => ({ ...n, v: Math.max(val[n.id].in, val[n.id].out) }));
+    if (!nodes.length) { fill(area, h('p', { class: 'muted' }, 'Nothing to show. Turn on a kind of lookup above.')); fill(detail); return; }
+    const cols = [0, 1, 2, 3].map(c => nodes.filter(n => n.col === c));
+    const full = document.fullscreenElement === card;
+    const W = Math.max(680, area.clientWidth || card.clientWidth - 40);
+    const most = Math.max(...cols.map(c => c.length));
+    const H = full ? Math.max(360, window.innerHeight - 260) : Math.max(300, Math.min(620, most * 34));
+    const nw = 10, gap = 8, left = Math.min(170, W * 0.2), right = Math.min(190, W * 0.22);
+    const X = [left, left + (W - left - right - nw) * 0.3, left + (W - left - right - nw) * 0.64, W - right - nw];
+    const k = Math.min(...cols.filter(c => c.length).map(c => (H - gap * (c.length - 1)) / c.reduce((a, n) => a + n.v, 0)));
+    const pos = {};
+    cols.forEach((c, i) => {
+      const used = c.reduce((a, n) => a + Math.max(2, n.v * k), 0) + gap * (c.length - 1);
+      let y = (H - used) / 2;
+      for (const n of c) { pos[n.id] = { x: X[i], y, h: Math.max(2, n.v * k), out: 0, in: 0, n }; y += pos[n.id].h + gap; }
+    });
+    // Bands leave a box in the order of where they arrive, so they cross
+    // as little as possible.
+    const ordered = [...links].sort((a, b) => (pos[a.t].y - pos[b.t].y) || (pos[a.s].y - pos[b.s].y));
+    const kindLabel = { internet: 'internet', internal: 'internal', blocked: 'blocked' };
+    const total = links.filter(l => pos[l.s] && pos[l.s].n.col === 0).reduce((a, l) => a + l.n, 0) || 1;
+    // nodeTip: a box's lookups, share and split by kind (and, for a
+    // service, its busiest sites).
+    const nodeTip = (n) => {
+      const side = n.col === 0 ? links.filter(l => l.s === n.id) : links.filter(l => l.t === n.id);
+      const kinds = {};
+      for (const l of side) kinds[l.kind] = (kinds[l.kind] || 0) + l.n;
+      return [h('b', {}, n.label), h('div', {}, fmtNum(n.v), ' lookups · ', fmtPct(n.v / total), ' of all'),
+        Object.keys(kinds).length > 1 ? h('div', { class: 'muted' }, FLOW_KINDS.filter(([k]) => kinds[k]).map(([k, label]) => label + ' ' + fmtPct(kinds[k] / n.v)).join(' · ')) : null,
+        n.col === 3 && n.domains && n.domains.length ? h('div', { class: 'muted mono' }, n.domains.slice(0, 3).join(', ')) : null,
+        h('div', { class: 'muted small' }, 'Click to follow')];
+    };
+    const sel = st.sel && pos[st.sel] ? st.sel : '';
+    const touches = (l) => l.s === sel || l.t === sel;
+    const bands = ordered.map(l => {
+      const s = pos[l.s], t = pos[l.t], w = l.n * k;
+      const y0 = s.y + s.out + w / 2; s.out += w;
+      return { l, s, t, w, y0 };
+    });
+    [...bands].sort((a, b) => (a.s.y - b.s.y) || (a.y0 - b.y0)).forEach(b => { b.y1 = b.t.y + b.t.in + b.w / 2; b.t.in += b.w; });
+    const g = svg('svg', { width: W, height: H + 4, viewBox: '0 -2 ' + W + ' ' + (H + 4), class: 'flow', role: 'img', 'aria-label': 'Traffic map' });
+    for (const b of bands) {
+      const x0 = b.s.x + nw, x1 = b.t.x, m = (x0 + x1) / 2;
+      const color = b.s.n.col === 0 ? flowColor(b.l.kind) : flowColor(b.s.n.col === 2 ? b.s.n.kind : b.t.n.kind);
+      const p = svg('path', { d: `M${x0},${b.y0}C${m},${b.y0} ${m},${b.y1} ${x1},${b.y1}`, stroke: color, 'stroke-width': Math.max(1, b.w), class: 'band' + (sel ? (touches(b.l) ? ' on' : ' off') : '') });
+      p.addEventListener('mousemove', (e) => showTip(e, [h('b', {}, b.s.n.label, ' → ', b.t.n.label), h('div', {}, fmtNum(b.l.n), ' ', kindLabel[b.l.kind] || '', ' lookups · ', fmtPct(b.l.n / total), ' of all')]));
+      p.addEventListener('mouseleave', hideTip);
+      g.append(p);
+    }
+    for (const id in pos) {
+      const p = pos[id], n = p.n, leftSide = n.col === 0;
+      const label = n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label;
+      const tx = leftSide ? p.x - 7 : p.x + nw + 7;
+      const node = svg('g', { class: 'flow-node' + (sel === id ? ' sel' : ''), tabindex: 0, role: 'button', 'aria-label': n.label + ', ' + fmtNum(n.v) + ' lookups' },
+        svg('rect', { x: p.x, y: p.y, width: nw, height: p.h, rx: 3, fill: n.col === 1 ? 'var(--text)' : n.col === 0 ? 'var(--muted)' : n.kind === 'service' ? 'var(--s-allowed)' : flowColor(n.kind) }),
+        svg('rect', { x: leftSide ? p.x - left + 4 : p.x, y: p.y - 2, width: left - 4 + nw, height: p.h + 4, fill: 'transparent' }),
+        svg('text', { x: tx, y: p.y + p.h / 2 + (p.h > 26 ? -2 : 4), 'text-anchor': leftSide ? 'end' : 'start' }, label),
+        p.h > 26 ? svg('text', { x: tx, y: p.y + p.h / 2 + 13, 'text-anchor': leftSide ? 'end' : 'start', class: 'n' }, fmtNum(n.v)) : null);
+      node.addEventListener('mousemove', (e) => showTip(e, nodeTip(n)));
+      node.addEventListener('mouseleave', hideTip);
+      const pick = () => { st.sel = st.sel === id ? '' : id; hideTip(); draw(); };
+      node.addEventListener('click', pick);
+      node.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      g.append(node);
+    }
+    fill(area, g);
+    showDetail(sel && pos[sel] ? pos[sel].n : null, links);
+  }
+
+  // showDetail says what a picked box is and links to its queries.
+  function showDetail(n, links) {
+    if (!n) { fill(detail); return; }
+    const q = (params) => '#/queries?' + new URLSearchParams({ ...params, ...(rq ? { range } : {}) }).toString();
+    const ql = can('querylog.view');
+    const share = fmtPct(n.v / links.filter(l => byId[l.s] && byId[l.s].col === 0).reduce((a, l) => a + l.n, 0));
+    const kinds = {};
+    for (const l of links) if (n.col === 0 ? l.s === n.id : l.t === n.id) kinds[l.kind] = (kinds[l.kind] || 0) + l.n;
+    const split = FLOW_KINDS.filter(([k]) => kinds[k]).map(([k, label]) => fmtNum(kinds[k]) + ' ' + label.toLowerCase()).join(', ');
+    const head = h('p', {}, h('b', {}, n.label), ' · ', fmtNum(n.v), ' lookups (', share, ' of all)', Object.keys(kinds).length > 1 ? ': ' + split : '');
+    const acts = [];
+    const result = { cache: 'cached', blocked: 'blocked', local: 'local', failed: 'failed', upstream: 'answered' }[n.kind];
+    if (n.col === 0 && n.device && ql) acts.push(h('a', { href: q({ client: n.device }) }, 'Query log for this device'));
+    if (n.col === 2 && result && ql) acts.push(h('a', { href: q({ result }) }, 'Query log: ' + (RESULTS[result] || [n.label])[0].toLowerCase()));
+    if (n.col === 2 && n.kind === 'upstream') acts.push(h('a', { href: '#/performance' + (rq ? '?' + rq : '') }, 'Upstream performance'));
+    if (n.col === 3 && n.domains && n.domains.length) {
+      acts.push(h('span', { class: 'muted' }, 'Busiest: '));
+      n.domains.forEach(d => acts.push(ql ? h('a', { href: q({ search: d }), class: 'mono' }, d) : h('button', { type: 'button', class: 'link mono', onclick: () => domainDialog(d, range) }, d)));
+    }
+    fill(detail, head, acts.length ? h('p', { class: 'row flow-acts' }, acts) : null,
+      h('p', { class: 'muted small' }, h('button', { type: 'button', class: 'link', onclick: () => { st.sel = ''; draw(); } }, 'Clear selection')));
+  }
+
+  draw();
+  if (!box.flowWatch) {
+    box.flowWatch = true;
+    let t = 0;
+    const redraw = () => { clearTimeout(t); t = setTimeout(() => box.flowRedraw && box.flowRedraw(), 120); };
+    window.addEventListener('resize', redraw);
+    document.addEventListener('fullscreenchange', redraw);
+  }
+  box.flowRedraw = () => { if (box.isConnected) draw(); };
 }
 
 // ---------- performance ----------

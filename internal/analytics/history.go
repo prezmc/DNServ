@@ -99,6 +99,15 @@ CREATE TABLE IF NOT EXISTS hourly (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS hourly_client ON hourly (client, hour);
 CREATE INDEX IF NOT EXISTS hourly_name ON hourly (name, hour);
+-- Upstream answers per hour, domain and the server that answered, for
+-- the traffic map. Only answers from upstream are counted here.
+CREATE TABLE IF NOT EXISTS hourly_up (
+	hour     INTEGER NOT NULL,
+	name     TEXT    NOT NULL,
+	upstream TEXT    NOT NULL,
+	n        INTEGER NOT NULL,
+	PRIMARY KEY (hour, name, upstream)
+) WITHOUT ROWID;
 -- Domains whose answers looked risky (an address on an IP threat list,
 -- or a CNAME to a risky domain), with the latest reason.
 CREATE TABLE IF NOT EXISTS flagged (
@@ -288,7 +297,7 @@ func (s *Store) Clear(ctx context.Context, what string) error {
 func (s *Store) clear(what string) error {
 	tables := []string{"perf", "upstream_perf"}
 	if what == ClearAll {
-		tables = append(tables, "queries", "hourly", "flagged", "caught")
+		tables = append(tables, "queries", "hourly", "hourly_up", "flagged", "caught")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -407,6 +416,12 @@ type hourKey struct {
 	result int
 }
 
+type upHourKey struct {
+	hour     int64
+	name     string
+	upstream string
+}
+
 type hourAgg struct {
 	n  int64
 	ms float64
@@ -430,7 +445,7 @@ func (s *Store) write(batch []querylog.Entry) error {
 			return err
 		}
 		defer full.Close()
-		args := make([]any, 0, per*13)
+		args := make([]any, 0, per*14)
 		for i := 0; i < len(batch); i += per {
 			chunk := batch[i:min(i+per, len(batch))]
 			args = args[:0]
@@ -441,8 +456,12 @@ func (s *Store) write(batch []querylog.Entry) error {
 					rule, list = e.Rule, e.List
 				}
 				ips, cn := answerOf(e.Answer)
+				var up any
+				if e.Upstream != "" {
+					up = e.Upstream
+				}
 				args = append(args, e.Time.UnixMicro(), e.Client.String(), e.Name, e.Type, code, e.Rcode, e.Answers, e.Duration, b2i(e.Allowed), rule, list,
-					joinAddrs(ips), joinNames(cn))
+					joinAddrs(ips), joinNames(cn), up)
 			}
 			if len(chunk) == per {
 				_, err = full.Exec(args...)
@@ -478,9 +497,13 @@ func (s *Store) write(batch []querylog.Entry) error {
 	}
 	if statsDays > 0 {
 		agg := map[hourKey]hourAgg{}
+		ups := map[upHourKey]int64{}
 		caught := map[string]querylog.Entry{}
 		for _, e := range batch {
 			code, _ := resultCode(e.Result)
+			if code == codeAnswered && e.Upstream != "" {
+				ups[upHourKey{e.Time.Unix() / 3600, e.Name, e.Upstream}]++
+			}
 			k := hourKey{e.Time.Unix() / 3600, e.Name, e.Client.String(), code}
 			a := agg[k]
 			a.n++
@@ -505,6 +528,20 @@ func (s *Store) write(batch []querylog.Entry) error {
 			}
 		}
 		st.Close()
+		if len(ups) > 0 {
+			st, err := tx.Prepare(`INSERT INTO hourly_up (hour, name, upstream, n) VALUES (?,?,?,?)
+				ON CONFLICT (hour, name, upstream) DO UPDATE SET n = n + excluded.n`)
+			if err != nil {
+				return err
+			}
+			for k, n := range ups {
+				if _, err := st.Exec(k.hour, k.name, k.upstream, n); err != nil {
+					st.Close()
+					return err
+				}
+			}
+			st.Close()
+		}
 		if len(caught) > 0 {
 			st, err := tx.Prepare(`INSERT INTO caught (name, rule, list, t) VALUES (?,?,?,?)
 				ON CONFLICT (name) DO UPDATE SET rule = excluded.rule, list = excluded.list, t = excluded.t`)
@@ -524,8 +561,8 @@ func (s *Store) write(batch []querylog.Entry) error {
 }
 
 func insertRows(n int) string {
-	return `INSERT INTO queries (t, client, name, qtype, result, rcode, answers, ms, allowed, rule, list, ips, cnames) VALUES ` +
-		strings.TrimSuffix(strings.Repeat("(?,?,?,?,?,?,?,?,?,?,?,?,?),", n), ",")
+	return `INSERT INTO queries (t, client, name, qtype, result, rcode, answers, ms, allowed, rule, list, ips, cnames, upstream) VALUES ` +
+		strings.TrimSuffix(strings.Repeat("(?,?,?,?,?,?,?,?,?,?,?,?,?,?),", n), ",")
 }
 
 // migrate adds columns that later versions keep.
@@ -548,7 +585,7 @@ func migrate(db *sql.DB) error {
 		have[name] = true
 	}
 	rows.Close()
-	for _, col := range []string{"ips", "cnames"} {
+	for _, col := range []string{"ips", "cnames", "upstream"} {
 		if !have[col] {
 			if _, err := db.Exec(`ALTER TABLE queries ADD COLUMN ` + col + ` TEXT`); err != nil {
 				return err
@@ -687,6 +724,10 @@ func (s *Store) prune() {
 		hcut = now.Unix()/3600 + 1
 	}
 	if res, err := s.db.Exec(`DELETE FROM hourly WHERE hour < ?`, hcut); err == nil {
+		n, _ := res.RowsAffected()
+		removed += n
+	}
+	if res, err := s.db.Exec(`DELETE FROM hourly_up WHERE hour < ?`, hcut); err == nil {
 		n, _ := res.RowsAffected()
 		removed += n
 	}

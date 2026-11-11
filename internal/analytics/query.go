@@ -16,6 +16,7 @@ const (
 	KindSearch  = "search"  // individual queries, newest first
 	KindDomain  = "domain"  // one domain: totals, series, devices, caught by
 	KindPerf    = "perf"    // response times, upstream health
+	KindFlow    = "flow"    // the traffic map
 )
 
 // Top list kinds.
@@ -126,6 +127,8 @@ type Entry struct {
 	// IPs and CNAMEs are what the answer held.
 	IPs    []string `json:"ips,omitempty"`
 	CNAMEs []string `json:"cnames,omitempty"`
+	// Upstream is the server that answered (answers from upstream).
+	Upstream string `json:"upstream,omitempty"`
 }
 
 // Answer is one distinct answer a domain got.
@@ -159,6 +162,9 @@ type Result struct {
 
 	// Perf only.
 	Perf *Perf `json:"perf,omitempty"`
+
+	// Flow only: one per node.
+	Flows []Flow `json:"flows,omitempty"`
 }
 
 // Validate fills defaults and checks a query.
@@ -183,7 +189,7 @@ func (q *Query) Validate() error {
 		return fmt.Errorf("%w: too many clients", ErrBadQuery)
 	}
 	switch q.Kind {
-	case KindSummary, KindSearch:
+	case KindSummary, KindSearch, KindFlow:
 	case KindPerf:
 		if q.Baseline < 0 || q.Baseline > 30*86400 {
 			return fmt.Errorf("%w: baseline must be at most 30 days", ErrBadQuery)
@@ -264,6 +270,8 @@ func (s *Store) Run(ctx context.Context, q Query) (*Result, error) {
 		err = s.domain(ctx, &q, res)
 	case KindPerf:
 		err = s.perf(ctx, &q, res)
+	case KindFlow:
+		err = s.flow(ctx, &q, res)
 	}
 	if err != nil {
 		return nil, err
@@ -432,12 +440,12 @@ func (s *Store) search(ctx context.Context, q *Query, res *Result) error {
 		}
 	}
 	args = append(args, q.Limit)
-	return collect(ctx, s.db, `SELECT t, client, name, qtype, result, rcode, answers, ms, allowed, COALESCE(rule, ''), COALESCE(list, ''), COALESCE(ips, ''), COALESCE(cnames, '') FROM queries WHERE `+
+	return collect(ctx, s.db, `SELECT t, client, name, qtype, result, rcode, answers, ms, allowed, COALESCE(rule, ''), COALESCE(list, ''), COALESCE(ips, ''), COALESCE(cnames, ''), COALESCE(upstream, '') FROM queries WHERE `+
 		strings.Join(conds, " AND ")+` ORDER BY t DESC LIMIT ?`, args, func(r *sql.Rows) error {
 		var e Entry
 		var code, allowed int
 		var ips, cnames string
-		if err := r.Scan(&e.T, &e.Client, &e.Name, &e.Type, &code, &e.Rcode, &e.Answers, &e.Ms, &allowed, &e.Rule, &e.List, &ips, &cnames); err != nil {
+		if err := r.Scan(&e.T, &e.Client, &e.Name, &e.Type, &code, &e.Rcode, &e.Answers, &e.Ms, &allowed, &e.Rule, &e.List, &ips, &cnames, &e.Upstream); err != nil {
 			return err
 		}
 		e.IPs, e.CNAMEs = split(ips), split(cnames)
@@ -577,6 +585,7 @@ func Merge(q Query, parts []*Result) *Result {
 			}
 		}
 		out.Entries = append(out.Entries, p.Entries...)
+		out.Flows = append(out.Flows, p.Flows...)
 		for _, f := range p.Flags {
 			if cur, ok := flags[f.Name]; !ok || f.Score > cur.Score {
 				flags[f.Name] = f
