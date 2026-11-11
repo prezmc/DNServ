@@ -1310,7 +1310,7 @@ const RESULTS = {
 
 async function queries(main) {
   const params = hashParams();
-  const filter = { client: params.get('client') || '', search: params.get('search') || '', result: params.get('result') || '', range: RANGES[params.get('range')] ? params.get('range') : '24h' };
+  const filter = { client: params.get('client') || '', search: params.get('search') || '', result: params.get('result') || '', risk: ['low', 'medium', 'high'].includes(params.get('risk')) ? params.get('risk') : '', range: RANGES[params.get('range')] ? params.get('range') : '24h' };
   const body = h('tbody');
   const more = h('button', { type: 'button', hidden: true }, 'Show older');
   const info = h('p', { class: 'muted small' });
@@ -1338,7 +1338,7 @@ async function queries(main) {
       h('td', { class: 'small' }, names[e.client] ? [names[e.client], h('div', { class: 'muted mono' }, e.client)] : h('span', { class: 'mono' }, e.client),
         multi && e.node ? h('div', { class: 'muted' }, 'via ', e.node) : null),
       h('td', {}, can('dashboard.view') && useHistory ? h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(e.name, filter.range === '1h' ? '24h' : filter.range) }, e.name) : h('span', { class: 'mono' }, e.name),
-        ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name]),
+        ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name], true),
         (e.ips || []).length || (e.cnames || []).length ? h('div', { class: 'muted small mono', title: (e.cnames || []).concat(e.ips || []).join('\n') },
           (e.cnames || []).length ? '\u2192 ' + e.cnames[e.cnames.length - 1] + ' ' : '', (e.ips || []).slice(0, 2).join(', '), (e.ips || []).length > 2 ? ' +' + ((e.ips.length) - 2) : '') : null),
       h('td', {}, h('span', { class: 'badge ' + kind, title: why || (e.upstream ? 'Answered by ' + upstreamLabel(e.upstream) : null) }, label, e.allowed ? ' · allowed' : ''),
@@ -1351,7 +1351,7 @@ async function queries(main) {
   };
   const qs = (extra) => {
     const u = new URLSearchParams({ limit: '100' });
-    for (const [k, v] of Object.entries(filter)) if (v && (useHistory || k !== 'range')) u.set(k, v);
+    for (const [k, v] of Object.entries(filter)) if (v && (useHistory || (k !== 'range' && k !== 'risk'))) u.set(k, v);
     for (const [k, v] of Object.entries(extra || {})) u.set(k, v);
     return u;
   };
@@ -1367,6 +1367,7 @@ async function queries(main) {
       }
       useHistory = false;
       rangeSel.hidden = true;
+      if (riskSel) riskSel.hidden = true;
       if (exportBtn) exportBtn.hidden = true;
     }
     return api('GET', '/queries?' + qs(extra));
@@ -1381,7 +1382,7 @@ async function queries(main) {
     info.textContent = !r.queries.length ? '' : useHistory
       ? 'Newest first, from every server’s saved history.'
       : 'Newest first. Query history is off, so this shows the most recent ' + fmtNum(r.capacity) + ' queries this server has seen since it started.';
-    if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, ['client', 'search', 'result'].some(k => filter[k]) ? 'Nothing matches.' : 'No queries yet.')));
+    if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, ['client', 'search', 'result', 'risk'].some(k => filter[k]) ? 'Nothing matches.' : 'No queries yet.')));
   };
   more.addEventListener('click', async () => {
     live = false;
@@ -1416,6 +1417,11 @@ async function queries(main) {
     h('option', { value: 'allowed', selected: filter.result === 'allowed' }, 'Allowed by a rule'),
     h('option', { value: 'cached', selected: filter.result === 'cached' }, 'From cache'),
     h('option', { value: 'failed', selected: filter.result === 'failed' }, 'Failed'));
+  const riskSel = can('dashboard.view') ? h('select', { name: 'risk', 'aria-label': 'Risk', onchange: (ev) => { filter.risk = ev.target.value; setHash(); load(); } },
+    h('option', { value: '' }, 'Any risk'),
+    h('option', { value: 'low', selected: filter.risk === 'low' }, 'Low risk and above'),
+    h('option', { value: 'medium', selected: filter.risk === 'medium' }, 'Medium risk and above'),
+    h('option', { value: 'high', selected: filter.risk === 'high' }, 'High risk only')) : null;
   const rangeSel = h('select', { name: 'range', 'aria-label': 'Period', onchange: (ev) => { filter.range = ev.target.value; setHash(); load(); } },
     Object.entries(RANGES).map(([k, v]) => h('option', { value: k, selected: filter.range === k }, v)));
   const exportBtn = can('data.export') ? h('button', { type: 'button', onclick: async () => {
@@ -1423,7 +1429,7 @@ async function queries(main) {
   } }, 'Export CSV') : null;
 
   page(main, 'Query log',
-    h('div', { class: 'row' }, devSel, search, resSel, rangeSel, h('label', { class: 'inline' }, pause, 'Live'), exportBtn),
+    h('div', { class: 'row' }, devSel, search, resSel, riskSel, rangeSel, h('label', { class: 'inline' }, pause, 'Live'), exportBtn),
     nodesNote, info,
     h('div', { class: 'card' }, h('div', { class: 'scroll' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Device'), h('th', {}, 'Domain'), h('th', {}, 'Result'), can('domains.allowblock') ? h('th', {}) : null)),
@@ -1544,9 +1550,11 @@ function caughtBy(r) {
 }
 
 // bar is a thin meter under a top-list row, scaled to the list's first row.
-// riskBadge marks a medium or high risk domain; its title says why.
-function riskBadge(r) {
-  if (!r || r.score < 40) return null;
+// riskBadge marks a medium or high risk domain (and, with low, a low
+// one); its title says why.
+function riskBadge(r, low) {
+  if (!r || !r.score || (r.score < 40 && !low)) return null;
+  if (r.score < 40) return h('span', { class: 'badge risk-low', title: (r.reasons || []).join('; ') }, 'Low risk ', r.score);
   return h('span', { class: 'badge risk-' + r.level, title: (r.reasons || []).join('; ') }, r.level === 'high' ? 'High risk' : 'Risky', ' ', r.score);
 }
 

@@ -337,6 +337,7 @@ table.top .link.mono { text-align: left; word-break: break-all; padding: 0; }
 .meter.blocked span { background: linear-gradient(90deg, var(--warn), var(--s-blocked)); }
 .badge.risk-high { background: var(--bad); color: var(--panel); }
 .badge.risk-medium { background: var(--warn); color: var(--panel); }
+.badge.risk-low { color: var(--warn); background: color-mix(in srgb, var(--warn) 14%, transparent); }
 .risky .card { border-color: var(--warn); }
 ul.plain { list-style: none; padding: 0; margin: .25rem 0 .75rem; }
 ul.plain li { padding: .2rem 0; overflow-wrap: anywhere; }

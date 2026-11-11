@@ -286,6 +286,23 @@ func TestRiskyDomainsAndTypes(t *testing.T) {
 	}
 	dash.want(403, "POST", "/api/v1/analytics/dismiss", map[string]any{"name": "malware.example"}, nil)
 
+	// The Query log's risk filter.
+	var ql struct{ Queries []analytics.Entry }
+	admin.want(200, "GET", "/api/v1/analytics/queries?risk=high", nil, &ql)
+	if len(ql.Queries) != 5 {
+		t.Fatalf("risk=high: %d queries, want 5: %+v", len(ql.Queries), ql.Queries)
+	}
+	for _, e := range ql.Queries {
+		if e.Name == "example.com" || e.Name == "doubleclick.net" {
+			t.Fatalf("risk=high matched %s", e.Name)
+		}
+	}
+	admin.want(200, "GET", "/api/v1/analytics/queries?risk=high&client=192.168.1.11", nil, &ql)
+	if len(ql.Queries) != 1 || ql.Queries[0].Name != "innocent-looking.example" {
+		t.Fatalf("risk=high for one device = %+v", ql.Queries)
+	}
+	admin.want(400, "GET", "/api/v1/analytics/queries?risk=extreme", nil, nil)
+
 	// Trusting a domain clears its score; it's a lists setting.
 	admin.want(400, "PATCH", "/api/v1/settings", map[string]any{"trusted_domains": []string{"not a domain"}}, nil)
 	admin.want(200, "PATCH", "/api/v1/settings", map[string]any{"trusted_domains": []string{"Malware.Example"}}, nil)

@@ -142,6 +142,9 @@ Everything DNServ does today, in more detail than the README.
   or backups). The queries chart marks the hours when something risky got
   through, and a domain's details say when it was checked and nothing was
   found. Missing feeds (no abuse.ch key, a failed download) are named.
+  The Query log filters by risk (low and above, medium and above, high
+  only), for one device or all, and shows low-risk badges too; the CSV
+  export follows the filter.
 - **Also on, and VirusTotal.** A domain's details list every enabled list
   with a rule for it ("on your lists"), read from the saved list files
   only when you open it, so it costs no memory. Add your own free

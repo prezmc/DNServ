@@ -195,6 +195,9 @@ func (q *Query) Validate() error {
 		q.Limit = 20
 	}
 	q.Limit = min(q.Limit, 20000)
+	if len(q.Names) > MaxNames {
+		return fmt.Errorf("%w: too many names", ErrBadQuery)
+	}
 	if len(q.Clients) > 256 {
 		return fmt.Errorf("%w: too many clients", ErrBadQuery)
 	}
@@ -430,6 +433,12 @@ func (s *Store) search(ctx context.Context, q *Query, res *Result) error {
 		conds = append(conds, "client IN ("+placeholders(len(q.Clients))+")")
 		for _, c := range q.Clients {
 			args = append(args, c)
+		}
+	}
+	if len(q.Names) > 0 {
+		conds = append(conds, "name IN ("+placeholders(len(q.Names))+")")
+		for _, n := range q.Names {
+			args = append(args, n)
 		}
 	}
 	// Every word must appear somewhere in the name, in any order, so

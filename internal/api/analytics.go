@@ -199,7 +199,16 @@ func (a *API) ask(ctx context.Context, q analytics.Query, timeout time.Duration)
 		}
 		return strings.Compare(x.Name, y.Name)
 	})
-	return analytics.Merge(q, parts), nodes, nil
+	res := analytics.Merge(q, parts)
+	if q.Kind == analytics.KindSearch && len(q.Names) > 0 {
+		// A node not yet updated ignores Names; keep only what was asked.
+		want := map[string]bool{}
+		for _, n := range q.Names {
+			want[n] = true
+		}
+		res.Entries = slices.DeleteFunc(res.Entries, func(e analytics.Entry) bool { return !want[e.Name] })
+	}
+	return res, nodes, nil
 }
 
 func (a *API) askOrFail(w http.ResponseWriter, r *http.Request, q analytics.Query) (*analytics.Result, []nodeAnswer, bool) {
@@ -536,7 +545,57 @@ func (a *API) searchQuery(w http.ResponseWriter, r *http.Request, p *Principal) 
 	v := r.URL.Query()
 	q.Name, q.Result = v.Get("search"), v.Get("result")
 	q.Before, _ = strconv.ParseInt(v.Get("before"), 10, 64)
+	if lv := v.Get("risk"); lv != "" {
+		least, ok := riskLevels[lv]
+		if !ok {
+			writeErr(w, http.StatusBadRequest, "risk must be low, medium or high")
+			return q, false
+		}
+		names, ok := a.riskyNames(w, r, q, least)
+		if !ok {
+			return q, false
+		}
+		if len(names) == 0 {
+			// Nothing that risky in the period: match nothing.
+			names = []string{"."}
+		}
+		q.Names = names
+	}
 	return q, true
+}
+
+// riskLevels are the lowest scores of the Query log's risk filter.
+var riskLevels = map[string]int{"low": 1, "medium": threat.Medium, "high": threat.High}
+
+// riskyNames lists the domains looked up in the query's period (and for
+// its devices) that score at least least, riskiest first.
+func (a *API) riskyNames(w http.ResponseWriter, r *http.Request, sq analytics.Query, least int) ([]string, bool) {
+	if a.Intel == nil || !a.Intel.Enabled() {
+		return nil, true
+	}
+	q := analytics.Query{Kind: analytics.KindTop, By: analytics.TopDomains, From: sq.From, To: sq.To, Step: sq.Step, Offset: sq.Offset,
+		Clients: sq.Clients, Limit: 20000, Flags: true}
+	res, _, ok := a.askOrFail(w, r, q)
+	if !ok {
+		return nil, false
+	}
+	flags := map[string]*analytics.Flag{}
+	for i := range res.Flags {
+		flags[res.Flags[i].Name] = &res.Flags[i]
+	}
+	score := map[string]int{}
+	var names []string
+	for _, row := range res.Rows {
+		if s := withFlag(a.Intel.Score(row.Key), flags[row.Key]).Score; s >= least {
+			score[row.Key] = s
+			names = append(names, row.Key)
+		}
+	}
+	slices.SortStableFunc(names, func(x, y string) int { return score[y] - score[x] })
+	if len(names) > analytics.MaxNames {
+		names = names[:analytics.MaxNames]
+	}
+	return names, true
 }
 
 func (a *API) analyticsQueries(w http.ResponseWriter, r *http.Request, p *Principal) {
@@ -577,7 +636,7 @@ func (a *API) analyticsQueries(w http.ResponseWriter, r *http.Request, p *Princi
 				}
 			}
 		}
-		maps.DeleteFunc(risk, func(_ string, r threat.Risk) bool { return r.Score < threat.Medium })
+		maps.DeleteFunc(risk, func(_ string, r threat.Risk) bool { return r.Score == 0 })
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"queries": orEmpty(res.Entries), "device_names": l.names, "risk": risk,
