@@ -654,6 +654,7 @@ async function setupBasics() {
   };
   providerBox.hidden = eff.Upstream.Mode !== 'forward';
   const level = levelOf(eff.Filtering.Lists);
+  const wizBundles = can('lists.manage') ? bundlePicker(null) : null;
 
   render(h('div', { class: 'center' }, h('div', { class: 'card wide' },
     wizardSteps(4),
@@ -666,6 +667,8 @@ async function setupBasics() {
         h('span', {}, h('b', {}, l.name), h('span', { class: 'muted small' }, ' ' + l.note))))),
       ADDONS.map(a => h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'addon', value: a.url, checked: onURLs.has(a.url) }),
         h('span', {}, h('b', {}, a.title), ' ', h('span', { class: 'muted small' }, a.note)))),
+
+      can('lists.manage') ? h('details', { class: 'mt-s' }, h('summary', {}, 'Also block categories (adult sites, gambling, smart TV tracking…)'), wizBundles) : null,
 
       h('h2', { class: 'mt' }, 'Privacy'),
       h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
@@ -682,6 +685,8 @@ async function setupBasics() {
       if (can('lists.manage')) {
         const addons = new Set([...f.querySelectorAll('input[name=addon]:checked')].map(i => i.value));
         patch.lists = applyLevel(eff.Filtering.Lists, f.querySelector('input[name=level]:checked').value, addons);
+        const have = new Set(patch.lists.map(l => l.url));
+        wizBundles.read().forEach(l => { if (!have.has(l.url)) { have.add(l.url); patch.lists.push({ name: l.name, url: l.url, enabled: true }); } });
         patch.block_bypass = f.elements.bypass.checked;
       }
       await api('PATCH', '/settings', patch);
@@ -1228,15 +1233,19 @@ function pauseControl(btnSlot, box, reload) {
         where = n.id;
         whereSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.currentTarget)));
       } }, n.name, n.self ? h('span', { class: 'muted small' }, ' (this one)') : null))) : null;
+    const schedBox = h('input', { type: 'checkbox' });
     const d = dialog('Pause filtering', [
-      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'),
+      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'
+        + (state.has_schedules ? ' Group schedules running now, like bedtime, keep blocking.' : '')),
+      state.has_schedules && state.can_pause_schedules ? h('label', { class: 'inline' }, schedBox, 'Pause group schedules too') : null,
       whereSeg ? [h('p', { class: 'small b' }, 'Where'), whereSeg,
         h('p', { class: 'muted small' }, 'Pausing one server only helps devices that use it. Most devices switch between your two DNS servers on their own.')] : null,
       h('p', { class: 'small b' }, 'For how long'),
       h('div', { class: 'pause-opts' }, (state.options || [1, 5, 15, 30, 60, 0]).map(m => h('button', { type: 'button', class: m === 0 ? 'wide' : null, onclick: async () => {
         d.close();
         const name = where === '*' ? '' : nodes.find(n => n.id === where).name;
-        await change('POST', '/pause', { minutes: m, node: where }, 'Filtering paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
+        const sched = schedBox.checked;
+        await change('POST', '/pause', { minutes: m, node: where, schedules: sched }, 'Filtering' + (sched ? ' and schedules' : '') + ' paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
       } }, PAUSE_LABELS[m] || m + ' minutes'))),
       h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
     ]);
@@ -1270,7 +1279,8 @@ function pauseControl(btnSlot, box, reload) {
       return h('div', { class: 'pause-row' },
         h('span', { class: 'pause-ico big', 'aria-hidden': 'true' }),
         h('div', { class: 'grow' },
-          h('div', { class: 'b' }, 'Filtering is paused' + where),
+          h('div', { class: 'b' }, (p.schedules ? 'Filtering and schedules are paused' : 'Filtering is paused') + where),
+          !p.schedules && v.has_schedules ? h('div', { class: 'muted small' }, 'Group schedules still apply.') : null,
           h('div', { class: 'muted small' }, p.indefinite ? 'Until someone turns it back on' : ['Back on in ', left, ' at ', new Date(Date.now() + p.remaining_seconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })],
             ' · paused by ', p.by, ' ', ago(p.since))),
         v.can_pause ? h('button', { type: 'button', class: 'primary', onclick: () => change('DELETE', '/pause' + (p.node === '*' ? '' : '?node=' + encodeURIComponent(p.node)), undefined, 'Filtering is back on' + (p.node === '*' ? '' : ' on ' + p.node_name) + '.') },
@@ -1474,6 +1484,44 @@ function groupsCard(groups, devs, gs) {
 
 let servicesCache = null;
 const loadServices = () => (servicesCache = servicesCache || api('GET', '/services').then(r => r.services).catch((e) => { servicesCache = null; throw e; }));
+
+let bundlesCache = null;
+const loadBundles = () => (bundlesCache = bundlesCache || api('GET', '/lists/bundles').then(r => r.bundles).catch((e) => { bundlesCache = null; throw e; }));
+
+// bundlePicker shows the category bundles as ticks. With an editor (the
+// blocklist table) ticking adds or removes the bundle's rows there; a
+// bundle is ticked while all its lists are present and on. Without one,
+// read() returns the ticked bundles' lists (used by the setup wizard).
+function bundlePicker(editor, on) {
+  const box = h('div', { class: 'choices bundles' }, h('p', { class: 'muted small' }, 'Loading categories…'));
+  let all = [];
+  const has = (b) => editor ? b.lists.every(l => editor.enabled(l.url)) : (on || new Set()).has(b.id);
+  const sync = () => box.querySelectorAll('[data-bundle]').forEach(c => { c.checked = has(all.find(b => b.id === c.dataset.bundle)); });
+  const toggle = (b, tick) => {
+    if (!editor) return;
+    if (tick) b.lists.forEach(l => editor.add(l));
+    else {
+      // Keep lists another ticked bundle also needs.
+      const keep = new Set(all.filter(o => o !== b && has(o)).flatMap(o => o.lists.map(l => l.url)));
+      b.lists.forEach(l => { if (!keep.has(l.url)) editor.drop(l.url); });
+    }
+    sync();
+  };
+  loadBundles().then((bs) => {
+    all = bs;
+    box.replaceChildren(...bs.map(b => h('label', { class: 'choice', title: b.lists.map(l => l.name).join(', ') },
+      h('input', { type: 'checkbox', 'data-bundle': b.id, onchange: (ev) => toggle(b, ev.target.checked) }),
+      h('span', {}, h('b', {}, b.name), h('span', { class: 'muted small' }, b.about + ' ' + (b.lists.length === 1 ? '1 list.' : b.lists.length + ' lists.')),
+        b.warning ? h('span', { class: 'small warn-text' }, ' ' + b.warning) : null))));
+    sync();
+  }).catch(e => fill(box, h('p', { class: 'muted small' }, "Couldn't load the categories: " + e.message)));
+  if (editor) {
+    editor.addEventListener('change', sync);
+    editor.addEventListener('click', () => setTimeout(sync));
+  }
+  box.read = () => all.filter(b => box.querySelector(`[data-bundle="${b.id}"]`)?.checked).flatMap(b => b.lists);
+  return box;
+}
 
 // servicePicker shows the service catalog as ticks grouped by category.
 // read() returns the ticked ids (or the starting ones until it has loaded).
@@ -3034,6 +3082,10 @@ async function settings(main) {
         h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'On'), h('th', {}, 'Name'), h('th', {}, 'URL or file path'), h('th', {}))), body)),
         h('div', { class: 'row mt-s' },
           h('button', { type: 'button', onclick: () => addRow({ name: '', url: '', enabled: true }) }, 'Add list'), presets));
+      const rowOf = (url) => [...body.rows].find(r => r.querySelector('[data-f=url]').value.trim() === url);
+      el.enabled = (url) => { const r = rowOf(url); return !!r && r.querySelector('[data-f=enabled]').checked; };
+      el.add = (l) => { const r = rowOf(l.url); if (r) r.querySelector('[data-f=enabled]').checked = true; else addRow({ name: l.name, url: l.url, enabled: true }); };
+      el.drop = (url) => { let r; while ((r = rowOf(url))) r.remove(); };
       el.read = () => [...body.rows].map(r => ({
         name: r.querySelector('[data-f=name]').value.trim(), url: r.querySelector('[data-f=url]').value.trim(), enabled: r.querySelector('[data-f=enabled]').checked,
       })).filter(l => l.url);
@@ -3050,6 +3102,9 @@ async function settings(main) {
           h('option', { value: 'null_ip', selected: fl.BlockMode === 'null_ip' }, '0.0.0.0 / :: (fastest for apps)'),
           h('option', { value: 'nxdomain', selected: fl.BlockMode === 'nxdomain' }, 'Domain does not exist (NXDOMAIN)'),
           h('option', { value: 'refused', selected: fl.BlockMode === 'refused' }, 'Refused')),
+        h('h3', { class: 'mt' }, 'Categories'),
+        h('p', { class: 'muted small' }, 'Tick a category to add its lists to the blocklists below, then Save. Categories stack on top of your protection level, and each list can still be switched off on its own.'),
+        bundlePicker(block),
         h('div', { class: 'row spread mt' }, h('h3', {}, 'Blocklists'), updateListsButton()), block,
         h('h3', {}, 'Allowlists'), h('p', { class: 'muted small' }, 'Domains on these lists are never blocked by a blocklist.'), allow,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),

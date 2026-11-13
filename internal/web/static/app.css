@@ -519,3 +519,4 @@ details.parts tr.total td { font-weight: 700; border-top: 1px solid currentColor
 .fill-meter .old { background: color-mix(in srgb, var(--muted) 40%, var(--code)); }
 .key.fill-stale { background: color-mix(in srgb, var(--s-3) 45%, var(--code)); }
 .key.fill-old { background: color-mix(in srgb, var(--muted) 40%, var(--code)); }
+.bundles { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }

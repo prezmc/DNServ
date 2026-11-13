@@ -141,6 +141,38 @@ func (g *Group) Check(name string, now time.Time) (m filter.Match, decided bool)
 	return filter.Match{}, false
 }
 
+// CheckSchedules is Check limited to the group's schedules, for while
+// filtering is paused: an allow rule in the group still wins, and only
+// a schedule running at now blocks.
+func (g *Group) CheckSchedules(name string, now time.Time) filter.Match {
+	if len(g.schedules) == 0 {
+		return filter.Match{}
+	}
+	allowChecked := false
+	for i := range g.schedules {
+		sc := &g.schedules[i]
+		if !sc.active(now) {
+			continue
+		}
+		if !allowChecked {
+			if g.rules.Lookup(name).Allowed {
+				return filter.Match{}
+			}
+			allowChecked = true
+		}
+		if sc.blockAll {
+			return filter.Match{Blocked: true, Source: "Schedule " + sc.name}
+		}
+		if sm := sc.rules.Lookup(name); sm.Blocked {
+			return sm
+		}
+	}
+	return filter.Match{}
+}
+
+// HasSchedules reports whether the group has any schedules.
+func (g *Group) HasSchedules() bool { return len(g.schedules) > 0 }
+
 // Active lists the names of the group's schedules running at now.
 func (g *Group) Active(now time.Time) []string {
 	var out []string

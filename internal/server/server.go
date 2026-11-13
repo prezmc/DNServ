@@ -73,6 +73,8 @@ type Server struct {
 	// pauseUntil is when a cluster-wide pause on filtering ends, in Unix
 	// nanoseconds: 0 is not paused, math.MaxInt64 is until turned back on.
 	pauseUntil atomic.Int64
+	// pauseSched: the pause covers group schedules too.
+	pauseSched atomic.Bool
 
 	mu       sync.Mutex
 	servers  []*dns.Server
@@ -305,9 +307,18 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 		return m, OutLocal, filter.Match{}, ""
 	}
 
-	// Paused: answer everything as if there were no filtering. One atomic
-	// load when not paused; the clock is read only while a pause is set.
+	// Paused: answer as if there were no filtering, except that group
+	// schedules running now keep blocking unless the pause covers them
+	// too. One atomic load when not paused; the clock is read only while
+	// a pause is set.
 	if s.Paused() {
+		if !s.pauseSched.Load() {
+			if g := s.policy.Load().For(client); g != nil && g.HasSchedules() {
+				if match := g.CheckSchedules(name, s.localNow()); match.Blocked {
+					return s.blocked(req), OutBlocked, match, ""
+				}
+			}
+		}
 		m, out, from := s.answer(req, name)
 		return m, out, filter.Match{}, from
 	}
@@ -324,10 +335,7 @@ func (s *Server) resolve(req *dns.Msg, client netip.Addr) (*dns.Msg, Outcome, fi
 	g := s.policy.Load().For(client)
 	var now time.Time
 	if g != nil {
-		now = time.Now()
-		if loc := s.loc.Load(); loc != nil {
-			now = now.In(loc)
-		}
+		now = s.localNow()
 	}
 	match := s.check(g, name, now)
 	if match.Blocked {
@@ -660,9 +668,20 @@ func (s *Server) localAnswer(req *dns.Msg, name string) (*dns.Msg, bool) {
 // SetPolicy replaces the device groups.
 func (s *Server) SetPolicy(p *policy.Set) { s.policy.Store(p) }
 
+// localNow is the time in the zone schedules run in.
+func (s *Server) localNow() time.Time {
+	now := time.Now()
+	if loc := s.loc.Load(); loc != nil {
+		now = now.In(loc)
+	}
+	return now
+}
+
 // SetPause sets when a pause on filtering ends: the zero time pauses
-// until turned back on, and paused false lifts the pause.
-func (s *Server) SetPause(paused bool, until time.Time) {
+// until turned back on, and paused false lifts the pause. schedules
+// pauses group schedules too; otherwise they keep blocking.
+func (s *Server) SetPause(paused bool, until time.Time, schedules bool) {
+	s.pauseSched.Store(paused && schedules)
 	switch {
 	case !paused:
 		s.pauseUntil.Store(0)

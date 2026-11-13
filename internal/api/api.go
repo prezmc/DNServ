@@ -178,6 +178,9 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/settings/reset", a.authed("", a.resetSettings))
 	m.HandleFunc("POST /api/v1/domains", a.authed(store.PermAllowBlock, a.domainAction))
 	m.HandleFunc("POST /api/v1/lists/update", a.authed(store.PermLists, a.updateLists))
+	m.HandleFunc("GET /api/v1/lists/bundles", a.authed(store.PermLists, func(w http.ResponseWriter, r *http.Request, p *Principal) {
+		writeJSON(w, http.StatusOK, map[string]any{"bundles": filter.Bundles})
+	}))
 	m.HandleFunc("POST /api/v1/cache/clear", a.authed(store.PermLists, a.clearCache))
 	m.HandleFunc("POST /api/v1/analytics/clear", a.authed(store.PermUsers, a.clearHistory))
 	a.routesHTTPS(m)
