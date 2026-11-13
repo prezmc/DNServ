@@ -32,6 +32,19 @@ needs, so a lookup only tries the few whose letters the name contains: the
 AdGuard DNS filter and Dandelion Sprout's anti-malware list (about 700 such
 rules together) add well under a microsecond per lookup.
 
+## Categories
+
+**Settings > Filtering > Categories** adds curated lists for one kind of
+blocking in one tick: ads and pop-ups, malware and phishing, scams and fake
+shops, smart TV tracking, phone and computer tracking, adult sites, gambling,
+piracy, and VPN/proxy bypass. Ticking a category adds its lists to the
+blocklist table (press Save to apply); unticking removes them, keeping any
+list another ticked category also uses. Categories stack on top of the
+protection level, and each list stays an ordinary row you can switch off,
+rename or remove. A category shows as ticked while all its lists are present
+and on. The setup wizard offers the same categories. The catalog is
+`filter.Bundles` (`GET /api/v1/lists/bundles`).
+
 ## Blocked services and safe search
 
 **Settings > Blocked services and safe search** blocks well-known apps and

@@ -15,7 +15,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Tokens | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}`. `cache_size` (1,000 to 5,000,000 answers, upstream.manage) resizes each server's cache at once |
 | Local names | `PATCH /settings` `{records: [{name, value, note}]}` (the whole list; `value` is an IP address or another name) |
-| Lists | `POST /lists/update` (download every list again now) |
+| Lists | `POST /lists/update` (download every list again now), `GET /lists/bundles` (category bundles and their lists) |
 | Dashboard HTTPS (admin) | `GET /https` (settings without the key or password, and each server's status); `PUT /https` `{mode: ""\|self_signed\|upload\|files\|npm, redirect, names, cert_pem, key_pem, cert_file, key_file, npm: {url, email, password, cert_id}}`; `POST /https/npm/certificates` `{url, email, password}` lists Nginx Proxy Manager's certificates |
 | Clear history (admin) | `POST /analytics/clear` `{what: performance\|history}` deletes performance stats, or all query history, on every server |
 | Pause filtering | `GET /pause`; `POST /pause` `{minutes, node, schedules}` (`minutes` 0 = until turned back on, up to 24 h; `node` omitted = every server; group schedules keep blocking unless `schedules` is true, which needs `devices.manage`); `DELETE /pause` (everything back on) or `DELETE /pause?node=<id>` |
