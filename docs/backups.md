@@ -21,6 +21,19 @@ nobody can open one. Keep it in a password manager.
   the container (for example `-v /mnt/nas/dnserv:/backups`) and enter
   `/backups` as the copy folder. The leading node writes one copy of each
   backup there.
+- **Off-site in S3:** under Automatic backups, open **Also upload to S3**
+  and enter the bucket. Amazon S3, Backblaze B2, Cloudflare R2, Wasabi,
+  MinIO and other S3-compatible storage work: leave Endpoint empty for
+  Amazon, otherwise enter the service's host (for example
+  `s3.us-west-004.backblazeb2.com`, or `https://minio.lan:9000`), and tick
+  "bucket in the path" for MinIO and most NAS apps. **Check and save**
+  writes, reads and deletes a small test file before saving. The leading
+  node then uploads one copy of each scheduled backup and keeps the same
+  number there as locally; **Upload a backup now** sends one straight away.
+  Give the key access to that bucket only (list, read, write, delete). The
+  secret key is stored on your servers, never shown again, and isn't in
+  backups. Files are encrypted before upload, so the storage provider can't
+  read them.
 - **Restore** from a file under Backups & history (replaces the accounts and
   configuration on every node; the cluster's nodes stay as they are), or on
   a brand-new node choose **Restore from a backup** in the setup wizard.

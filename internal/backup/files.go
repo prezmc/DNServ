@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prezmc/dnserv/internal/store"
@@ -35,6 +37,34 @@ type Manager struct {
 	Loc func() *time.Location
 	Log *slog.Logger
 	Now func() time.Time
+	// Client is used for S3 uploads (nil: a default one).
+	Client *http.Client
+
+	mu     sync.Mutex
+	s3Last S3Status
+}
+
+// S3Status is how the last S3 upload went on this node.
+type S3Status struct {
+	At    time.Time `json:"at,omitzero"`
+	File  string    `json:"file,omitempty"`
+	Error string    `json:"error,omitempty"`
+}
+
+// S3Status returns how the last upload from this node went.
+func (m *Manager) S3Status() S3Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.s3Last
+}
+
+// S3 returns a client for the configured bucket, or nil.
+func (m *Manager) S3() *S3 {
+	t := m.Store.State().BackupS3
+	if t == nil {
+		return nil
+	}
+	return &S3{T: *t, Client: m.Client}
 }
 
 // File is a stored backup.
@@ -43,7 +73,7 @@ type File struct {
 	Size    int64     `json:"size"`
 	Created time.Time `json:"created"`
 	Node    string    `json:"node"`
-	Where   string    `json:"where"` // "local" or "offsite"
+	Where   string    `json:"where"` // "local", "offsite" or "s3"
 }
 
 func (m *Manager) now() time.Time {
@@ -176,7 +206,116 @@ func (m *Manager) RunDue() error {
 			prune(cfg.Offsite, keep, m.Log)
 		}
 	}
+	if c := m.S3(); c != nil && (m.IsLeader == nil || m.IsLeader()) {
+		if err := m.upload(c, name, file, keep, 3); err != nil {
+			errs = append(errs, fmt.Errorf("S3: %w", err))
+		}
+	}
 	return errors.Join(errs...)
+}
+
+// UploadNow makes a backup and uploads it to the bucket, keeping the
+// same number of backups there as the schedule does.
+func (m *Manager) UploadNow() error {
+	c := m.S3()
+	if c == nil {
+		return errors.New("set up an S3 bucket first")
+	}
+	if !m.Store.State().Backup.Configured() {
+		return errors.New("set a backup passphrase first")
+	}
+	name, file, err := m.Make()
+	if err != nil {
+		return err
+	}
+	keep := m.Store.State().Backup.Keep
+	if keep == 0 {
+		keep = DefaultKeep
+	}
+	return m.upload(c, name, file, keep, 1)
+}
+
+// upload puts one backup in the bucket and removes the oldest ones
+// beyond keep.
+func (m *Manager) upload(c *S3, name string, file []byte, keep, tries int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	var err error
+	for try := range tries {
+		if err = c.Put(ctx, name, file); err == nil || try == tries-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Duration(try+1) * 10 * time.Second):
+		}
+	}
+	st := S3Status{At: time.Now().UTC(), File: name}
+	if err != nil {
+		st.Error = err.Error()
+	}
+	m.mu.Lock()
+	m.s3Last = st
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	m.Log.Info("backup uploaded to S3", "bucket", c.T.Bucket, "file", c.Key(name))
+	files, err := m.listS3(ctx, c)
+	if err != nil {
+		m.Log.Warn("couldn't list S3 backups to remove old ones", "err", err)
+		return nil
+	}
+	for _, f := range files[min(keep, len(files)):] {
+		if err := c.Delete(ctx, f.Name); err != nil {
+			m.Log.Warn("couldn't remove an old S3 backup", "file", f.Name, "err", err)
+		}
+	}
+	return nil
+}
+
+// listS3 lists the backups in the bucket folder, newest first.
+func (m *Manager) listS3(ctx context.Context, c *S3) ([]File, error) {
+	objs, err := c.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []File
+	for _, o := range objs {
+		if !isBackupName(o.Key) || strings.Contains(o.Key, "/") {
+			continue
+		}
+		out = append(out, File{Name: o.Key, Size: o.Size, Created: nameTime(o.Key, o.Modified), Node: nameNode(o.Key), Where: "s3"})
+	}
+	slices.SortFunc(out, func(a, b File) int { return b.Created.Compare(a.Created) })
+	return out, nil
+}
+
+// nameTime reads the time from a backup's name (fallback: def).
+func nameTime(name string, def time.Time) time.Time {
+	base := strings.TrimSuffix(name, Ext)
+	if len(base) < 15 {
+		return def
+	}
+	if t, err := time.Parse("20060102-150405", base[len(base)-15:]); err == nil {
+		return t
+	}
+	return def
+}
+
+// nameNode reads the node name from a backup's name.
+func nameNode(name string) string {
+	base := strings.TrimSuffix(name, Ext)
+	if len(base) < 16 {
+		return ""
+	}
+	base = base[:len(base)-16]
+	for _, p := range []string{"dnserv-", "dnserve-"} {
+		if strings.HasPrefix(base, p) {
+			return base[len(p):]
+		}
+	}
+	return ""
 }
 
 func writeFile(dir, name string, b []byte) error {
@@ -238,19 +377,36 @@ func prune(dir string, keep int, log *slog.Logger) {
 }
 
 // List returns the stored backups, newest first: this node's, then the
-// off-box folder's.
-func (m *Manager) List() []File {
-	out := listDir(m.Dir, "local")
+// off-box folder's, then the bucket's. s3err says why the bucket
+// couldn't be listed.
+func (m *Manager) List(ctx context.Context) (out []File, s3err error) {
+	out = listDir(m.Dir, "local")
 	if off := m.Store.State().Backup.Offsite; off != "" {
 		out = append(out, listDir(off, "offsite")...)
 	}
-	return out
+	if c := m.S3(); c != nil {
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		f, err := m.listS3(ctx, c)
+		out = append(out, f...)
+		s3err = err
+	}
+	return out, s3err
 }
 
 // Read returns a stored backup by name.
 func (m *Manager) Read(where, name string) ([]byte, error) {
 	if name != filepath.Base(name) || !isBackupName(name) {
 		return nil, errors.New("no such backup")
+	}
+	if where == "s3" {
+		c := m.S3()
+		if c == nil {
+			return nil, errors.New("no such backup")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		return c.Get(ctx, name)
 	}
 	dir := m.Dir
 	if where == "offsite" {

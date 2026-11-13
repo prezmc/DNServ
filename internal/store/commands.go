@@ -544,7 +544,7 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 	switch c.Op {
 	case OpConfigRestore:
 		return applyConfigRestore(st, c, dec)
-	case OpBackupConfig, OpBackupRestore:
+	case OpBackupConfig, OpBackupRestore, OpBackupS3:
 		return applyBackup(st, c, dec)
 	case OpHTTPSConfig, OpHTTPSCert:
 		return applyHTTPS(st, c, dec)

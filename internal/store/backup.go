@@ -57,7 +57,49 @@ type BackupRestore struct {
 const (
 	OpBackupConfig  = "backup.config"  // BackupConfig
 	OpBackupRestore = "backup.restore" // BackupRestore
+	OpBackupS3      = "backup.s3"      // S3Target (empty Bucket: off)
 )
+
+// S3Target is an S3 or S3-compatible bucket (AWS, Backblaze B2,
+// Cloudflare R2, Wasabi, MinIO and so on) that the leader uploads each
+// scheduled backup to.
+type S3Target struct {
+	// Endpoint is the service's address, like "s3.eu-west-2.amazonaws.com"
+	// or "https://minio.lan:9000". Empty means AWS for Region.
+	Endpoint  string `json:"endpoint,omitempty"`
+	Region    string `json:"region,omitempty"`
+	Bucket    string `json:"bucket"`
+	Prefix    string `json:"prefix,omitempty"` // folder inside the bucket
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+	// PathStyle puts the bucket in the path rather than the host name,
+	// which MinIO and some NAS apps need.
+	PathStyle bool `json:"path_style,omitempty"`
+}
+
+// Clean trims the fields and checks them.
+func (t *S3Target) Clean() error {
+	t.Endpoint = strings.TrimRight(strings.TrimSpace(t.Endpoint), "/")
+	t.Region = strings.TrimSpace(t.Region)
+	t.Bucket = strings.TrimSpace(t.Bucket)
+	t.Prefix = strings.Trim(strings.TrimSpace(t.Prefix), "/")
+	t.AccessKey = strings.TrimSpace(t.AccessKey)
+	t.SecretKey = strings.TrimSpace(t.SecretKey)
+	switch {
+	case t.Bucket == "":
+		return errors.New("enter the bucket name")
+	case strings.ContainsAny(t.Bucket, "/ "):
+		return errors.New("the bucket is just its name, without slashes; put a folder under Folder")
+	case t.AccessKey == "" || t.SecretKey == "":
+		return errors.New("enter the access key and secret key")
+	case t.Endpoint == "" && t.Region == "":
+		return errors.New("enter the region (for AWS) or the endpoint (for other services)")
+	}
+	if strings.Contains(t.Endpoint, "://") && !strings.HasPrefix(t.Endpoint, "https://") && !strings.HasPrefix(t.Endpoint, "http://") {
+		return errors.New("the endpoint must start with https:// or http://, or be just a host name")
+	}
+	return nil
+}
 
 // BackupData returns a copy of what a backup holds.
 func (st *State) BackupData() BackupData {
@@ -107,6 +149,22 @@ func applyBackup(st *State, c Command, dec func(any) error) (any, *AuditEntry, e
 			what = "set a new backup passphrase"
 		}
 		return nil, audit(what, before, after), nil
+
+	case OpBackupS3:
+		var d S3Target
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		if strings.TrimSpace(d.Bucket) == "" {
+			st.BackupS3 = nil
+			return nil, audit("turned off S3 backup uploads", nil, nil), nil
+		}
+		if err := d.Clean(); err != nil {
+			return nil, nil, err
+		}
+		st.BackupS3 = &d
+		// The audit log gets where, never the keys.
+		return nil, audit("set the S3 backup bucket", nil, map[string]string{"endpoint": d.Endpoint, "region": d.Region, "bucket": d.Bucket, "folder": d.Prefix}), nil
 
 	case OpBackupRestore:
 		var d BackupRestore

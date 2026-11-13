@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,8 @@ func (a *API) backupRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/v1/backups/passphrase", a.authed(store.PermBackups, a.backupPassphrase))
 	m.HandleFunc("POST /api/v1/backups/download", a.authed(store.PermBackups, a.backupNow))
 	m.HandleFunc("GET /api/v1/backups/files/{where}/{name}", a.authed(store.PermBackups, a.backupFile))
+	m.HandleFunc("PUT /api/v1/backups/s3", a.authed(store.PermBackups, a.backupS3Set))
+	m.HandleFunc("POST /api/v1/backups/s3/upload", a.authed(store.PermBackups, a.backupS3Upload))
 	m.HandleFunc("POST /api/v1/backups/restore", a.authed(store.PermBackups, a.backupRestore))
 	m.HandleFunc("POST /api/v1/setup/restore", a.setupRestore)
 }
@@ -87,13 +90,77 @@ func (a *API) backupStatus(w http.ResponseWriter, r *http.Request, p *Principal)
 		"default_keep": backup.DefaultKeep, "min_passphrase": backup.MinPassphrase,
 		"time_zone": zone, "files": []backup.File{},
 	}
+	if t := a.Store.State().BackupS3; t != nil {
+		// Everything but the secret key.
+		out["s3"] = map[string]any{"endpoint": t.Endpoint, "region": t.Region, "bucket": t.Bucket, "prefix": t.Prefix,
+			"access_key": t.AccessKey, "path_style": t.PathStyle, "secret_set": t.SecretKey != ""}
+	}
 	if a.Backups != nil {
 		out["dir"] = a.Backups.Dir
-		if f := a.Backups.List(); f != nil {
+		f, err := a.Backups.List(r.Context())
+		if f != nil {
 			out["files"] = f
+		}
+		if err != nil {
+			out["s3_error"] = err.Error()
+		}
+		if st := a.Backups.S3Status(); !st.At.IsZero() {
+			out["s3_last"] = st
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// backupS3Set sets (or, with an empty bucket, turns off) the S3 bucket
+// backups are uploaded to. It checks the bucket works before saving. An
+// empty secret key keeps the one already saved.
+func (a *API) backupS3Set(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var t store.S3Target
+	if !readJSON(w, r, &t) {
+		return
+	}
+	if strings.TrimSpace(t.Bucket) == "" {
+		if _, ok := a.apply(w, store.NewCommand(store.OpBackupS3, p.Actor(), store.S3Target{})); ok {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
+	if strings.TrimSpace(t.SecretKey) == "" {
+		if old := a.Store.State().BackupS3; old != nil {
+			t.SecretKey = old.SecretKey
+		}
+	}
+	if err := t.Clean(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	c := &backup.S3{T: t}
+	if a.Backups != nil {
+		c.Client = a.Backups.Client
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := c.Test(ctx); err != nil {
+		writeErr(w, http.StatusBadRequest, "DNServ couldn't use that bucket, so nothing was saved: "+err.Error())
+		return
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpBackupS3, p.Actor(), t)); ok {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// backupS3Upload makes a backup now and uploads it to the bucket.
+func (a *API) backupS3Upload(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if a.Backups == nil {
+		writeErr(w, http.StatusNotFound, "backups aren't available on this node")
+		return
+	}
+	if err := a.Backups.UploadNow(); err != nil {
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	a.Log.Info("backup uploaded to S3 by hand", "actor", p.Actor())
+	writeJSON(w, http.StatusOK, a.Backups.S3Status())
 }
 
 func (a *API) backupSchedule(w http.ResponseWriter, r *http.Request, p *Principal) {

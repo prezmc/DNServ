@@ -43,6 +43,11 @@ type State struct {
 	ConfigVersions []ConfigVersion `json:"config_versions,omitempty"`
 	ConfigSeq      uint64          `json:"config_seq,omitempty"`
 	Backup         BackupConfig    `json:"backup"`
+	// BackupS3 is where the leader also uploads each scheduled backup
+	// (nil: nowhere). It holds a secret key, so like the VirusTotal key it
+	// is kept out of settings, their history and backups, and the API
+	// never returns the secret.
+	BackupS3 *S3Target `json:"backup_s3,omitempty"`
 	// SetupDone is set when the first admin finishes MFA enrollment.
 	SetupDone bool `json:"setup_done"`
 	// VirusTotalKey is the owner's own VirusTotal API key ("": off). The
