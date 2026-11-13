@@ -4,6 +4,7 @@
 go test -race ./...
 go test -run '^$' -bench . ./internal/...
 go test -tags failover -v -timeout 30m ./test/failover/   # needs Docker
+DNSERV_SMB_TEST='\\nas\share user pass+word' go test ./internal/backup ./internal/api -run SMB   # against a real SMB share (+ = space)
 go run ./cmd/dnserv -config dnserv.example.yaml
 ```
 

@@ -32,7 +32,8 @@ func (a *API) backupRoutes(m *http.ServeMux) {
 	m.HandleFunc("POST /api/v1/backups/download", a.authed(store.PermBackups, a.backupNow))
 	m.HandleFunc("GET /api/v1/backups/files/{where}/{name}", a.authed(store.PermBackups, a.backupFile))
 	m.HandleFunc("PUT /api/v1/backups/s3", a.authed(store.PermBackups, a.backupS3Set))
-	m.HandleFunc("POST /api/v1/backups/s3/upload", a.authed(store.PermBackups, a.backupS3Upload))
+	m.HandleFunc("PUT /api/v1/backups/smb", a.authed(store.PermBackups, a.backupSMBSet))
+	m.HandleFunc("POST /api/v1/backups/{where}/upload", a.authed(store.PermBackups, a.backupUpload))
 	m.HandleFunc("POST /api/v1/backups/restore", a.authed(store.PermBackups, a.backupRestore))
 	m.HandleFunc("POST /api/v1/setup/restore", a.setupRestore)
 }
@@ -95,18 +96,27 @@ func (a *API) backupStatus(w http.ResponseWriter, r *http.Request, p *Principal)
 		out["s3"] = map[string]any{"endpoint": t.Endpoint, "region": t.Region, "bucket": t.Bucket, "prefix": t.Prefix,
 			"access_key": t.AccessKey, "path_style": t.PathStyle, "secret_set": t.SecretKey != ""}
 	}
+	if t := a.Store.State().BackupSMB; t != nil {
+		// Everything but the password.
+		out["smb"] = map[string]any{"server": t.Server, "share": t.Share, "folder": t.Folder, "user": t.User,
+			"domain": t.Domain, "password_set": t.Password != "", "where": (&backup.SMB{T: *t}).Where()}
+	}
 	if a.Backups != nil {
 		out["dir"] = a.Backups.Dir
-		f, err := a.Backups.List(r.Context())
+		f, errs := a.Backups.List(r.Context())
 		if f != nil {
 			out["files"] = f
 		}
-		if err != nil {
-			out["s3_error"] = err.Error()
+		if errs != nil {
+			out["remote_errors"] = errs
 		}
-		if st := a.Backups.S3Status(); !st.At.IsZero() {
-			out["s3_last"] = st
+		up := map[string]backup.S3Status{}
+		for _, where := range []string{"s3", "smb"} {
+			if st := a.Backups.LastUpload(where); !st.At.IsZero() {
+				up[where] = st
+			}
 		}
+		out["uploads"] = up
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -149,18 +159,58 @@ func (a *API) backupS3Set(w http.ResponseWriter, r *http.Request, p *Principal) 
 	}
 }
 
-// backupS3Upload makes a backup now and uploads it to the bucket.
-func (a *API) backupS3Upload(w http.ResponseWriter, r *http.Request, p *Principal) {
+// backupSMBSet sets (or, with an empty server, turns off) the network
+// share backups are copied to, after checking it works. An empty
+// password keeps the one already saved.
+func (a *API) backupSMBSet(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var t store.SMBTarget
+	if !readJSON(w, r, &t) {
+		return
+	}
+	if strings.TrimSpace(t.Server) == "" {
+		if _, ok := a.apply(w, store.NewCommand(store.OpBackupSMB, p.Actor(), store.SMBTarget{})); ok {
+			w.WriteHeader(http.StatusNoContent)
+		}
+		return
+	}
+	if t.Password == "" {
+		if old := a.Store.State().BackupSMB; old != nil {
+			t.Password = old.Password
+		}
+	}
+	if err := t.Clean(); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	c := &backup.SMB{T: t, Dial: a.smbDial}
+	if err := c.Test(ctx); err != nil {
+		writeErr(w, http.StatusBadRequest, "DNServ couldn't use that share, so nothing was saved: "+err.Error())
+		return
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpBackupSMB, p.Actor(), t)); ok {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// backupUpload makes a backup now and copies it to the bucket or share.
+func (a *API) backupUpload(w http.ResponseWriter, r *http.Request, p *Principal) {
 	if a.Backups == nil {
 		writeErr(w, http.StatusNotFound, "backups aren't available on this node")
 		return
 	}
-	if err := a.Backups.UploadNow(); err != nil {
+	where := r.PathValue("where")
+	if where != "s3" && where != "smb" {
+		writeErr(w, http.StatusNotFound, "no such place")
+		return
+	}
+	if err := a.Backups.UploadNow(where); err != nil {
 		writeErr(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	a.Log.Info("backup uploaded to S3 by hand", "actor", p.Actor())
-	writeJSON(w, http.StatusOK, a.Backups.S3Status())
+	a.Log.Info("backup copied off the box by hand", "to", where, "actor", p.Actor())
+	writeJSON(w, http.StatusOK, a.Backups.LastUpload(where))
 }
 
 func (a *API) backupSchedule(w http.ResponseWriter, r *http.Request, p *Principal) {

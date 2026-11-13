@@ -1,15 +1,21 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prezmc/dnserv/internal/backup"
 )
@@ -106,5 +112,55 @@ func TestBackupsS3(t *testing.T) {
 	admin.want(204, "PUT", "/api/v1/backups/s3", map[string]any{"bucket": ""}, nil)
 	if e.api.Store.State().BackupS3 != nil {
 		t.Fatal("didn't turn off")
+	}
+}
+
+func TestBackupsSMB(t *testing.T) {
+	e := newEnv(t)
+	e.api.Backups = &backup.Manager{Store: e.api.Store, Dir: filepath.Join(t.TempDir(), "backups"), Node: func() string { return "a" }, Log: slog.New(slog.DiscardHandler)}
+	admin, _ := e.setupAdmin()
+	e.api.smbDial = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if addr != "nas.lan:445" {
+			t.Errorf("dialled %s", addr)
+		}
+		return nil, errors.New("connection refused")
+	}
+	admin.want(400, "PUT", "/api/v1/backups/smb", map[string]any{"server": `\\nas.lan\backups`, "user": "u"}, nil) // no password
+	var res struct{ Error string }
+	if code := admin.do("PUT", "/api/v1/backups/smb", map[string]any{"server": `\\nas.lan\backups\dnserv`, "user": "u", "password": "p"}, &res); code != 400 || !strings.Contains(res.Error, "couldn't reach nas.lan") {
+		t.Fatalf("unreachable share: %d %+v", code, res)
+	}
+	if e.api.Store.State().BackupSMB != nil {
+		t.Fatal("saved a share that failed the check")
+	}
+	admin.want(404, "POST", "/api/v1/backups/ftp/upload", map[string]any{}, nil)
+
+	// Against a real share when one is given (see internal/backup/smb_test.go).
+	spec := strings.Fields(os.Getenv("DNSERV_SMB_TEST"))
+	if len(spec) != 3 {
+		return
+	}
+	e.api.smbDial = nil
+	target := map[string]any{"server": spec[0], "folder": "api-test/" + strconv.FormatInt(time.Now().UnixNano(), 36), "user": spec[1], "password": strings.ReplaceAll(spec[2], "+", " ")}
+	admin.want(204, "PUT", "/api/v1/backups/smb", target, nil)
+	admin.want(204, "POST", "/api/v1/backups/passphrase", map[string]string{"passphrase": "lantern copper meadow", "password": pw}, nil)
+	admin.want(200, "POST", "/api/v1/backups/smb/upload", map[string]any{}, nil)
+	var st struct {
+		SMB   map[string]any
+		Files []backup.File
+	}
+	admin.want(200, "GET", "/api/v1/backups", nil, &st)
+	if _, leaked := st.SMB["password"]; leaked || st.SMB["password_set"] != true {
+		t.Fatalf("smb status: %v", st.SMB)
+	}
+	n := 0
+	for _, f := range st.Files {
+		if f.Where == "smb" {
+			n++
+			admin.want(200, "GET", "/api/v1/backups/files/smb/"+f.Name, nil, nil)
+		}
+	}
+	if n != 1 {
+		t.Fatalf("files: %+v", st.Files)
 	}
 }

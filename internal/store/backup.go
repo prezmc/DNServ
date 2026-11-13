@@ -58,7 +58,56 @@ const (
 	OpBackupConfig  = "backup.config"  // BackupConfig
 	OpBackupRestore = "backup.restore" // BackupRestore
 	OpBackupS3      = "backup.s3"      // S3Target (empty Bucket: off)
+	OpBackupSMB     = "backup.smb"     // SMBTarget (empty Server: off)
 )
+
+// SMBTarget is a Windows or NAS share (SMB 2 or 3) that the leader writes
+// each scheduled backup to.
+type SMBTarget struct {
+	Server   string `json:"server"` // host name or address, optional :port (445)
+	Share    string `json:"share"`
+	Folder   string `json:"folder,omitempty"` // inside the share
+	User     string `json:"user"`
+	Password string `json:"password"`
+	Domain   string `json:"domain,omitempty"`
+}
+
+// Clean trims the fields and checks them. It accepts a share written
+// as \\server\share\folder or smb://server/share/folder in Server.
+func (t *SMBTarget) Clean() error {
+	t.Server = strings.TrimSpace(t.Server)
+	t.Share = strings.Trim(strings.TrimSpace(strings.ReplaceAll(t.Share, "\\", "/")), "/")
+	t.Folder = strings.Trim(strings.TrimSpace(strings.ReplaceAll(t.Folder, "\\", "/")), "/")
+	t.User = strings.TrimSpace(t.User)
+	t.Domain = strings.TrimSpace(t.Domain)
+	srv := strings.ReplaceAll(t.Server, "\\", "/")
+	srv = strings.TrimPrefix(strings.TrimPrefix(srv, "smb://"), "//")
+	if parts := strings.SplitN(strings.Trim(srv, "/"), "/", 3); len(parts) > 1 {
+		srv = parts[0]
+		if t.Share == "" {
+			t.Share = parts[1]
+		}
+		if len(parts) == 3 && t.Folder == "" {
+			t.Folder = strings.Trim(parts[2], "/")
+		}
+	} else {
+		srv = strings.Trim(srv, "/")
+	}
+	t.Server = srv
+	switch {
+	case t.Server == "":
+		return errors.New("enter the server's name or address")
+	case t.Share == "":
+		return errors.New("enter the share name")
+	case strings.Contains(t.Share, "/"):
+		return errors.New("the share is just its name; put any folders under Folder")
+	case t.User == "" || t.Password == "":
+		return errors.New("enter the user name and password for the share")
+	case strings.Contains(t.Folder, ".."):
+		return errors.New("the folder can't contain ..")
+	}
+	return nil
+}
 
 // S3Target is an S3 or S3-compatible bucket (AWS, Backblaze B2,
 // Cloudflare R2, Wasabi, MinIO and so on) that the leader uploads each
@@ -165,6 +214,21 @@ func applyBackup(st *State, c Command, dec func(any) error) (any, *AuditEntry, e
 		st.BackupS3 = &d
 		// The audit log gets where, never the keys.
 		return nil, audit("set the S3 backup bucket", nil, map[string]string{"endpoint": d.Endpoint, "region": d.Region, "bucket": d.Bucket, "folder": d.Prefix}), nil
+
+	case OpBackupSMB:
+		var d SMBTarget
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		if strings.TrimSpace(d.Server) == "" {
+			st.BackupSMB = nil
+			return nil, audit("turned off backups to a network share", nil, nil), nil
+		}
+		if err := d.Clean(); err != nil {
+			return nil, nil, err
+		}
+		st.BackupSMB = &d
+		return nil, audit("set the network share for backups", nil, map[string]string{"server": d.Server, "share": d.Share, "folder": d.Folder, "user": d.User}), nil
 
 	case OpBackupRestore:
 		var d BackupRestore

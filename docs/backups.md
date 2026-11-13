@@ -21,6 +21,14 @@ nobody can open one. Keep it in a password manager.
   the container (for example `-v /mnt/nas/dnserv:/backups`) and enter
   `/backups` as the copy folder. The leading node writes one copy of each
   backup there.
+- **A network share (SMB):** under Automatic backups, open **Also copy to a
+  network share** and enter the share as Windows or macOS shows it
+  (`\\nas.local\backups\dnserv` or `smb://192.168.1.254/backups`), with
+  a user name and password. DNServ talks SMB 2/3 itself, so nothing needs
+  mounting on the server. **Check and save** writes, reads and deletes a
+  test file first; **Copy a backup now** sends one straight away. The
+  leading node writes one copy of each scheduled backup and keeps the same
+  number there. The password is stored like the S3 secret key.
 - **Off-site in S3:** under Automatic backups, open **Also upload to S3**
   and enter the bucket. Amazon S3, Backblaze B2, Cloudflare R2, Wasabi,
   MinIO and other S3-compatible storage work: leave Endpoint empty for

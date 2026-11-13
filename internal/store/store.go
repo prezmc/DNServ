@@ -48,6 +48,9 @@ type State struct {
 	// is kept out of settings, their history and backups, and the API
 	// never returns the secret.
 	BackupS3 *S3Target `json:"backup_s3,omitempty"`
+	// BackupSMB is a network share (Windows, NAS) the leader also writes
+	// each scheduled backup to (nil: none). Kept like BackupS3.
+	BackupSMB *SMBTarget `json:"backup_smb,omitempty"`
 	// SetupDone is set when the first admin finishes MFA enrollment.
 	SetupDone bool `json:"setup_done"`
 	// VirusTotalKey is the owner's own VirusTotal API key ("": off). The
