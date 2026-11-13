@@ -141,10 +141,12 @@ Everything DNServ does today, in more detail than the README.
   were for, grouped by company or by type (AdGuard's companies database,
   else the site's own domain). Switches hide internet, internal or blocked
   lookups; hovering shows counts and shares; clicking a device, an answer
-  or a service opens the matching Query log. Clicking a device also opens
-  its profile: when it is busy, the kinds of service and companies it
-  uses, its busiest and most blocked sites, risky lookups and anything it
-  looks up on a steady beat. Each server works out its part
+  or a service opens the matching Query log. Clicking a device redraws
+  the map with only that device's lookups (the servers that answered them,
+  how, and what they were for) and opens its profile: when it is busy,
+  the kinds of service and companies it uses, its busiest and most
+  blocked sites, risky lookups and anything it looks up on a steady beat.
+  **All devices** goes back. Each server works out its part
   from its own history when the card is opened, so DNS answers never wait
   for it. History records which upstream server answered each lookup
   (older history shows as "Upstream").

@@ -2185,10 +2185,13 @@ function flowColor(kind) {
 // highlights its bands and offers the matching Query log.
 async function dashboardFlow(box, range) {
   range = range || '24h';
-  const st = box.flowState || (box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '' });
+  const st = box.flowState || (box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: null });
   let data;
-  try { data = await api('GET', '/analytics/flow?range=' + range + '&group=' + st.group); } catch (_) { return; } // keep the map shown until the next try
-  if (!data.total) { box.replaceChildren(); return; }
+  // With a device picked, the whole map is just that device's lookups.
+  const only = st.device ? '&client=' + encodeURIComponent(st.device.key) : '';
+  try { data = await api('GET', '/analytics/flow?range=' + range + '&group=' + st.group + only); } catch (_) { return; } // keep the map shown until the next try
+  const focus = (dev) => { st.device = dev; st.sel = ''; dashboardFlow(box, range); };
+  if (!data.total && !st.device) { box.replaceChildren(); return; }
   const rq = range === '24h' ? '' : 'range=' + range;
   const area = h('div', { class: 'flow-area' });
   const tip = h('div', { class: 'flow-tip', hidden: true });
@@ -2214,13 +2217,17 @@ async function dashboardFlow(box, range) {
       h('div', { class: 'row' }, groupSeg, h('button', { type: 'button', class: 'small', title: 'Full screen', onclick: () => {
         if (document.fullscreenElement) document.exitFullscreen(); else if (card.requestFullscreen) card.requestFullscreen();
       } }, 'Full screen'))),
-    h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device, an answer or a service to follow it.' : 'Click an answer or a service to follow it.'),
+    st.device
+      ? h('div', { class: 'msg info row flow-focus' }, h('span', {}, 'Showing only ', h('b', {}, st.device.label), '\u2019s lookups: the servers that answered them, how, and what they were for.'),
+        h('span', { class: 'grow' }), h('button', { type: 'button', class: 'secondary small', onclick: () => focus(null) }, 'All devices'))
+      : h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device to see only its traffic, or an answer or a service to follow it.' : 'Click an answer or a service to follow it.'),
     h('div', { class: 'row flow-kinds' }, kindBoxes),
     wrap, detail);
   steady(() => box.replaceChildren(card));
 
   const byId = Object.fromEntries(data.nodes.map(n => [n.id, n]));
   function draw() {
+    if (!data.total) { fill(area, h('p', { class: 'muted' }, 'No lookups from this device in this period.')); fill(detail); return; }
     const links = data.links.filter(l => st.kinds[l.kind]);
     const val = {};
     for (const l of links) {
@@ -2257,7 +2264,7 @@ async function dashboardFlow(box, range) {
       return [h('b', {}, n.label), h('div', {}, fmtNum(n.v), ' lookups · ', fmtPct(n.v / total), ' of all'),
         Object.keys(kinds).length > 1 ? h('div', { class: 'muted' }, FLOW_KINDS.filter(([k]) => kinds[k]).map(([k, label]) => label + ' ' + fmtPct(kinds[k] / n.v)).join(' · ')) : null,
         n.col === 3 && n.domains && n.domains.length ? h('div', { class: 'muted mono' }, n.domains.slice(0, 3).join(', ')) : null,
-        h('div', { class: 'muted small' }, 'Click to follow')];
+        h('div', { class: 'muted small' }, n.col === 0 && n.device ? (st.device ? 'Click to see all devices' : 'Click to see only this device') : 'Click to follow')];
     };
     const sel = st.sel && pos[st.sel] ? st.sel : '';
     const touches = (l) => l.s === sel || l.t === sel;
@@ -2287,12 +2294,29 @@ async function dashboardFlow(box, range) {
         p.h > 26 ? svg('text', { x: tx, y: p.y + p.h / 2 + 13, 'text-anchor': leftSide ? 'end' : 'start', class: 'n' }, fmtNum(n.v)) : null);
       node.addEventListener('mousemove', (e) => showTip(e, nodeTip(n)));
       node.addEventListener('mouseleave', hideTip);
-      const pick = () => { st.sel = st.sel === id ? '' : id; hideTip(); draw(); };
+      const pick = () => {
+        hideTip();
+        if (n.col === 0 && n.device && data.devices) { focus(st.device ? null : { key: n.device, label: n.label }); return; }
+        st.sel = st.sel === id ? '' : id; draw();
+      };
       node.addEventListener('click', pick);
       node.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
       g.append(node);
     }
     fill(area, g);
+    if (st.device && !sel) {
+      // Kept across the dashboard's refreshes for a minute, so the page
+      // doesn't reload it (and jump) every few seconds.
+      const key = st.device.key + '|' + range;
+      let p = box.flowProfile;
+      if (!p || p.key !== key || Date.now() - p.at > 60000) {
+        const el = h('div', { class: 'dev-profile' }, h('p', { class: 'muted small' }, 'Loading this device\u2019s profile\u2026'));
+        p = box.flowProfile = { key, at: Date.now(), el };
+        deviceProfile(el, st.device.key, st.device.label, range);
+      }
+      fill(detail, p.el);
+      return;
+    }
     showDetail(sel && pos[sel] ? pos[sel].n : null, links);
   }
 
@@ -2348,7 +2372,6 @@ async function deviceProfile(box, device, label, range) {
       api('GET', '/analytics/beacons?range=24h&limit=8&' + c).catch(() => null),
     ]);
   } catch (e) { fill(box, h('p', { class: 'muted small' }, 'Couldn’t load the profile: ', e.message)); return; }
-  if (!box.isConnected) return;
   const k = sum.counts || {};
   if (!k.total) { fill(box, h('p', { class: 'muted small' }, 'No lookups from this device in this period.')); return; }
   const rows = top.rows || [];

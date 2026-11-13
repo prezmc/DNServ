@@ -91,6 +91,9 @@ func (s *Store) flow(ctx context.Context, q *Query, res *Result) error {
 		return nil
 	}
 	raw := strings.Contains(src, "FROM queries")
+	// One device (or a few): only their lookups.
+	w, args := where(q, args)
+	src += w
 
 	// Devices, split by the kind of lookup so the map can leave a kind out.
 	type ck struct {
@@ -168,24 +171,38 @@ func (s *Store) flow(ctx context.Context, q *Query, res *Result) error {
 	// from the hourly upstream totals.
 	upQuery, upArgs := `SELECT name, upstream, SUM(n) FROM hourly_up WHERE hour >= ? AND hour < ? GROUP BY name, upstream`,
 		[]any{q.From.Unix() / 3600, (q.To.Unix() + 3599) / 3600}
-	if raw {
-		upQuery, upArgs = `SELECT name, upstream, COUNT(*) FROM queries WHERE t >= ? AND t < ? AND result = ? AND upstream IS NOT NULL GROUP BY name, upstream`,
-			[]any{q.From.UnixMicro(), q.To.UnixMicro(), codeAnswered}
+	// The hourly upstream totals aren't kept per device, so a device's
+	// view reads its individual queries (as far back as they are kept;
+	// older answers show as "Upstream").
+	if days, _ := s.Retention(); raw || (len(q.Clients) > 0 && days > 0) {
+		upQuery = `SELECT name, upstream, COUNT(*) FROM queries WHERE t >= ? AND t < ? AND result = ? AND upstream IS NOT NULL`
+		upArgs = []any{q.From.UnixMicro(), q.To.UnixMicro(), codeAnswered}
+		if len(q.Clients) > 0 {
+			upQuery += ` AND client IN (` + placeholders(len(q.Clients)) + `)`
+			for _, c := range q.Clients {
+				upArgs = append(upArgs, c)
+			}
+		}
+		upQuery += ` GROUP BY name, upstream`
+	} else if len(q.Clients) > 0 {
+		upQuery = "" // no per-device record of which server answered
 	}
-	if err := collect(ctx, s.db, upQuery, upArgs, func(r *sql.Rows) error {
-		var name, up string
-		var n int64
-		if err := r.Scan(&name, &up, &n); err != nil {
+	if upQuery != "" {
+		if err := collect(ctx, s.db, upQuery, upArgs, func(r *sql.Rows) error {
+			var name, up string
+			var n int64
+			if err := r.Scan(&name, &up, &n); err != nil {
+				return err
+			}
+			n = min(n, answered[name])
+			if n > 0 {
+				answered[name] -= n
+				add(PathUp+up, name, n)
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
-		n = min(n, answered[name])
-		if n > 0 {
-			answered[name] -= n
-			add(PathUp+up, name, n)
-		}
-		return nil
-	}); err != nil {
-		return err
 	}
 	for name, n := range answered {
 		if n > 0 {
