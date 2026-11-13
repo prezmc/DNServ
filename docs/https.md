@@ -18,6 +18,7 @@ redirected, so scripts and health checks keep working.
 | **Upload a certificate** | A certificate from your own certificate authority | Paste a new one before it expires |
 | **Certificate files in a folder** | Any tool that already gets certificates: Nginx Proxy Manager, Traefik, Caddy, certbot, acme.sh | Re-read within a minute when the files change |
 | **From Nginx Proxy Manager** | People who already use Nginx Proxy Manager for Let's Encrypt | Downloaded again every 12 hours |
+| **Let's Encrypt (built in)** | A free trusted certificate with nothing else to run. Servers don't need to be reachable from the internet. | Renewed 30 days before it expires |
 
 Whichever you choose, every server gets the same certificate. A server
 that can't reach the source (for example, because it can't see the folder)
@@ -36,6 +37,43 @@ address. Open the dashboard with that name. To make the name work at home,
 add it under **Local names** pointing at the server's address. A wildcard
 certificate (`*.example.com`) covers all your servers. Otherwise use one
 certificate per server name, or one certificate that lists every name.
+
+### Let's Encrypt (built in)
+
+DNServ asks Let's Encrypt for one certificate that lists every name you
+enter, such as `dns1.example.com` and `dns2.example.com`, and every server
+uses it. List exact names: there's no wildcard, so other services in the
+same domain aren't covered. The names must be in a public domain you own,
+but they only need to work on your network: point each at its server under
+**Local names**.
+
+Let's Encrypt checks that you own each name with a TXT record at
+`_acme-challenge.<name>` (the DNS-01 check). Pick how that record gets made:
+
+- **Automatic, through my DNS host.** Pick your DNS host from the list
+  (about 190, from [lego](https://go-acme.github.io/lego/dns/)) and fill in
+  its login, such as a Cloudflare API token with *Zone / Zone / Read* and
+  *Zone / DNS / Edit*. When you save, DNServ adds and removes a test record
+  for each name, so a wrong login shows up straight away.
+- **Set once, with a CNAME record.** For DNS hosts with no API. DNServ
+  makes an account on an [acme-dns](https://github.com/joohoi/acme-dns)
+  server (the public `auth.acme-dns.io` unless you run your own) and shows
+  one CNAME record per name, such as
+  `_acme-challenge.dns1.example.com CNAME 1234abcd.auth.acme-dns.io`. Add
+  them once; at each renewal DNServ updates the TXT record on the acme-dns
+  server.
+- **By hand.** DNServ shows the TXT records to add and carries on once
+  your DNS host serves them (it checks every minute, for up to 3 days).
+  The values change at every renewal, so you add new ones each time.
+
+The leader server makes the requests and shares the certificate, so if it
+goes down another server takes over renewals. The DNS host login,
+acme-dns accounts and the Let's Encrypt account key are shared between
+your servers, never shown again, and not in backups. Tick **Test run** to
+try Let's Encrypt's staging service first: it has generous limits, but
+browsers don't trust its certificates. After a failure DNServ waits 30
+minutes, then 2, 6 and 12 hours before trying again; saving the settings
+tries straight away.
 
 ### From Nginx Proxy Manager
 
