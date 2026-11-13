@@ -74,6 +74,7 @@ var ranges = map[string]struct {
 	span time.Duration
 	step int64
 }{
+	"15m": {15 * time.Minute, 60},
 	"1h":  {time.Hour, 300},
 	"24h": {24 * time.Hour, 3600},
 	"7d":  {7 * 24 * time.Hour, 6 * 3600},
@@ -90,7 +91,7 @@ func (a *API) parseQuery(w http.ResponseWriter, r *http.Request, p *Principal, k
 		rg, ok = ranges["24h"], true
 	}
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "range must be 1h, 24h, 7d, 30d or 90d")
+		writeErr(w, http.StatusBadRequest, "range must be 15m, 1h, 24h, 7d, 30d or 90d")
 		return q, false
 	}
 	loc, _ := a.zone()

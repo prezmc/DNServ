@@ -103,6 +103,18 @@ Everything DNServ does today, in more detail than the README.
   updating, response times are rebuilt from the existing query history.
   Admins can clear the performance stats (Performance page) or all query
   history (Settings → Query history) on every server.
+- **Arrange the Dashboard.** **Arrange** lets each user drag the cards
+  into their own order (or use the arrow buttons), make a card wide, or
+  hide it. The layout is saved with the account, so it follows the user
+  to any browser; **Back to default** undoes it. Cards that refresh keep
+  the page still: what you're looking at doesn't move when a card above
+  it grows or shrinks.
+- **Dashboard numbers.** Top domains lists only lookups that got answers
+  (blocked ones are in Top blocked). The cache hit rate counts only
+  lookups that could come from the cache (not blocked ones or local
+  names), with the share of all queries underneath. The Devices card
+  shows the busiest devices over the period, or the most active in the
+  last 15 minutes.
 - **Traffic map.** A Dashboard card draws every lookup as a flow: the
   busiest devices, the DNS server that answered, how it was answered (cache,
   each upstream server, blocked, local names) and the services the lookups

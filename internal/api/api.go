@@ -145,6 +145,7 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/auth/logout", a.logout)
 	m.HandleFunc("GET /api/v1/auth/me", a.me)
 	m.HandleFunc("POST /api/v1/auth/password", a.authed("", a.changePassword))
+	m.HandleFunc("PUT /api/v1/auth/dashboard", a.authed("", a.setDashboard))
 	m.HandleFunc("GET /api/v1/auth/sessions", a.authed("", a.mySessions))
 	m.HandleFunc("DELETE /api/v1/auth/sessions/{id}", a.authed("", a.revokeMySession))
 	m.HandleFunc("POST /api/v1/auth/recovery-codes", a.authed("", a.newRecoveryCodes))

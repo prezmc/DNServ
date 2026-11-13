@@ -297,3 +297,21 @@ func TestCrossOriginBlocked(t *testing.T) {
 		t.Fatalf("cross-origin login: HTTP %d", resp.StatusCode)
 	}
 }
+
+func TestDashboardLayout(t *testing.T) {
+	e := newEnv(t)
+	a, _ := e.setupAdmin()
+	layout := []string{"devices", "tiles:w", "-lists"}
+	a.want(204, "PUT", "/api/v1/auth/dashboard", map[string]any{"layout": layout}, nil)
+	var me struct{ Dashboard []string }
+	a.want(200, "GET", "/api/v1/auth/me", nil, &me)
+	if strings.Join(me.Dashboard, ",") != strings.Join(layout, ",") {
+		t.Fatalf("dashboard = %v, want %v", me.Dashboard, layout)
+	}
+	a.want(400, "PUT", "/api/v1/auth/dashboard", map[string]any{"layout": []string{"<script>"}}, nil)
+	a.want(204, "PUT", "/api/v1/auth/dashboard", map[string]any{"layout": []string{}}, nil)
+	a.want(200, "GET", "/api/v1/auth/me", nil, &me)
+	if len(me.Dashboard) != 0 {
+		t.Fatalf("dashboard after reset = %v", me.Dashboard)
+	}
+}

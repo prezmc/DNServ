@@ -24,6 +24,7 @@ const (
 const (
 	TopDomains = "domains"
 	TopBlocked = "blocked"
+	TopAllowed = "allowed" // domains that got answers (not blocked)
 	TopClients = "clients"
 	TopLists   = "lists" // the lists (or custom rules) behind blocks
 )
@@ -212,8 +213,8 @@ func (q *Query) Validate() error {
 			return fmt.Errorf("%w: reach needs 1 to %d names", ErrBadQuery, MaxNames)
 		}
 	case KindTop:
-		if q.By != TopDomains && q.By != TopBlocked && q.By != TopClients && q.By != TopLists {
-			return fmt.Errorf("%w: by must be domains, blocked, clients or lists", ErrBadQuery)
+		if q.By != TopDomains && q.By != TopBlocked && q.By != TopAllowed && q.By != TopClients && q.By != TopLists {
+			return fmt.Errorf("%w: by must be domains, allowed, blocked, clients or lists", ErrBadQuery)
 		}
 	case KindDomain:
 		if q.Name == "" {
@@ -358,11 +359,15 @@ func (s *Store) top(ctx context.Context, q *Query, res *Result) error {
 	if q.By == TopClients {
 		key = "client"
 	}
-	if q.By == TopBlocked {
+	if q.By == TopBlocked || q.By == TopAllowed {
+		op := " = ?"
+		if q.By == TopAllowed {
+			op = " <> ?"
+		}
 		if w == "" {
-			w = " WHERE result = ?"
+			w = " WHERE result" + op
 		} else {
-			w += " AND result = ?"
+			w += " AND result" + op
 		}
 		args = append(args, codeBlocked)
 	}
