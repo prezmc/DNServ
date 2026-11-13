@@ -297,6 +297,37 @@ func run() error {
 		return n
 	}
 	cl.Handle(peerCacheClear, func(context.Context, json.RawMessage) (any, error) { return clearLocal(), nil })
+	cl.Handle(peerCacheFill, func(context.Context, json.RawMessage) (any, error) {
+		if c == nil {
+			return nil, errors.New("the cache is off")
+		}
+		return c.Fill(), nil
+	})
+	adm.CacheFill = func(ctx context.Context) []api.CacheFill {
+		self := api.CacheFill{Server: cl.Name()}
+		if c != nil {
+			f := c.Fill()
+			self.Fill = &f
+		} else {
+			self.Error = "the cache is off"
+		}
+		out := []api.CacheFill{self}
+		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		for _, r := range cl.AskPeers(pctx, peerCacheFill, nil) {
+			res := api.CacheFill{Server: r.Name}
+			var f cache.Fill
+			if r.Err != nil {
+				res.Error = r.Err.Error()
+			} else if err := json.Unmarshal(r.Body, &f); err != nil {
+				res.Error = err.Error()
+			} else {
+				res.Fill = &f
+			}
+			out = append(out, res)
+		}
+		return out
+	}
 	adm.ClearCache = func(ctx context.Context) []api.CacheCleared {
 		out := []api.CacheCleared{{Server: cl.Name(), Entries: clearLocal()}}
 		pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -464,6 +495,9 @@ func run() error {
 		}
 		if !reflect.DeepEqual(old.Pauses, new.Pauses) || old.Cluster.ID != new.Cluster.ID {
 			setPause(srv, new, selfID)
+		}
+		if c != nil && !reflect.DeepEqual(old.Settings.CacheSize, new.Settings.CacheSize) {
+			c.Resize(new.Settings.Overlay(base).Cache.MaxEntries)
 		}
 		if hist != nil && (!reflect.DeepEqual(old.Settings.HistoryDays, new.Settings.HistoryDays) || !reflect.DeepEqual(old.Settings.StatsDays, new.Settings.StatsDays)) {
 			h := new.Settings.Overlay(base).History
@@ -1064,6 +1098,7 @@ const (
 	peerListsChanged = "lists.changed"  // the leader has new list contents
 	peerListsUpdate  = "lists.update"   // download lists now (sent to the leader)
 	peerCacheClear   = "cache.clear"    // empty the answer cache
+	peerCacheFill    = "cache.fill"     // how full the answer cache is
 	peerHistoryClear = "history.clear"  // delete performance stats or all query history
 	peerHTTPSStatus  = "https.status"   // this node's dashboard HTTPS status
 )

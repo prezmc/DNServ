@@ -122,7 +122,11 @@ Everything DNServ does today, in more detail than the README.
   by the site (under a minute), a cache time that ran out, asked again
   while it should still have been cached, or a failed lookup. Each reason
   lists the domains behind it. Worked out from the query history (which
-  now keeps each answer's cache time) when the page is opened.
+  now keeps each answer's cache time) when the page is opened. Below it,
+  **How full the cache is** shows each server's cache: answers held out of
+  its size, how many are fresh or kept for when upstream is down, and
+  whether answers still good had to be pushed out for room. The size is a
+  setting (Settings → Cache) that applies without a restart.
 - **Repeating lookups.** A Dashboard card lists names a device asks for on
   a steady beat (every 30 seconds, every 5 minutes), as analytics,
   telemetry and trackers do. Hovering a row shows the devices and their

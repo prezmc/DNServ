@@ -1,0 +1,12 @@
+{
+  "name": "dnserv-browser-tests",
+  "private": true,
+  "description": "Browser tests for the DNServ dashboard. See docs/testing.md.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

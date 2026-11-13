@@ -505,3 +505,15 @@ details.parts tr.total td { font-weight: 700; border-top: 1px solid currentColor
 .dp-chart { margin-bottom: .5rem; }
 .dp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .5rem 1.25rem; }
 .dp-grid table.top { width: 100%; }
+
+/* How full the cache is */
+.fill-table td { vertical-align: middle; }
+.fill-table td.grow { width: 100%; }
+.fill-table td.fill-server { max-width: 8rem; overflow-wrap: anywhere; }
+.fill-meter { display: flex; height: 10px; border-radius: 5px; background: var(--code); overflow: hidden; margin: .15rem 0 .2rem; }
+.fill-meter span { display: block; height: 100%; }
+.fill-meter .fresh { background: var(--s-3); }
+.fill-meter .stale { background: color-mix(in srgb, var(--s-3) 45%, var(--code)); }
+.fill-meter .old { background: color-mix(in srgb, var(--muted) 40%, var(--code)); }
+.key.fill-stale { background: color-mix(in srgb, var(--s-3) 45%, var(--code)); }
+.key.fill-old { background: color-mix(in srgb, var(--muted) 40%, var(--code)); }

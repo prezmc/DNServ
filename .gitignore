@@ -3,3 +3,6 @@
 /data/
 *.test
 *.out
+/dnserv
+/dnserv-browser-test
+test/browser/node_modules/

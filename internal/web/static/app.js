@@ -2598,12 +2598,48 @@ const CACHE_REASONS = {
 };
 
 // cacheReport shows why lookups weren't answered from the cache.
+// cacheFillCard shows how full each server's answer cache is right now:
+// answers held out of what it can hold, how many are still fresh, and
+// whether answers that were still good had to be pushed out for room
+// (the sign it is too small).
+function cacheFillCard(fills, cfg) {
+  const ok = fills.filter(f => f.fill);
+  if (!fills.length) return null;
+  const evicting = ok.some(f => f.fill.evicted > 0 && f.fill.entries >= f.fill.max * 0.95);
+  const row = (f) => {
+    if (!f.fill) return h('tr', {}, h('td', { class: 'fill-server' }, h('b', {}, f.server)), h('td', { colspan: 2, class: 'muted small' }, f.error || 'No answer'));
+    const x = f.fill, used = x.max ? x.entries / x.max : 0;
+    const meter = h('div', { class: 'fill-meter', role: 'img', 'aria-label': fmtPct(used) + ' full' },
+      h('span', { class: 'fresh', title: fmtNum(x.fresh) + ' fresh' }), h('span', { class: 'stale', title: fmtNum(x.usable - x.fresh) + ' expired, kept for when upstream is down' }),
+      h('span', { class: 'old', title: fmtNum(x.entries - x.usable) + ' expired, waiting to be replaced' }));
+    const [a, b, c] = meter.children;
+    a.style.width = (x.max ? 100 * x.fresh / x.max : 0) + '%';
+    b.style.width = (x.max ? 100 * (x.usable - x.fresh) / x.max : 0) + '%';
+    c.style.width = (x.max ? 100 * (x.entries - x.usable) / x.max : 0) + '%';
+    return h('tr', {},
+      h('td', { class: 'fill-server' }, h('b', {}, f.server)),
+      h('td', { class: 'grow' }, meter, h('div', { class: 'muted small' }, fmtNum(x.entries), ' of ', fmtNum(x.max), ' answers · ', fmtNum(x.fresh), ' fresh · ',
+        h('span', { class: x.evicted ? 'worse' : null, title: 'Answers still good that were pushed out to make room, since the server started' },
+          x.evicted ? fmtNum(x.evicted) + ' pushed out for room' : 'none pushed out'))),
+      h('td', { class: 'num' }, h('b', {}, fmtPct(used))));
+  };
+  return h('div', { class: 'card' },
+    h('h2', {}, 'How full the cache is'),
+    h('table', { class: 'top fill-table' }, h('tbody', {}, fills.map(row))),
+    h('p', { class: 'legend small' }, h('span', {}, h('span', { class: 'key cached' }), 'Fresh'), h('span', {}, h('span', { class: 'key fill-stale' }), 'Expired, kept for when upstream is down'),
+      h('span', {}, h('span', { class: 'key fill-old' }), 'Expired, waiting to be replaced')),
+    evicting ? msg('warn', ['The cache is full and has been pushing out answers that were still good. A bigger cache would answer more from memory.',
+      can('upstream.manage') ? [' Raise the cache size under ', h('a', { href: '#/settings' }, 'Settings \u2192 Cache'), '.'] : ''])
+      : h('p', { class: 'muted small' }, 'Each server has its own cache', cfg && cfg.max_entries ? ', holding up to ' + fmtNum(cfg.max_entries) + ' answers' : '', '. When it is full, the least recently used answers make room for new ones. As of when you opened this page.'));
+}
+
 async function cacheReport(box, range, multi) {
   const r = ['30d', '90d'].includes(range) ? '7d' : range;
   let d;
   try { d = await api('GET', '/analytics/cache?range=' + r); } catch (_) { return; }
   const total = d.hits + d.misses;
-  if (!total) return;
+  const fillCard = cacheFillCard(d.fill || [], d.cache);
+  if (!total) { fill(box, fillCard); return; }
   const reasons = d.reasons.filter(x => x.n > 0);
   const colors = { first: 'var(--s-4)', short: 'var(--s-blocked)', expired: 'var(--s-allowed)', early: 'var(--warn)', failed: 'var(--bad)', unknown: 'var(--muted)' };
   const strip = h('div', { class: 'cache-strip', role: 'img', 'aria-label': 'Cache hits and misses' },
@@ -2630,7 +2666,7 @@ async function cacheReport(box, range, multi) {
           h('td', { class: 'num' }, fmtNum(m.n)))))) : null);
     })),
     h('p', { class: 'muted small' }, 'Each lookup that went upstream is compared with the same name’s earlier lookups on the same server. ',
-      isAdmin() ? ['Cache settings are under ', h('a', { href: '#/settings' }, 'Settings'), '.'] : '')));
+      isAdmin() ? ['Cache settings are under ', h('a', { href: '#/settings' }, 'Settings'), '.'] : '')), fillCard);
   box.querySelectorAll('.cache-reasons summary .dot').forEach((dot, i) => { dot.style.background = colors[reasons[i].reason]; });
 }
 
@@ -2870,6 +2906,19 @@ async function settings(main) {
         upstream_mode: u.Mode, upstream_servers: norm(u.Servers), upstream_strategy: u.Strategy || 'fastest',
         tunnel_interface: u.Tunnel.Interface || '', tunnel_expected_egress: norm(u.Tunnel.ExpectedEgress), tunnel_on_down: u.Tunnel.OnDown,
       }))));
+  }
+
+  if (can('upstream.manage') && eff.Cache && eff.Cache.Enabled) {
+    const cc = eff.Cache;
+    sections.push(h('div', { class: 'card' },
+      h('h2', {}, 'Cache ', origin('cache_size')),
+      form({ 'data-track': true }, [
+        h('label', { for: 'csize' }, 'Answers each server keeps in its cache'),
+        h('input', { id: 'csize', name: 'csize', type: 'number', min: 1000, max: 5000000, step: 1000, value: cc.MaxEntries }),
+        h('p', { class: 'muted small' }, 'Each answer takes roughly 0.5 to 1 KB of memory, so 100,000 answers use up to about 100 MB. A bigger cache answers more from memory; ',
+          h('a', { href: '#/performance' }, 'Performance'), ' shows how full it is. Changes apply right away, without a restart.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], (f) => save({ cache_size: Number(val(f, 'csize')) }, { cache_size: cc.MaxEntries }))));
   }
 
   if (can('lists.manage')) {

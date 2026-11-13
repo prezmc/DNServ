@@ -1,0 +1,28 @@
+# Weekly update pull requests for everything DNServ depends on: Go
+# modules, the GitHub Actions in the workflows, the image's base images
+# and the browser tests' Playwright. Security fixes come as soon as
+# GitHub knows of them, whatever the schedule.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: npm
+    directory: /test/browser
+    schedule:
+      interval: weekly

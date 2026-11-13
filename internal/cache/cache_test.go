@@ -160,3 +160,55 @@ func BenchmarkGetHit(b *testing.B) {
 		}
 	})
 }
+
+func TestFill(t *testing.T) {
+	c, clk := newTestCache(Options{MaxEntries: 100 * shards, ServeStale: time.Minute})
+	for i, ttl := range []uint32{30, 30, 300} {
+		q, r := answer(string(rune('a'+i))+".example", ttl)
+		c.Set(Key(q), r)
+	}
+	clk.add(45 * time.Second) // the 30-second answers are now stale
+	f := c.Fill()
+	if f.Entries != 3 || f.Fresh != 1 || f.Usable != 3 || f.Max != 100*shards || f.Evicted != 0 {
+		t.Fatalf("fill = %+v", f)
+	}
+	clk.add(time.Minute) // and now past the stale window
+	if f = c.Fill(); f.Usable != 1 {
+		t.Fatalf("usable after the stale window = %d", f.Usable)
+	}
+
+	// Pushing out usable answers for room is counted; expired ones aren't.
+	small, clk2 := newTestCache(Options{MaxEntries: shards})
+	for i := range 1000 {
+		q, r := answer(time.Duration(i).String()+".example", 60)
+		small.Set(Key(q), r)
+	}
+	if ev := small.Stats().Evicted; ev < 1000-shards {
+		t.Fatalf("evicted = %d, want at least %d", ev, 1000-shards)
+	}
+	before := small.Stats().Evicted
+	clk2.add(time.Hour)
+	for i := range 100 {
+		q, r := answer("later"+time.Duration(i).String()+".example", 60)
+		small.Set(Key(q), r)
+	}
+	if got := small.Stats().Evicted - before; got >= 100 {
+		t.Fatalf("expired answers counted as evicted: %d", got)
+	}
+}
+
+func TestResize(t *testing.T) {
+	c, _ := newTestCache(Options{MaxEntries: 100 * shards})
+	for i := range 50 * shards {
+		q, r := answer(time.Duration(i).String()+".example", 60)
+		c.Set(Key(q), r)
+	}
+	c.Resize(10 * shards)
+	if n := c.Len(); n > 10*shards || c.Stats().Max != 10*shards {
+		t.Fatalf("after shrinking: %d entries, max %d", n, c.Stats().Max)
+	}
+	c.Resize(1000 * shards)
+	if c.Fill().Max != 1000*shards {
+		t.Fatal("grow not applied")
+	}
+}

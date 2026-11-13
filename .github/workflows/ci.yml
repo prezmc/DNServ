@@ -49,6 +49,43 @@ jobs:
           push: false
           tags: dnserv:ci
 
+  browser:
+    # The dashboard in Chromium against a real node: setup wizard, rules,
+    # lists, local names, pause, query log, backups, users. See
+    # test/browser and docs/testing.md.
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: test/browser/package-lock.json
+      - name: Build the node
+        run: go build -o dnserv-browser-test ./cmd/dnserv
+      - name: Install Playwright and Chromium
+        working-directory: test/browser
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Browser tests
+        working-directory: test/browser
+        env:
+          BROWSER_SHOTS: ${{ runner.temp }}/browser-shots
+        run: node --test
+      - name: Screenshots of failures
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failures
+          path: ${{ runner.temp }}/browser-shots
+          if-no-files-found: ignore
+
   failover:
     # Real containers: two nodes and a witness, broken on purpose while a
     # client sends DNS nonstop. See test/failover.
