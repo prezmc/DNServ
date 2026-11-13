@@ -2629,8 +2629,10 @@ function cacheFillCard(fills, cfg) {
   const ok = fills.filter(f => f.fill);
   if (!fills.length) return null;
   const evicting = ok.some(f => f.fill.evicted > 0 && f.fill.entries >= f.fill.max * 0.95);
+  // One stacked block per server (name and percent on top, the bar, then
+  // the details) so long server names never squeeze into a narrow column.
   const row = (f) => {
-    if (!f.fill) return h('tr', {}, h('td', { class: 'fill-server' }, h('b', {}, f.server)), h('td', { colspan: 2, class: 'muted small' }, f.error || 'No answer'));
+    if (!f.fill) return h('div', { class: 'fill-row' }, h('div', { class: 'fill-head' }, h('b', {}, f.server)), h('div', { class: 'muted small' }, f.error || 'No answer'));
     const x = f.fill, used = x.max ? x.entries / x.max : 0;
     const meter = h('div', { class: 'fill-meter', role: 'img', 'aria-label': fmtPct(used) + ' full' },
       h('span', { class: 'fresh', title: fmtNum(x.fresh) + ' fresh' }), h('span', { class: 'stale', title: fmtNum(x.usable - x.fresh) + ' expired, kept for when upstream is down' }),
@@ -2639,16 +2641,19 @@ function cacheFillCard(fills, cfg) {
     a.style.width = (x.max ? 100 * x.fresh / x.max : 0) + '%';
     b.style.width = (x.max ? 100 * (x.usable - x.fresh) / x.max : 0) + '%';
     c.style.width = (x.max ? 100 * (x.entries - x.usable) / x.max : 0) + '%';
-    return h('tr', {},
-      h('td', { class: 'fill-server' }, h('b', {}, f.server)),
-      h('td', { class: 'grow' }, meter, h('div', { class: 'muted small' }, fmtNum(x.entries), ' of ', fmtNum(x.max), ' answers · ', fmtNum(x.fresh), ' fresh · ',
+    const saved = x.saved ? new Date(x.saved * 1000).toISOString() : '';
+    return h('div', { class: 'fill-row' },
+      h('div', { class: 'fill-head' }, h('b', {}, f.server), h('b', {}, fmtPct(used), ' full')),
+      meter,
+      h('div', { class: 'muted small' }, fmtNum(x.entries), ' of ', fmtNum(x.max), ' answers · ', fmtNum(x.fresh), ' fresh · ',
         h('span', { class: x.evicted ? 'worse' : null, title: 'Answers still good that were pushed out to make room, since the server started' },
-          x.evicted ? fmtNum(x.evicted) + ' pushed out for room' : 'none pushed out'))),
-      h('td', { class: 'num' }, h('b', {}, fmtPct(used))));
+          x.evicted ? fmtNum(x.evicted) + ' pushed out for room' : 'none pushed out')),
+      h('div', { class: 'muted small' }, x.restored ? fmtNum(x.restored) + ' answers reloaded from disk at start' : 'Nothing reloaded from disk at start',
+        ' · ', saved ? h('span', { title: fmtTime(saved) }, 'saved to disk ' + ago(saved)) : 'not saved to disk yet'));
   };
   return h('div', { class: 'card' },
     h('h2', {}, 'How full the cache is'),
-    h('table', { class: 'top fill-table' }, h('tbody', {}, fills.map(row))),
+    h('div', { class: 'fill-list' }, fills.map(row)),
     h('p', { class: 'legend small' }, h('span', {}, h('span', { class: 'key cached' }), 'Fresh'), h('span', {}, h('span', { class: 'key fill-stale' }), 'Expired, kept for when upstream is down'),
       h('span', {}, h('span', { class: 'key fill-old' }), 'Expired, waiting to be replaced')),
     evicting ? msg('warn', ['The cache is full and has been pushing out answers that were still good. A bigger cache would answer more from memory.',

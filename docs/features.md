@@ -31,7 +31,8 @@ Everything DNServ does today, in more detail than the README.
   used. A server that fails is skipped for 30 seconds.
 - **Fast cache.** Sharded in-memory cache with prefetch of popular entries
   before they expire, serve-stale when upstream is down (RFC 8767), and
-  persistence: the cache is saved on shutdown and reloaded on start.
+  persistence: the cache is saved to disk every 10 minutes and first thing
+  at shutdown, and reloaded on start.
 - **Blocklists and custom rules.** Hosts files, plain domain lists and AdBlock
   syntax (`||domain^`, `@@||domain^`, `*.domain`, wildcards, regex,
   `$denyallow`, `$badfilter`). Lists download on a
@@ -126,7 +127,9 @@ Everything DNServ does today, in more detail than the README.
   **How full the cache is** shows each server's cache: answers held out of
   its size, how many are fresh or kept for when upstream is down, and
   whether answers still good had to be pushed out for room. The size is a
-  setting (Settings → Cache) that applies without a restart.
+  setting (Settings → Cache) that applies without a restart. Each server
+  also shows how many answers it reloaded from disk at start and when it
+  last saved.
 - **Repeating lookups.** A Dashboard card lists names a device asks for on
   a steady beat (every 30 seconds, every 5 minutes), as analytics,
   telemetry and trackers do. Hovering a row shows the devices and their

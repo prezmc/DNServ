@@ -164,6 +164,38 @@ func run() error {
 			}
 		}
 	}
+	// saveCache writes the cache to disk: at shutdown, and every 10
+	// minutes so a crash or a forced stop loses little.
+	var saveMu sync.Mutex
+	saveCache := func(why string) {
+		if c == nil || !cfg.Cache.Persist {
+			return
+		}
+		saveMu.Lock()
+		defer saveMu.Unlock()
+		start := time.Now()
+		if n, err := c.Save(cachePath); err != nil {
+			log.Warn("cache save failed", "err", err, "when", why)
+		} else if why == "shutdown" {
+			log.Info("cache saved", "entries", n, "took", time.Since(start).Round(time.Millisecond))
+		} else {
+			log.Debug("cache saved", "entries", n, "when", why)
+		}
+	}
+	if c != nil && cfg.Cache.Persist {
+		go func() {
+			t := time.NewTicker(10 * time.Minute)
+			defer t.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					saveCache("periodic")
+				}
+			}
+		}()
+	}
 
 	// Filtering. DNS starts answering right away; the index is built in the
 	// background and /readyz reports ready once it is in place.
@@ -576,18 +608,15 @@ func run() error {
 
 	<-ctx.Done()
 	log.Info("shutting down")
-	shutCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// The cache first: it is quick, and Docker kills the container 10
+	// seconds after asking it to stop, which closing open dashboard
+	// connections can use up.
+	saveCache("shutdown")
+	shutCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	_ = httpSrv.Shutdown(shutCtx)
 	_ = srv.Shutdown(shutCtx)
 	_ = sessions.Save()
-	if c != nil && cfg.Cache.Persist {
-		if n, err := c.Save(cachePath); err != nil {
-			log.Warn("cache save failed", "err", err)
-		} else {
-			log.Info("cache saved", "entries", n)
-		}
-	}
 	return nil
 }
 

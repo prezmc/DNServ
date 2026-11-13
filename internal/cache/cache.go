@@ -57,6 +57,9 @@ type Cache struct {
 	// size is the number of answers asked for (the shards together may
 	// hold a few fewer, from rounding).
 	size atomic.Int64
+	// restored is how many answers came back from disk at start, and
+	// saved when the cache was last written to disk (unix seconds).
+	restored, saved atomic.Int64
 }
 
 type shard struct {
@@ -395,11 +398,15 @@ type Fill struct {
 	Usable  int   `json:"usable"` // fresh plus serve-stale
 	Max     int   `json:"max"`
 	Evicted int64 `json:"evicted"`
+	// Restored answers came back from disk at start; Saved is when the
+	// cache was last written to disk (unix seconds, 0 if not yet).
+	Restored int64 `json:"restored"`
+	Saved    int64 `json:"saved,omitempty"`
 }
 
 func (c *Cache) Fill() Fill {
 	now := c.now()
-	f := Fill{Max: c.capacity(), Evicted: c.evicted.Load()}
+	f := Fill{Max: c.capacity(), Evicted: c.evicted.Load(), Restored: c.restored.Load(), Saved: c.saved.Load()}
 	for i := range c.shards {
 		s := &c.shards[i]
 		s.mu.Lock()
@@ -448,31 +455,47 @@ func (c *Cache) Save(path string) (int, error) {
 	}
 	now := c.now()
 	n := 0
+	// Each shard is copied under its lock (just pointers: stored answers
+	// are never changed in place) and written out after, so queries
+	// aren't held up while the file is written.
+	type item struct {
+		key    string
+		msg    *dns.Msg
+		stored time.Time
+		ttl    time.Duration
+	}
+	var items []item
 	for i := range c.shards {
 		s := &c.shards[i]
+		items = items[:0]
 		s.mu.Lock()
 		for el := s.lru.Back(); el != nil; el = el.Prev() { // oldest first, so reload keeps LRU order
 			e := el.Value.(*entry)
-			if now.Sub(e.stored) > e.ttl+c.opt.ServeStale {
-				continue
+			if now.Sub(e.stored) <= e.ttl+c.opt.ServeStale {
+				items = append(items, item{e.key, e.msg, e.stored, e.ttl})
 			}
-			b, err := e.msg.Pack()
+		}
+		s.mu.Unlock()
+		for _, it := range items {
+			b, err := it.msg.Pack()
 			if err != nil {
 				continue
 			}
-			if err := enc.Encode(persisted{Key: e.key, Msg: b, Stored: e.stored, TTL: e.ttl}); err != nil {
-				s.mu.Unlock()
+			if err := enc.Encode(persisted{Key: it.key, Msg: b, Stored: it.stored, TTL: it.ttl}); err != nil {
 				tmp.Close()
 				return n, err
 			}
 			n++
 		}
-		s.mu.Unlock()
 	}
 	if err := tmp.Close(); err != nil {
 		return n, err
 	}
-	return n, os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return n, err
+	}
+	c.saved.Store(c.now().Unix())
+	return n, nil
 }
 
 // Load restores entries saved by Save, dropping any no longer usable.
@@ -495,6 +518,7 @@ func (c *Cache) Load(path string) (int, error) {
 	for {
 		var p persisted
 		if err := dec.Decode(&p); err != nil {
+			c.restored.Add(int64(n))
 			if errors.Is(err, io.EOF) {
 				return n, nil
 			}

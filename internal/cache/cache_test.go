@@ -146,6 +146,12 @@ func TestSaveLoad(t *testing.T) {
 	if res.State != Fresh || res.Msg.Answer[0].Header().Ttl != 50 {
 		t.Fatalf("reloaded entry = %+v", res)
 	}
+	if f := c2.Fill(); f.Restored != 1 {
+		t.Fatalf("restored = %d", f.Restored)
+	}
+	if c.Fill().Saved == 0 {
+		t.Fatal("save time not kept")
+	}
 }
 
 func BenchmarkGetHit(b *testing.B) {
