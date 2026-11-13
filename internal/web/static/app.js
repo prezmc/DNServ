@@ -468,6 +468,68 @@ function setupAdmin(code) {
   ));
 }
 
+
+// ---------- passkeys ----------
+
+// Browsers allow passkeys only on HTTPS (or localhost) and never for an
+// IP address.
+const isIPHost = (n) => /^[0-9.]+$/.test(n) || n.includes(':') || n.startsWith('[');
+const passkeysWork = () => !!(window.PublicKeyCredential && window.isSecureContext && !isIPHost(location.hostname));
+const passkeyWhyNot = () => !window.PublicKeyCredential ? "This browser doesn't support passkeys."
+  : isIPHost(location.hostname) ? 'Passkeys need the dashboard opened by its name (like dns.example.com) over HTTPS, not by IP address.'
+  : 'Passkeys need the dashboard opened over HTTPS. Turn on HTTPS in Settings, then open it by its name.';
+
+const b64u = {
+  enc: (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
+  dec: (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0)),
+};
+
+function pkOptions(o) {
+  const x = { ...o, challenge: b64u.dec(o.challenge) };
+  if (o.user) x.user = { ...o.user, id: b64u.dec(o.user.id) };
+  for (const k of ['excludeCredentials', 'allowCredentials']) if (o[k]) x[k] = o[k].map(c => ({ ...c, id: b64u.dec(c.id) }));
+  return x;
+}
+
+function pkJSON(c) {
+  const r = c.response, out = { id: c.id, rawId: b64u.enc(c.rawId), type: c.type, authenticatorAttachment: c.authenticatorAttachment || undefined,
+    clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {}, response: { clientDataJSON: b64u.enc(r.clientDataJSON) } };
+  if (r.attestationObject) {
+    out.response.attestationObject = b64u.enc(r.attestationObject);
+    if (r.getTransports) out.response.transports = r.getTransports();
+  } else {
+    out.response.authenticatorData = b64u.enc(r.authenticatorData);
+    out.response.signature = b64u.enc(r.signature);
+    if (r.userHandle) out.response.userHandle = b64u.enc(r.userHandle);
+  }
+  return out;
+}
+
+function pkError(e) {
+  if (e && e.name === 'NotAllowedError') return new Error('The passkey prompt was cancelled or timed out, or there is no passkey for this site on this device.');
+  if (e && e.name === 'InvalidStateError') return new Error('This device already has a passkey for your account.');
+  return e;
+}
+
+// passkeySignIn runs a sign-in ceremony: begin and finish are API paths.
+async function passkeySignIn(begin, finish) {
+  const b = await api('POST', begin);
+  let cred;
+  try { cred = await navigator.credentials.get({ publicKey: pkOptions(b.options) }); } catch (e) { throw pkError(e); }
+  await api('POST', finish, { ticket: b.ticket, credential: pkJSON(cred) });
+  await boot();
+}
+
+function passkeyButton(label, begin, finish) {
+  const out = h('div');
+  const btn = h('button', { type: 'button', onclick: async () => {
+    btn.disabled = true;
+    out.replaceChildren();
+    try { await passkeySignIn(begin, finish); } catch (e) { out.replaceChildren(msg('err', e.message)); btn.disabled = false; }
+  } }, label);
+  return h('div', { class: 'mt-s' }, btn, out);
+}
+
 function login() {
   render(centered(
     h('h1', {}, 'Sign in'),
@@ -482,6 +544,8 @@ function login() {
       await api('POST', '/auth/login', { username: val(f, 'username').trim(), password: val(f, 'password') });
       await boot();
     }),
+    passkeysWork() ? h('div', { class: 'mt' }, h('p', { class: 'muted small' }, 'Or skip the password and code:'),
+      passkeyButton('Sign in with a passkey', '/auth/passkey/begin', '/auth/passkey/finish')) : null,
   ));
 }
 
@@ -508,6 +572,8 @@ function mfa() {
       await api('POST', '/auth/mfa', { code: val(f, 'code') });
       await boot();
     }),
+    passkeysWork() && ME && ME.user && ME.user.passkeys > 0
+      ? passkeyButton('Use a passkey instead', '/auth/mfa/passkey/begin', '/auth/mfa/passkey/finish') : null,
   ));
   draw();
 }
@@ -3417,7 +3483,7 @@ async function users(main) {
       h('button', { class: 'link', onclick: () => editUser(u) }, 'Edit'),
       h('button', { class: 'link', onclick: () => act(() => api('PATCH', '/users/' + u.id, { disabled: !u.disabled })) }, u.disabled ? 'Enable' : 'Disable'),
       h('button', { class: 'link', onclick: () => tempPassword(u) }, 'Set password'),
-      u.mfa_enrolled ? h('button', { class: 'link', onclick: async () => (await ask('Reset two-factor sign-in for ' + u.username + '? They set it up again at their next sign-in.', 'Reset 2FA')) && act(() => api('POST', '/users/' + u.id + '/reset-mfa')) }, 'Reset 2FA') : null,
+      u.mfa_enrolled ? h('button', { class: 'link', onclick: async () => (await ask('Reset two-factor sign-in for ' + u.username + '? Their passkeys are removed and they set up the app again at their next sign-in.', 'Reset 2FA')) && act(() => api('POST', '/users/' + u.id + '/reset-mfa')) }, 'Reset 2FA') : null,
       u.id !== ME.user.id ? h('button', { class: 'link danger', onclick: async () => (await ask('Delete ' + u.username + '? Their API tokens stop working.', 'Delete user')) && act(() => api('DELETE', '/users/' + u.id)) }, 'Delete') : null))));
 
   const picker = permPicker('viewer', []);
@@ -4115,11 +4181,68 @@ function newAuthenticator() {
   }));
 }
 
+// addPasskey registers this device (or a phone or key) as a passkey.
+function addPasskey() {
+  const d = dialog('Add a passkey', form({}, [
+    h('p', { class: 'muted' }, 'Next time, sign in with Face ID, Touch ID, Windows Hello, your device PIN, a phone or a security key instead of typing the 6-digit code.'),
+    h('label', { for: 'pkname' }, 'Name'),
+    h('input', { id: 'pkname', name: 'name', type: 'text', maxlength: 60, placeholder: 'e.g. MacBook, iPhone', required: true }),
+    h('label', { for: 'pkpw' }, 'Your password'),
+    h('input', { id: 'pkpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Continue'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+  ], async (f) => {
+    const make = async (host) => {
+      const b = await api('POST', '/auth/passkeys/begin', { password: val(f, 'password'), host });
+      try {
+        return { b, cred: await navigator.credentials.create({ publicKey: pkOptions(b.options) }) };
+      } catch (e) {
+        // The browser refuses a parent domain that is a public suffix
+        // (like duckdns.org); make it for this server's name instead.
+        if (!host && e && e.name === 'SecurityError' && b.domain !== location.hostname) return make(true);
+        throw pkError(e);
+      }
+    };
+    const { b, cred } = await make(false);
+    await api('POST', '/auth/passkeys/finish', { ticket: b.ticket, name: val(f, 'name').trim(), credential: pkJSON(cred) });
+    ME = await api('GET', '/auth/me');
+    d.close();
+    toast(b.domain === location.hostname ? 'Passkey added for this server.' : 'Passkey added. It works on every DNServ server under ' + b.domain + '.');
+    route();
+  }));
+}
+
+async function passkeysCard() {
+  const card = h('div', { class: 'card' }, h('h2', {}, 'Passkeys'));
+  let list = [];
+  try { list = await api('GET', '/auth/passkeys'); } catch (e) { card.append(msg('err', e.message)); return card; }
+  card.append(h('p', { class: 'muted' }, 'Sign in with Face ID, Touch ID, Windows Hello or your device PIN instead of the 6-digit code. Your authenticator app and recovery codes keep working as a backup.'));
+  if (list.length) card.append(h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Works on'), h('th', {}, 'Added'), h('th', {}, 'Last used'), h('th', {}))),
+    h('tbody', {}, list.map(k => h('tr', {},
+      h('td', {}, k.name, k.synced ? h('span', { class: 'muted small', title: 'Synced by iCloud Keychain, Google Password Manager, 1Password or similar, so it is on your other devices too' }, ' · synced') : null),
+      h('td', { class: 'small' }, k.domain), h('td', {}, fmtTime(k.created_at)), h('td', {}, k.last_used ? fmtTime(k.last_used) : 'never'),
+      h('td', { class: 'nowrap' },
+        h('button', { class: 'link', onclick: () => {
+          const d = dialog('Rename passkey', form({}, [
+            h('input', { name: 'name', type: 'text', maxlength: 60, value: k.name, required: true, autofocus: true, 'aria-label': 'Name' }),
+            h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+          ], async (f) => { await api('PATCH', '/auth/passkeys/' + k.id, { name: val(f, 'name').trim() }); d.close(); route(); }));
+        } }, 'Rename'), ' ',
+        h('button', { class: 'link danger', onclick: async () => {
+          if (!(await ask('Remove the passkey "' + k.name + '"? It stops working for signing in to DNServ.', 'Remove', true))) return;
+          try { await api('DELETE', '/auth/passkeys/' + k.id); ME = await api('GET', '/auth/me'); route(); } catch (e) { toast(e.message, 'err'); }
+        } }, 'Remove'))))))));
+  card.append(passkeysWork()
+    ? h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => addPasskey() }, 'Add a passkey'))
+    : msg('warn', passkeyWhyNot()));
+  return card;
+}
+
 async function account(main) {
   page(main, 'Your account', h('p', { class: 'muted' }, 'Loading…'));
-  let sessions = [], tokens = [];
+  let sessions = [], tokens = [], pkCard = null;
   try {
-    [sessions, tokens] = await Promise.all([api('GET', '/auth/sessions'), api('GET', '/tokens')]);
+    [sessions, tokens, pkCard] = await Promise.all([api('GET', '/auth/sessions'), api('GET', '/tokens'), passkeysCard()]);
   } catch (e) { return page(main, 'Your account', msg('err', e.message)); }
   sessions = sessions || [];
   tokens = (tokens || []).filter(t => t.user_id === ME.user.id);
@@ -4146,6 +4269,8 @@ async function account(main) {
       h('div', { class: 'actions' },
         h('button', { type: 'button', onclick: () => newAuthenticator() }, 'Move to a new phone or app'),
         h('button', { type: 'button', onclick: () => newRecovery() }, 'Make new recovery codes'))),
+
+    pkCard,
 
     h('div', { class: 'card' }, h('h2', {}, 'Signed-in sessions'),
       h('div', { class: 'scroll' }, h('table', {},

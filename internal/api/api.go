@@ -94,8 +94,9 @@ type API struct {
 	// set it).
 	smbDial func(ctx context.Context, network, addr string) (net.Conn, error)
 
-	names namesCache
-	imp   imports
+	names      namesCache
+	passkeyCer ceremonies
+	imp        imports
 
 	// mfaSteps guards against reuse of authenticator codes when the
 	// cluster can't record them (no leader). Per node, in memory.
@@ -157,6 +158,7 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("POST /api/v1/auth/recovery-codes", a.authed("", a.newRecoveryCodes))
 	m.HandleFunc("POST /api/v1/auth/authenticator/begin", a.authed("", a.replaceTOTPBegin))
 	m.HandleFunc("POST /api/v1/auth/authenticator/confirm", a.authed("", a.replaceTOTPConfirm))
+	a.passkeyRoutes(m)
 
 	// Users (admin).
 	m.HandleFunc("GET /api/v1/users", a.authed(store.PermUsers, a.listUsers))
