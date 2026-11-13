@@ -287,7 +287,21 @@ func (a *API) me(w http.ResponseWriter, r *http.Request) {
 			perms = append(perms, pm)
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"signed_in": s.Stage == auth.StageFull, "stage": s.Stage, "csrf": s.CSRF, "session_id": s.ID, "user": u.Public(), "perms": perms})
+	writeJSON(w, http.StatusOK, map[string]any{"signed_in": s.Stage == auth.StageFull, "stage": s.Stage, "csrf": s.CSRF, "session_id": s.ID, "user": u.Public(), "perms": perms, "dashboard": u.Dashboard})
+}
+
+// setDashboard saves the signed-in user's dashboard card order.
+func (a *API) setDashboard(w http.ResponseWriter, r *http.Request, p *Principal) {
+	var req struct {
+		Layout []string `json:"layout"`
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpUserDashboard, p.Actor(), store.UserDashboard{ID: p.User.ID, Layout: req.Layout})); !ok {
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) changePassword(w http.ResponseWriter, r *http.Request, p *Principal) {

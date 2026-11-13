@@ -99,6 +99,7 @@ const (
 	OpRecoveryUsed   = "user.recovery_used"  // RecoveryUsed
 	OpRecoveryReset  = "user.recovery_reset" // RecoveryReset
 	OpMFAReset       = "user.mfa_reset"      // IDOnly
+	OpUserDashboard  = "user.dashboard"      // UserDashboard
 	OpTokenCreate    = "token.create"        // Token
 	OpTokenRevoke    = "token.revoke"        // IDOnly
 	OpSettingsUpdate = "settings.update"     // Settings
@@ -154,6 +155,10 @@ type UserUpdate struct {
 	Disabled *bool
 }
 type UserPassword struct{ ID, PasswordHash string }
+type UserDashboard struct {
+	ID     string
+	Layout []string
+}
 type IDOnly struct{ ID string }
 type TOTPBegin struct{ ID, Secret string }
 type TOTPConfirm struct {
@@ -278,6 +283,21 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		}
 		u.PasswordHash, u.PasswordChangedAt = d.PasswordHash, c.Time
 		return nil, audit(fmt.Sprintf("changed password for %q", u.Username), nil, nil), nil
+
+	case OpUserDashboard:
+		var d UserDashboard
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		u, ok := st.Users[d.ID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		if err := validLayout(d.Layout); err != nil {
+			return nil, nil, err
+		}
+		u.Dashboard = d.Layout
+		return nil, nil, nil // a personal preference, not audited
 
 	case OpTOTPBegin:
 		var d TOTPBegin
@@ -623,6 +643,27 @@ func publicUser(u *User) PublicUser {
 
 // Public returns the user without secrets.
 func (u *User) Public() PublicUser { return publicUser(u) }
+
+// validLayout checks a dashboard layout: card names made of lowercase
+// letters, digits and hyphens, each optionally hidden with a leading "-"
+// or widened with a trailing ":w".
+func validLayout(l []string) error {
+	if len(l) > 40 {
+		return errors.New("too many dashboard cards")
+	}
+	for _, c := range l {
+		name := strings.TrimPrefix(c, "-")
+		if name == "" || len(name) > 32 {
+			return fmt.Errorf("bad dashboard card %q", c)
+		}
+		for _, r := range name {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != ':' {
+				return fmt.Errorf("bad dashboard card %q", c)
+			}
+		}
+	}
+	return nil
+}
 
 func validUsername(n string) error {
 	if l := utf8.RuneCountInString(n); l < 2 || l > 64 {

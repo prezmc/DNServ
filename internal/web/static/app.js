@@ -756,10 +756,150 @@ function serversCard(sum, s) {
         n.ok ? h('div', { class: 'stats' },
           stat('Queries', fmtNum(c.total), nodes.length > 1 ? pct(c.total, total) + ' of all' : null),
           stat('Blocked', pct(c.blocked, c.total)),
-          stat('Cache', pct(c.cached, c.total)),
+          stat('Cache', pct(c.cached, c.total - c.blocked - (c.local || 0))),
           stat('Avg', c.total ? fmtMs(c.ms_sum / c.total) : '—')) : null);
     })),
     h('p', { class: 'muted small' }, 'Answers each server gave its devices. Devices pick a server themselves, so an even split is not expected.'));
+}
+
+// steady redraws part of the dashboard without moving what the user is
+// looking at: cards above the first one in view may grow or shrink as data
+// changes, so the page scrolls by the same amount to keep that card still.
+// (Browsers' own scroll anchoring is off for the dashboard, since not all
+// of them have it.)
+function steady(redraw) {
+  const dash = document.querySelector('.dash');
+  const se = document.scrollingElement || document.documentElement;
+  let anchor = null, top = 0;
+  if (dash && se.scrollTop > 0) {
+    for (const c of dash.querySelectorAll('.card')) {
+      const r = c.getBoundingClientRect();
+      if (r.height && r.bottom > 0) { anchor = [...c.classList].find(k => k.startsWith('d-')); top = r.top; break; }
+    }
+  }
+  redraw();
+  if (!anchor) return;
+  const now = dash.querySelector('.card.' + anchor);
+  if (now) se.scrollTop += now.getBoundingClientRect().top - top;
+}
+
+// ---------- arranging the dashboard ----------
+
+// DASH_CARDS are the dashboard cards a user can move, widen or hide, in
+// their default order.
+const DASH_CARDS = [
+  ['tiles', 'Totals'], ['security', 'Security'], ['chart', 'Queries chart'], ['health', 'Health'], ['flow', 'Traffic map'],
+  ['servers', 'Servers'], ['domains', 'Top domains'], ['blocked', 'Top blocked'], ['devices', 'Devices'], ['perf', 'Response times'],
+  ['top', 'Top blocking lists'], ['check', 'Check a domain'], ['lists', 'Lists'],
+];
+// DASH_FULL are the cards that already use the whole width.
+const DASH_FULL = new Set(['tiles', 'security', 'flow', 'lists']);
+
+// dashLayout reads a saved layout ("name", "-name" hidden, "name:w" wide)
+// into the full list of cards, adding any card the layout doesn't name in
+// its default place.
+function dashLayout(saved) {
+  const known = new Map(DASH_CARDS);
+  const out = [], seen = new Set();
+  for (const e of saved || []) {
+    const hidden = e.startsWith('-'), [name, flag] = e.replace(/^-/, '').split(':');
+    if (!known.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    out.push({ name, label: known.get(name), hidden, wide: flag === 'w' });
+  }
+  DASH_CARDS.forEach(([name, label], i) => {
+    if (seen.has(name)) return;
+    // Put a new card after the card that comes before it by default.
+    const prev = DASH_CARDS.slice(0, i).reverse().find(([n]) => seen.has(n));
+    const at = prev ? out.findIndex(c => c.name === prev[0]) + 1 : 0;
+    out.splice(at, 0, { name, label, hidden: false, wide: false });
+    seen.add(name);
+  });
+  return out;
+}
+
+function dashSaved(cards) {
+  const def = DASH_CARDS.map(([n]) => n).join();
+  if (cards.map(c => c.name).join() === def && !cards.some(c => c.hidden || c.wide)) return [];
+  return cards.map(c => (c.hidden ? '-' : '') + c.name + (c.wide ? ':w' : ''));
+}
+
+// applyDashLayout orders, widens and hides the cards with one style sheet,
+// so cards keep their place when they are redrawn.
+function applyDashLayout(cards, arranging) {
+  // A constructed style sheet, which the page's content security policy
+  // allows where a <style> element would not be.
+  if (!applyDashLayout.sheet) {
+    applyDashLayout.sheet = new CSSStyleSheet();
+    document.adoptedStyleSheets = [...document.adoptedStyleSheets, applyDashLayout.sheet];
+  }
+  applyDashLayout.sheet.replaceSync(cards.map((c, i) => '.dash .d-' + c.name + '{order:' + (10 + i) + '}' +
+    (c.wide ? '.dash .d-' + c.name + '{grid-column:1 / -1}' : '') +
+    (c.hidden ? '.dash .d-' + c.name + (arranging ? '{opacity:.45}' : '{display:none}') : '')).join('\n'));
+}
+
+// dashArrange turns on arrange mode: each card gets a bar to move it
+// (drag, or the arrow buttons), widen or hide it. Saving keeps the layout
+// with the user's account, so it follows them to any browser.
+function dashArrange(dash, bar, done) {
+  let cards = dashLayout(ME && ME.dashboard);
+  const card = (name) => dash.querySelector('.d-' + name);
+  const move = (name, to) => {
+    const i = cards.findIndex(c => c.name === name);
+    if (to < 0 || to >= cards.length || to === i) return;
+    const [c] = cards.splice(i, 1);
+    cards.splice(to, 0, c);
+    redraw();
+  };
+  const redraw = () => {
+    applyDashLayout(cards, true);
+    dash.querySelectorAll('.arrange-bar').forEach(b => b.remove());
+    cards.forEach((c, i) => {
+      const el = card(c.name);
+      if (!el) return;
+      el.draggable = true;
+      el.dataset.card = c.name;
+      el.prepend(h('div', { class: 'arrange-bar' },
+        h('span', { class: 'grip', title: 'Drag to move', 'aria-hidden': 'true' }, '⠿'), h('span', { class: 'grow' }),
+        h('button', { type: 'button', class: 'secondary small', title: 'Move earlier', 'aria-label': 'Move ' + c.label + ' earlier', disabled: i === 0, onclick: () => move(c.name, i - 1) }, '←'),
+        h('button', { type: 'button', class: 'secondary small', title: 'Move later', 'aria-label': 'Move ' + c.label + ' later', disabled: i === cards.length - 1, onclick: () => move(c.name, i + 1) }, '→'),
+        DASH_FULL.has(c.name) ? null : h('button', { type: 'button', class: 'secondary small', 'aria-pressed': String(c.wide), onclick: () => { c.wide = !c.wide; redraw(); } }, 'Wide'),
+        h('button', { type: 'button', class: 'secondary small', onclick: () => { c.hidden = !c.hidden; redraw(); } }, c.hidden ? 'Show' : 'Hide')));
+    });
+  };
+  // Drag a card onto another to put it there.
+  let dragging = '';
+  const onStart = (e) => { const el = e.target.closest && e.target.closest('[data-card]'); if (!el) return; dragging = el.dataset.card; el.classList.add('dragging'); e.dataTransfer.effectAllowed = 'move'; };
+  const onOver = (e) => { if (dragging && e.target.closest('[data-card]')) e.preventDefault(); };
+  const onDrop = (e) => {
+    const el = e.target.closest('[data-card]');
+    if (!dragging || !el) return;
+    e.preventDefault();
+    if (el.dataset.card !== dragging) move(dragging, cards.findIndex(c => c.name === el.dataset.card));
+  };
+  const onEnd = () => { dash.querySelectorAll('.dragging').forEach(x => x.classList.remove('dragging')); dragging = ''; };
+  dash.addEventListener('dragstart', onStart); dash.addEventListener('dragover', onOver); dash.addEventListener('drop', onDrop); dash.addEventListener('dragend', onEnd);
+  const finish = async (save) => {
+    dash.removeEventListener('dragstart', onStart); dash.removeEventListener('dragover', onOver); dash.removeEventListener('drop', onDrop); dash.removeEventListener('dragend', onEnd);
+    dash.querySelectorAll('.arrange-bar').forEach(b => b.remove());
+    dash.querySelectorAll('[data-card]').forEach(el => { el.draggable = false; delete el.dataset.card; });
+    dash.classList.remove('arranging');
+    if (save) {
+      const layout = dashSaved(cards);
+      try { await api('PUT', '/auth/dashboard', { layout }); if (ME) ME.dashboard = layout; toast('Dashboard layout saved'); } catch (e) { toast(e.message, 'err'); }
+    }
+    applyDashLayout(dashLayout(ME && ME.dashboard), false);
+    bar.replaceChildren();
+    done();
+  };
+  dash.classList.add('arranging');
+  fill(bar, h('div', { class: 'msg info arrange-head' },
+    h('span', {}, 'Drag the cards, or use the arrows, to put them in the order you like. Hidden cards stay here, faded, so you can bring them back.'),
+    h('span', { class: 'grow' }),
+    h('button', { type: 'button', class: 'secondary', onclick: () => { cards = dashLayout([]); redraw(); } }, 'Back to default'),
+    h('button', { type: 'button', class: 'secondary', onclick: () => finish(false) }, 'Cancel'),
+    h('button', { type: 'button', onclick: () => finish(true) }, 'Done')));
+  redraw();
 }
 
 async function dashboard(main) {
@@ -776,14 +916,23 @@ async function dashboard(main) {
   const status = h('span', { class: 'pill' }, h('span', { class: 'dot' }), 'Checking…');
   const pauseBtn = h('span');
   const pauseBox = h('div');
-  const head = h('div', { class: 'page-head' }, h('h1', {}, 'Dashboard'), status, pauseBtn, h('span', { class: 'grow' }),
+  const arrangeBar = h('div', { class: 'd-arrange' });
+  let arranging = false;
+  const arrangeBtn = h('button', { type: 'button', class: 'secondary', title: 'Move, widen or hide cards', onclick: () => {
+    if (arranging) return;
+    arranging = true; arrangeBtn.disabled = true;
+    dashArrange(dash, arrangeBar, () => { arranging = false; arrangeBtn.disabled = false; });
+  } }, 'Arrange');
+  const head = h('div', { class: 'page-head' }, h('h1', {}, 'Dashboard'), status, pauseBtn, h('span', { class: 'grow' }), arrangeBtn,
     can('dashboard.view') ? h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, DASH_RANGES.map(k =>
       h('button', { type: 'button', 'aria-pressed': String(k === range), onclick: () => {
         history.replaceState(null, '', '#/' + (k === '24h' ? '' : '?range=' + k));
         shownHash = location.hash;
         route();
       } }, k))) : null);
-  fill(main, head, h('div', { class: 'dash' }, pauseBox, body, secBox, chartBox, flowBox, extraBox, devBox, checkDomainCard(), ver));
+  const dash = h('div', { class: 'dash' }, arrangeBar, pauseBox, body, secBox, chartBox, flowBox, extraBox, devBox, checkDomainCard(), ver);
+  applyDashLayout(dashLayout(ME && ME.dashboard), false);
+  fill(main, head, dash);
   const pause = pauseControl(pauseBtn, pauseBox, () => load());
 
   // The tiles and upstream counts come from the saved query history (the
@@ -801,16 +950,19 @@ async function dashboard(main) {
     let s;
     if (Date.now() - hist.at > 60000) await loadHist();
     let pz;
-    try { [s, pz] = await Promise.all([api('GET', '/status'), api('GET', '/pause').catch(() => null)]); } catch (e) { body.replaceChildren(msg('err', e.message)); return; }
+    try { [s, pz] = await Promise.all([api('GET', '/status'), api('GET', '/pause').catch(() => null)]); } catch (e) { if (!body.querySelector('.card')) body.replaceChildren(msg('err', e.message)); return; }
     pause.show(pz, s);
     const q = s.queries || {};
     let total = ['upstream', 'cached', 'stale', 'blocked', 'local', 'error'].reduce((a, k) => a + (q[k] || 0), 0);
-    let blocked = q.blocked || 0, cached = (q.cached || 0) + (q.stale || 0);
+    let blocked = q.blocked || 0, cached = (q.cached || 0) + (q.stale || 0), local = q.local || 0;
     const fromHist = !!hist.sum;
     if (fromHist) {
       const c = hist.sum.counts;
-      total = c.total; blocked = c.blocked; cached = c.cached;
+      total = c.total; blocked = c.blocked; cached = c.cached; local = c.local || 0;
     }
+    // Blocked lookups and local names never need the cache, so the hit
+    // rate counts only the lookups that could have come from it.
+    const cacheable = Math.max(0, total - blocked - local);
     const pct = (n) => (total ? (100 * n / total).toFixed(1) + '%' : '—');
     // Upstream tries and failures over the same 24 hours, on this server.
     const upHist = new Map();
@@ -826,7 +978,7 @@ async function dashboard(main) {
     // trend over the period when history is on.
     const series = fromHist ? hist.sum.series || [] : [];
     const rq = range === '24h' ? '' : 'range=' + range;
-    const tile = (label, value, sub, href, values) => h(href ? 'a' : 'div', { class: 'tile', href },
+    const tile = (label, value, sub, href, values, title) => h(href ? 'a' : 'div', { class: 'tile', href, title },
       h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), sub ? h('div', { class: 'sub muted' }, sub) : null,
       values && values.length > 1 ? sparkline(values) : null);
     const health = [];
@@ -846,7 +998,7 @@ async function dashboard(main) {
     const paused = pz && pz.paused ? (pz.pauses.some(p => p.node === '*') ? 'Filtering paused' : 'Paused on ' + pz.pauses.map(p => p.node_name).join(', ')) : '';
     status.className = 'pill ' + (bad ? 'bad' : loading || paused || off ? 'warn' : 'ok');
     fill(status, h('span', { class: 'dot' }), bad ? 'Needs attention' : paused || (off ? 'Filtering is off' : loading ? 'Loading lists' : 'Protecting your network'));
-    fill(body,
+    steady(() => fill(body,
       total === 0 ? h('div', { class: 'card highlight d-wait' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
       h('p', { class: 'muted small d-note' }, fromHist ? [RANGES[range], hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServ started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
         : ['Counting since DNServ started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '. Turn on query history to keep counts across restarts.']),
@@ -855,8 +1007,9 @@ async function dashboard(main) {
           can('querylog.view') ? '#/queries' + (rq ? '?' + rq : '') : null, series.map(p => p.total)),
         tile('Blocked', total ? fmtNum(blocked) : '0', total ? pct(blocked) + ' of queries' : null,
           can('querylog.view') ? '#/queries?result=blocked' + (rq ? '&' + rq : '') : null, series.map(p => p.blocked)),
-        tile('Answered from cache', pct(cached), total ? fmtNum(cached) + ' answers' : null,
-          can('dashboard.view') ? '#/performance' + (rq ? '?' + rq : '') : null, series.map(p => (p.total ? p.cached / p.total : 0))),
+        tile('Answered from cache', cacheable ? fmtPct(cached / cacheable) : '—', total ? [fmtNum(cached), ' answers · ', pct(cached), ' of all queries'] : null,
+          can('dashboard.view') ? '#/performance' + (rq ? '?' + rq : '') : null, series.map(p => { const n = p.total - (p.blocked || 0) - (p.local || 0); return n > 0 ? p.cached / n : 0; }),
+          'Of the lookups that weren’t blocked or local names. The second line counts every query.'),
         tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0), s.filter && s.filter.lists ? s.filter.lists.filter(l => !l.allowlist).length + ' lists' : null,
           ['lists.manage', 'rules.edit'].some(can) ? '#/settings' : null)),
       fromHist ? serversCard(hist.sum, s) : null,
@@ -872,18 +1025,43 @@ async function dashboard(main) {
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
-    );
+    ));
     ver.textContent = 'DNServ ' + s.version;
   };
+  // The devices card shows the busiest devices over the period, or the
+  // ones most active in the last 15 minutes.
+  let devView = 'top';
+  try { devView = localStorage.getItem('dash-devices') === 'now' ? 'now' : 'top'; } catch (_) { /* default */ }
   const loadDevices = async () => {
     let ds;
     try { ds = await api('GET', '/devices'); } catch (_) { return; }
     const seen = ds.filter(d => d.queries > 0);
-    if (!seen.length) { devBox.replaceChildren(); return; }
-    devBox.replaceChildren(h('div', { class: 'card d-devices' },
-      h('h2', {}, 'Devices ', h('span', { class: 'muted small' }, seen.length + ' seen')),
-      deviceTable(seen.slice(0, 5), { compact: true }),
-      seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null));
+    const history = can('querylog.view') && can('dashboard.view');
+    if (!seen.length && !history) { devBox.replaceChildren(); return; }
+    const more = seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null;
+    if (!history) {
+      steady(() => devBox.replaceChildren(h('div', { class: 'card d-devices' },
+        h('h2', {}, 'Devices ', h('span', { class: 'muted small' }, seen.length + ' seen')), deviceTable(seen.slice(0, 5), { compact: true }), more)));
+      return;
+    }
+    const r = devView === 'now' ? '15m' : range;
+    let top;
+    try { top = await api('GET', '/analytics/top?by=clients&limit=6&range=' + r); } catch (_) { return; }
+    const rows = top.rows || [];
+    if (!rows.length && !seen.length && devView === 'top') { devBox.replaceChildren(); return; }
+    const pick = (v) => { devView = v; try { localStorage.setItem('dash-devices', v); } catch (_) { /* per viewer only */ } loadDevices(); };
+    steady(() => devBox.replaceChildren(h('div', { class: 'card d-devices' },
+      h('div', { class: 'row spread' }, h('h2', {}, 'Devices'),
+        h('div', { class: 'seg small', role: 'group', 'aria-label': 'Devices to show' },
+          h('button', { type: 'button', 'aria-pressed': String(devView === 'top'), onclick: () => pick('top') }, 'Most lookups'),
+          h('button', { type: 'button', 'aria-pressed': String(devView === 'now'), onclick: () => pick('now') }, 'Active now'))),
+      !rows.length ? h('p', { class: 'muted' }, devView === 'now' ? 'No lookups in the last 15 minutes.' : 'Nothing yet.') :
+        h('table', { class: 'top' }, h('tbody', {}, rows.map(d => h('tr', {},
+          h('td', {}, h('a', { href: '#/queries?client=' + encodeURIComponent(d.device || d.key) + (devView === 'now' ? '' : (range === '24h' ? '' : '&range=' + range)) }, d.label || d.addrs[0]),
+            d.label ? h('div', { class: 'muted small' }, d.addrs.join(', ')) : null, bar(d.total, rows[0].total)),
+          h('td', { class: 'num' }, fmtNum(d.total), h('div', { class: 'muted small' }, d.blocked ? fmtNum(d.blocked) + ' blocked' : 'none blocked')))))),
+      h('p', { class: 'muted small' }, devView === 'now' ? 'Lookups in the last 15 minutes, every server.' : RANGES[range] + ', every server.'),
+      more)));
   };
   // The security overview feeds both its card and the chart's risk dots.
   const security = () => (can('dashboard.view') ? api('GET', '/analytics/security?range=' + range).catch(() => null) : Promise.resolve(null));
@@ -892,7 +1070,8 @@ async function dashboard(main) {
   await Promise.all([load(), loadDevices(), charts(), extras()]);
   let tick = 0;
   timer = setInterval(() => {
-    if (document.hidden) return;
+    // Nothing redraws while the cards are being arranged.
+    if (document.hidden || arranging) return;
     load();
     if (++tick % 3 === 0) loadDevices();
     if (tick % 12 === 0) { charts(); extras(); }
@@ -1817,7 +1996,7 @@ async function analyticsPage(main) {
   const load = async () => {
     let sum, dom, blk, cli, risky, lists;
     try {
-      [sum, dom, blk, cli, risky, lists] = await Promise.all([q('summary'), q('top', { by: 'domains', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
+      [sum, dom, blk, cli, risky, lists] = await Promise.all([q('summary'), q('top', { by: 'allowed', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
         perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '10' }), q('top', { by: 'lists', limit: '10' })]);
     } catch (e) { fill(body, msg('err', e.message)); return; }
     const c = sum.counts;
@@ -1829,7 +2008,7 @@ async function analyticsPage(main) {
       h('div', { class: 'grid' },
         tile('Queries', fmtNum(c.total)),
         tile('Blocked', fmtNum(c.blocked), pct(c.blocked)),
-        tile('Answered from cache', pct(c.cached)),
+        tile('Answered from cache', c.total - c.blocked - (c.local || 0) > 0 ? fmtPct(c.cached / (c.total - c.blocked - (c.local || 0))) : '—', ['without blocked and local names · ', pct(c.cached), ' of all queries']),
         tile('Average response', c.total ? (c.ms_sum / c.total).toFixed(1) + ' ms' : '—'),
         st.client ? null : tile('Devices', fmtNum(sum.devices)),
         risky.feeds || risky.domains ? tile('Risky domains', fmtNum(risky.domains), risky.domains ? fmtNum(risky.queries) + ' queries' : 'none seen') : null),
@@ -1852,12 +2031,12 @@ async function analyticsPage(main) {
 // how many were blocked anyway.
 let secShowDismissed = false;
 function securityCard(box, range, sec, reload) {
-  if (!sec) { box.replaceChildren(); return; }
+  if (!sec) return; // a failed refresh keeps what's shown
   const win = (RANGES[range] || range).toLowerCase();
   if (!sec.feeds) {
-    box.replaceChildren(h('div', { class: 'card d-security' }, h('h2', {}, 'Security'),
+    steady(() => box.replaceChildren(h('div', { class: 'card d-security' }, h('h2', {}, 'Security'),
       h('p', { class: 'muted' }, 'Risk scoring is off, so lookups aren’t checked against malware and phishing feeds. ',
-        can('lists.manage') ? h('a', { href: '#/settings' }, 'Turn it on in Settings') : 'An admin can turn it on.')));
+        can('lists.manage') ? h('a', { href: '#/settings' }, 'Turn it on in Settings') : 'An admin can turn it on.'))));
     return;
   }
   const active = sec.through.filter(x => !x.dismissed), dismissed = sec.through.length - active.length;
@@ -1917,12 +2096,12 @@ function securityCard(box, range, sec, reload) {
       actions.length ? h('div', { class: 'acts' }, actions) : null);
   };
   const list = sec.through.filter(x => secShowDismissed || !x.dismissed);
-  box.replaceChildren(h('div', { class: 'card d-security' }, verdict, warn,
+  steady(() => box.replaceChildren(h('div', { class: 'card d-security' }, verdict, warn,
     list.length ? h('div', { class: 'atts' }, h('div', { class: 'row spread' }, h('h3', {}, 'Needs attention'),
       dismissed ? h('button', { class: 'link small', type: 'button', onclick: () => { secShowDismissed = !secShowDismissed; securityCard(box, range, sec, reload); } },
         secShowDismissed ? 'Hide dismissed' : 'Show ' + dismissed + ' dismissed') : null), list.map(row))
       : dismissed ? h('p', { class: 'small' }, h('button', { class: 'link', type: 'button', onclick: () => { secShowDismissed = true; securityCard(box, range, sec, reload); } }, 'Show ' + dismissed + ' dismissed')) : null,
-    coverage(sec.nodes)));
+    coverage(sec.nodes))));
 }
 
 // dashboardChart is the dashboard's queries-over-time card.
@@ -1931,10 +2110,10 @@ async function dashboardChart(box, range, secP) {
   let sum, sec;
   try { [sum, sec] = await Promise.all([api('GET', '/analytics/summary?range=' + range), secP || null]); } catch (_) { return; }
   if (!sum.counts || !sum.counts.total) { box.replaceChildren(); return; }
-  box.replaceChildren(h('div', { class: 'card d-chart' },
+  steady(() => box.replaceChildren(h('div', { class: 'card d-chart' },
     h('div', { class: 'row spread' }, h('h2', {}, RANGES[range]), h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range), class: 'small' }, 'Analytics')),
     h('p', { class: 'muted small' }, fmtNum(sum.counts.total), ' queries, ', fmtNum(sum.counts.blocked), ' blocked, from ', fmtNum(sum.devices), sum.devices === 1 ? ' device.' : ' devices.'),
-    queryChart(sum, { risky: new Map(((sec && sec.series) || []).map(p => [p.t, p.n])) })));
+    queryChart(sum, { risky: new Map(((sec && sec.series) || []).map(p => [p.t, p.n])) }))));
 }
 
 // ---------- traffic map ----------
@@ -1956,7 +2135,7 @@ async function dashboardFlow(box, range) {
   range = range || '24h';
   const st = box.flowState || (box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '' });
   let data;
-  try { data = await api('GET', '/analytics/flow?range=' + range + '&group=' + st.group); } catch (_) { box.replaceChildren(); return; }
+  try { data = await api('GET', '/analytics/flow?range=' + range + '&group=' + st.group); } catch (_) { return; } // keep the map shown until the next try
   if (!data.total) { box.replaceChildren(); return; }
   const rq = range === '24h' ? '' : 'range=' + range;
   const area = h('div', { class: 'flow-area' });
@@ -1986,7 +2165,7 @@ async function dashboardFlow(box, range) {
     h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device, an answer or a service to follow it.' : 'Click an answer or a service to follow it.'),
     h('div', { class: 'row flow-kinds' }, kindBoxes),
     wrap, detail);
-  box.replaceChildren(card);
+  steady(() => box.replaceChildren(card));
 
   const byId = Object.fromEntries(data.nodes.map(n => [n.id, n]));
   function draw() {
@@ -2371,7 +2550,7 @@ async function dashboardExtras(box, range) {
   const [perf, lists, doms, blk] = await Promise.all([
     api('GET', '/analytics/performance?range=1h').catch(() => null),
     api('GET', '/analytics/top?by=lists&range=' + range + '&limit=6').catch(() => null),
-    api('GET', '/analytics/top?by=domains&range=' + range + '&limit=6').catch(() => null),
+    api('GET', '/analytics/top?by=allowed&range=' + range + '&limit=6').catch(() => null),
     api('GET', '/analytics/top?by=blocked&range=' + range + '&limit=6').catch(() => null)]);
   const cards = [];
   // Top domains and top blocked side by side, as AdGuard Home and NextDNS
@@ -2382,8 +2561,10 @@ async function dashboardExtras(box, range) {
       h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(r.key, range) }, r.key), ' ', riskBadge(r.risk),
         blocked && r.list ? h('div', { class: 'muted small' }, listLabel(r.list)) : null, bar(r.total, rows[0].total, blocked)),
       h('td', { class: 'num' }, fmtNum(r.total))))))) : null);
-  const dc = topCard('d-domains', 'Top domains', doms && doms.rows, false);
-  const bc = topCard('d-blocked', 'Top blocked', blk && blk.rows, true);
+  // A card whose data didn't load this time keeps what it showed before.
+  const old = (cls) => box.querySelector('.card.' + cls);
+  const dc = doms ? topCard('d-domains', 'Top domains', doms.rows, false) : old('d-domains');
+  const bc = blk ? topCard('d-blocked', 'Top blocked', blk.rows, true) : old('d-blocked');
   if (dc) cards.push(dc);
   if (bc) cards.push(bc);
   if (perf && perf.view.summary.queries) {
@@ -2394,10 +2575,12 @@ async function dashboardExtras(box, range) {
       h('div', { class: 'stats' }, stat('Median', fmtMs(s.p50_ms)), stat('95% within', fmtMs(s.p95_ms)), stat('Lookups, average', s.lookups ? fmtMs(s.lookup_avg_ms) : '—'), stat('From cache', fmtPct(s.cache_hit))),
       an.length ? h('div', { class: 'msg ' + (an.some(a => a.severity === 'bad') ? 'err' : 'warn') }, h('b', {}, an[0].title), ' ', an[0].detail, an.length > 1 ? [' ', h('a', { href: '#/performance?range=1h' }, '+', an.length - 1, ' more')] : null)
         : h('p', { class: 'muted small' }, 'Nothing unusual.')));
+  } else if (!perf && old('d-perf')) {
+    cards.push(old('d-perf'));
   }
-  const lc = lists ? topListsCard(lists.rows, range, true) : null;
+  const lc = lists ? topListsCard(lists.rows, range, true) : old('d-top');
   if (lc) cards.push(lc);
-  box.replaceChildren(cards.length > 1 ? h('div', { class: 'cols' }, cards) : cards);
+  steady(() => box.replaceChildren(cards.length > 1 ? h('div', { class: 'cols' }, cards) : cards));
 }
 
 // ---------- settings ----------

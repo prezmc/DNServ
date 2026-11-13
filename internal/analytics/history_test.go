@@ -82,6 +82,18 @@ func TestSummaryAndTop(t *testing.T) {
 	}
 
 	q = day
+	q.Kind, q.By = KindTop, TopAllowed
+	r = run(t, s, q)
+	for _, row := range r.Rows {
+		if row.Key == "ads.tracker.net" && row.Total == 10 || row.Blocked != 0 {
+			t.Fatalf("top allowed includes blocked lookups: %+v", r.Rows)
+		}
+	}
+	if len(r.Rows) == 0 {
+		t.Fatal("top allowed is empty")
+	}
+
+	q = day
 	q.Kind, q.By, q.Clients = KindTop, TopDomains, []string{"192.168.1.11"}
 	r = run(t, s, q)
 	if len(r.Rows) != 1 || r.Rows[0].Key != "example.com" || r.Rows[0].Total != 30 {

@@ -141,6 +141,10 @@ type User struct {
 	MFAResetAt     time.Time `json:"mfa_reset_at,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	CreatedBy      string    `json:"created_by,omitempty"`
+
+	// Dashboard is the user's own order of the dashboard cards; a card
+	// listed with a leading "-" is hidden. Empty means the default.
+	Dashboard []string `json:"dashboard,omitempty"`
 }
 
 // MFAEnrolled reports whether the user has a confirmed second factor.
