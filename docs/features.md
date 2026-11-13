@@ -64,7 +64,11 @@ Everything DNServ does today, in more detail than the README.
   hour, or until you turn it back on, on every server at once or just one.
   A banner counts down and turns it back on in one click. The pause goes
   through the cluster like any change, so every node obeys it; it's in the
-  audit log but not in settings history or backups. Admins, power users
+  audit log but not in settings history or backups. Group schedules that
+  are running (bedtime, blocked services during homework) keep blocking
+  during a pause, so a pause can't be used to get round them; people who
+  can manage devices and groups can tick "Pause group schedules too".
+  Admins, power users
   with "Manage blocklists" or "Pause filtering", and viewers given "Pause
   filtering" can use it.
 - **Devices and recent queries.** See every device using DNServ, name

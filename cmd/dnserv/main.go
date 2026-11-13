@@ -1190,5 +1190,5 @@ func (p listPeer) Fetch(ctx context.Context, sha string, w io.Writer) error {
 // or the one for every node) to the DNS server.
 func setPause(srv *server.Server, st *store.State, self string) {
 	p, ok := st.PauseFor(self, time.Now())
-	srv.SetPause(ok, p.Until)
+	srv.SetPause(ok, p.Until, p.Schedules)
 }

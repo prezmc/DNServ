@@ -1228,15 +1228,19 @@ function pauseControl(btnSlot, box, reload) {
         where = n.id;
         whereSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.currentTarget)));
       } }, n.name, n.self ? h('span', { class: 'muted small' }, ' (this one)') : null))) : null;
+    const schedBox = h('input', { type: 'checkbox' });
     const d = dialog('Pause filtering', [
-      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'),
+      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'
+        + (state.has_schedules ? ' Group schedules running now, like bedtime, keep blocking.' : '')),
+      state.has_schedules && state.can_pause_schedules ? h('label', { class: 'inline' }, schedBox, 'Pause group schedules too') : null,
       whereSeg ? [h('p', { class: 'small b' }, 'Where'), whereSeg,
         h('p', { class: 'muted small' }, 'Pausing one server only helps devices that use it. Most devices switch between your two DNS servers on their own.')] : null,
       h('p', { class: 'small b' }, 'For how long'),
       h('div', { class: 'pause-opts' }, (state.options || [1, 5, 15, 30, 60, 0]).map(m => h('button', { type: 'button', class: m === 0 ? 'wide' : null, onclick: async () => {
         d.close();
         const name = where === '*' ? '' : nodes.find(n => n.id === where).name;
-        await change('POST', '/pause', { minutes: m, node: where }, 'Filtering paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
+        const sched = schedBox.checked;
+        await change('POST', '/pause', { minutes: m, node: where, schedules: sched }, 'Filtering' + (sched ? ' and schedules' : '') + ' paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
       } }, PAUSE_LABELS[m] || m + ' minutes'))),
       h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
     ]);
@@ -1270,7 +1274,8 @@ function pauseControl(btnSlot, box, reload) {
       return h('div', { class: 'pause-row' },
         h('span', { class: 'pause-ico big', 'aria-hidden': 'true' }),
         h('div', { class: 'grow' },
-          h('div', { class: 'b' }, 'Filtering is paused' + where),
+          h('div', { class: 'b' }, (p.schedules ? 'Filtering and schedules are paused' : 'Filtering is paused') + where),
+          !p.schedules && v.has_schedules ? h('div', { class: 'muted small' }, 'Group schedules still apply.') : null,
           h('div', { class: 'muted small' }, p.indefinite ? 'Until someone turns it back on' : ['Back on in ', left, ' at ', new Date(Date.now() + p.remaining_seconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })],
             ' · paused by ', p.by, ' ', ago(p.since))),
         v.can_pause ? h('button', { type: 'button', class: 'primary', onclick: () => change('DELETE', '/pause' + (p.node === '*' ? '' : '?node=' + encodeURIComponent(p.node)), undefined, 'Filtering is back on' + (p.node === '*' ? '' : ' on ' + p.node_name) + '.') },
