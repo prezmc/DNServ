@@ -162,3 +162,39 @@ func TestPauseOneNode(t *testing.T) {
 		t.Fatalf("audit: %q", audited)
 	}
 }
+
+func TestPauseSchedules(t *testing.T) {
+	e := newEnv(t)
+	admin, _ := e.setupAdmin()
+	var v pauseView
+	admin.want(200, "GET", "/api/v1/pause", nil, &v)
+	if v.HasSchedules || !v.CanPauseSchedules {
+		t.Fatalf("no schedules yet: %+v", v)
+	}
+	admin.want(200, "POST", "/api/v1/pause", map[string]any{"minutes": 5, "schedules": true}, &v)
+	if !v.Pauses[0].Schedules || !e.api.Store.State().Pauses[store.AllNodes].Schedules {
+		t.Fatalf("schedules pause not recorded: %+v", v)
+	}
+	if a := e.api.Store.State().Audit; a[len(a)-1].Summary != "paused filtering and schedules for 5 minutes" {
+		t.Fatalf("audit: %q", a[len(a)-1].Summary)
+	}
+	v = pauseView{}
+	admin.want(200, "POST", "/api/v1/pause", map[string]any{"minutes": 5}, &v)
+	if v.Pauses[0].Schedules {
+		t.Fatalf("plain pause should leave schedules on: %+v", v)
+	}
+
+	// Pausing schedules needs devices.manage on top of pausing.
+	admin.want(201, "POST", "/api/v1/users", map[string]any{"username": "val", "password": pw, "role": "viewer", "perms": []string{store.PermPause}}, nil)
+	c := e.client()
+	c.want(200, "POST", "/api/v1/auth/login", map[string]string{"username": "val", "password": pw}, nil)
+	var begin struct{ Secret string }
+	c.want(200, "POST", "/api/v1/auth/totp/begin", map[string]string{}, &begin)
+	c.want(200, "POST", "/api/v1/auth/totp/confirm", map[string]string{"code": e.code(begin.Secret)}, nil)
+	c.want(200, "GET", "/api/v1/pause", nil, &v)
+	if v.CanPauseSchedules {
+		t.Fatal("viewer offered to pause schedules")
+	}
+	c.want(403, "POST", "/api/v1/pause", map[string]any{"minutes": 5, "schedules": true}, nil)
+	c.want(200, "POST", "/api/v1/pause", map[string]any{"minutes": 5}, nil)
+}

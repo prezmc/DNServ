@@ -18,7 +18,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Lists | `POST /lists/update` (download every list again now) |
 | Dashboard HTTPS (admin) | `GET /https` (settings without the key or password, and each server's status); `PUT /https` `{mode: ""\|self_signed\|upload\|files\|npm, redirect, names, cert_pem, key_pem, cert_file, key_file, npm: {url, email, password, cert_id}}`; `POST /https/npm/certificates` `{url, email, password}` lists Nginx Proxy Manager's certificates |
 | Clear history (admin) | `POST /analytics/clear` `{what: performance\|history}` deletes performance stats, or all query history, on every server |
-| Pause filtering | `GET /pause`; `POST /pause` `{minutes, node}` (`minutes` 0 = until turned back on, up to 24 h; `node` omitted = every server); `DELETE /pause` (everything back on) or `DELETE /pause?node=<id>` |
+| Pause filtering | `GET /pause`; `POST /pause` `{minutes, node, schedules}` (`minutes` 0 = until turned back on, up to 24 h; `node` omitted = every server; group schedules keep blocking unless `schedules` is true, which needs `devices.manage`); `DELETE /pause` (everything back on) or `DELETE /pause?node=<id>` |
 | Block or allow | `POST /domains` `{domain, action: block\|allow\|clear}`, `GET /domains/check?name=` |
 | AdGuard Home import (admin) | `POST /import/adguard/preview` `{url, username, password, insecure}` returns `{id, plan}`; `POST /import/adguard/apply` `{id, sections, exclude}` |
 | Devices | `GET`/`POST /devices` `{name, addrs, group}`, `PUT`/`DELETE /devices/{id}` |
