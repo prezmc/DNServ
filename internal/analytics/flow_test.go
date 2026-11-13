@@ -66,6 +66,21 @@ func TestFlow(t *testing.T) {
 			if tls != 5 {
 				t.Errorf("names = %+v", f.Names)
 			}
+
+			// One device: only its lookups, with the servers that answered
+			// it (both ranges, since the hourly totals don't say).
+			r = run(t, s, Query{Kind: KindFlow, From: base.Add(-time.Minute), To: base.Add(-time.Minute + tc.span), Clients: []string{"192.168.1.10"}})
+			f = r.Flows[0]
+			paths = map[string]int64{}
+			for _, p := range f.Paths {
+				paths[p.Key] = p.N
+			}
+			if len(paths) != 2 || paths[PathUp+"https://dns.quad9.net/dns-query"] != 15 || paths[PathUp+"tls://9.9.9.9:853"] != 5 {
+				t.Errorf("one device's paths = %v", paths)
+			}
+			if len(f.Clients) != 1 || f.Clients[0].Key != "192.168.1.10" || f.Clients[0].N != 20 {
+				t.Errorf("one device's clients = %+v", f.Clients)
+			}
 		})
 	}
 }

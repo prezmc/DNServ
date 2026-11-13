@@ -52,7 +52,6 @@ func (a *API) analyticsFlow(w http.ResponseWriter, r *http.Request, p *Principal
 	if !ok {
 		return
 	}
-	q.Clients = nil
 	byType := r.URL.Query().Get("group") == "type"
 	res, nodes, ok := a.askOrFail(w, r, q)
 	if !ok {

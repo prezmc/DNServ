@@ -208,9 +208,15 @@ step('dashboard shows the lookups', async () => {
   assert.match(q, /[1-9]/, 'queries tile counts lookups: ' + q);
   await page.locator('.d-chart svg.chart').waitFor();
   await page.locator('.d-flow svg.flow').waitFor();
-  // The traffic map's device opens a profile.
+  // Picking a device redraws the map with only its lookups, and opens
+  // its profile; All devices goes back.
   await page.locator('.d-flow .flow-node').first().click();
+  await page.locator('.flow-focus').getByText(/Showing only/).waitFor();
   await page.locator('.dev-profile').getByText(/Profile:/).waitFor();
+  const devices = await page.locator('.d-flow .flow-node').evaluateAll(ns => ns.filter(n => n.querySelector('text') && n.getBoundingClientRect().left < 300).length);
+  assert.equal(devices, 1, 'one device on the map');
+  await page.getByRole('button', { name: 'All devices' }).click();
+  await until('the full map', async () => (await page.locator('.flow-focus').count()) === 0);
 });
 
 step('performance shows how full the cache is, and the size can change', async () => {
