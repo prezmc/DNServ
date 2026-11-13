@@ -445,7 +445,7 @@ func (s *Store) write(batch []querylog.Entry) error {
 			return err
 		}
 		defer full.Close()
-		args := make([]any, 0, per*14)
+		args := make([]any, 0, per*15)
 		for i := 0; i < len(batch); i += per {
 			chunk := batch[i:min(i+per, len(batch))]
 			args = args[:0]
@@ -460,8 +460,14 @@ func (s *Store) write(batch []querylog.Entry) error {
 				if e.Upstream != "" {
 					up = e.Upstream
 				}
+				// The cache time as the upstream server gave it (cached
+				// answers carry what's left of it), for the cache report.
+				var ttl any
+				if code == codeAnswered {
+					ttl = answerTTL(e.Answer)
+				}
 				args = append(args, e.Time.UnixMicro(), e.Client.String(), e.Name, e.Type, code, e.Rcode, e.Answers, e.Duration, b2i(e.Allowed), rule, list,
-					joinAddrs(ips), joinNames(cn), up)
+					joinAddrs(ips), joinNames(cn), up, ttl)
 			}
 			if len(chunk) == per {
 				_, err = full.Exec(args...)
@@ -561,8 +567,8 @@ func (s *Store) write(batch []querylog.Entry) error {
 }
 
 func insertRows(n int) string {
-	return `INSERT INTO queries (t, client, name, qtype, result, rcode, answers, ms, allowed, rule, list, ips, cnames, upstream) VALUES ` +
-		strings.TrimSuffix(strings.Repeat("(?,?,?,?,?,?,?,?,?,?,?,?,?,?),", n), ",")
+	return `INSERT INTO queries (t, client, name, qtype, result, rcode, answers, ms, allowed, rule, list, ips, cnames, upstream, ttl) VALUES ` +
+		strings.TrimSuffix(strings.Repeat("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?),", n), ",")
 }
 
 // migrate adds columns that later versions keep.
@@ -585,9 +591,9 @@ func migrate(db *sql.DB) error {
 		have[name] = true
 	}
 	rows.Close()
-	for _, col := range []string{"ips", "cnames", "upstream"} {
-		if !have[col] {
-			if _, err := db.Exec(`ALTER TABLE queries ADD COLUMN ` + col + ` TEXT`); err != nil {
+	for _, col := range []string{"ips TEXT", "cnames TEXT", "upstream TEXT", "ttl INTEGER"} {
+		if name, _, _ := strings.Cut(col, " "); !have[name] {
+			if _, err := db.Exec(`ALTER TABLE queries ADD COLUMN ` + col); err != nil {
 				return err
 			}
 		}

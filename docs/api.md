@@ -9,7 +9,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | First run | `GET /setup`, `POST /setup` `{code, username, password}`, `POST /setup/join` `{code, join_code, host}`, or `POST /setup/restore` (multipart: `file`, `passphrase`, `code`) |
 | Sign in | `POST /auth/login`, then `POST /auth/mfa` `{code}` (authenticator or recovery code) |
 | Enroll MFA | `POST /auth/totp/begin` (returns the secret and `otpauth://` URL), `POST /auth/totp/confirm` `{code}` |
-| You | `GET /auth/me` (includes your `dashboard` layout), `PUT /auth/dashboard` `{layout}` (card names in order; `-name` hides a card, `name:w` makes it wide; `[]` is the default), `POST /auth/password`, `GET`/`DELETE /auth/sessions`, `POST /auth/logout`, `POST /auth/recovery-codes` `{password}`, `POST /auth/authenticator/begin` `{password}` then `/confirm` `{code}` |
+| You | `GET /auth/me` (includes your `dashboard` layout), `PUT /auth/dashboard` `{layout}` (card names in order; `-name` hides a card, `name:s\|m\|l\|f` sets its size: small, medium, large or full width; `[]` is the default), `POST /auth/password`, `GET`/`DELETE /auth/sessions`, `POST /auth/logout`, `POST /auth/recovery-codes` `{password}`, `POST /auth/authenticator/begin` `{password}` then `/confirm` `{code}` |
 | Users | `GET`/`POST /users`, `PATCH`/`DELETE /users/{id}`, `POST /users/{id}/password`, `POST /users/{id}/reset-mfa` |
 | Tokens | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}` |
@@ -27,9 +27,10 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Settings history | `GET /config/versions`, `GET /config/versions/{id}` (with the changes going back would make), `POST /config/versions/{id}/restore` |
 | Backups | `GET /backups`, `POST /backups/passphrase` `{passphrase, password}`, `PUT /backups/schedule` `{every: daily\|weekly\|"", at: "HH:MM", keep, offsite}`, `POST /backups/download`, `GET /backups/files/{local\|offsite}/{name}`, `POST /backups/restore` (multipart: `file`, `passphrase`, `password`) |
 | Security and traffic | `GET /analytics/security` (verdict, high-risk domains that got answers and who reached them, threats blocked, risky hours), `POST /analytics/dismiss` `{name, undo}` (domains.allowblock), `GET /analytics/flow?group=company\|type` (traffic map). Take `range=` and `client=` like the other history views |
+| Cache and repeating lookups | `GET /analytics/cache` (up to 7 days: cache hits, misses and why they missed: `first`, `short` cache time, `expired`, `early`, `failed`, `unknown`, each with its top domains), `GET /analytics/beacons?limit=` (names devices look up on a steady beat in the last 24 hours, with the devices and their period when you may see the Query log). Take `range=` and `client=` |
 | Risk scoring | `GET /analytics/scoring` (scoring in force, defaults, presets, sources, name checks), `POST /analytics/scoring/preview` with a scoring (levels now vs proposed over the last 7 days, and what would rise or drop). Save with `PATCH /settings` `{risk_scoring}` (lists.manage); reset with `POST /settings/reset` `{fields: ["risk_scoring"]}` |
 | Cluster | `GET /cluster`, `POST /cluster/join-codes` `{host}`, `PUT /cluster/nodes/{id}` `{name, never_leader}`, `DELETE /cluster/nodes/{id}`, `POST /cluster/preferred` `{id}`, `POST /cluster/transfer` `{to}`, `POST /cluster/recover` `{password, accept_risk}`, `POST /cluster/join` `{join_code, host, password}` |
-| Status and audit | `GET /status`, `GET /audit` |
+| Status and audit | `GET /status` (each list's status includes `changed`, when its owner last changed it, and `changed_from`: `list` header date, `server` Last-Modified, or `seen` when new contents arrived), `GET /audit` |
 
 Permissions: `dashboard.view`, `querylog.view`, `data.export`,
 `domains.allowblock`, `rules.edit`, `lists.manage`, `devices.manage`,

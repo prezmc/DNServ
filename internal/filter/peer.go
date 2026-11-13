@@ -113,11 +113,12 @@ func (e *Engine) fetchFromPeer(ctx context.Context, p Peer, src, want string) er
 		return fmt.Errorf("the leader's copy doesn't match (got %s, want %s)", got[:12], want[:12])
 	}
 	dst := e.localCopy(src)
+	old, _ := fileSHA(dst)
 	if err := os.Rename(tmp.Name(), dst); err != nil {
 		return err
 	}
-	_, err = fileSHA(dst) // write the sidecar
-	return err
+	noteCopy(dst, old, time.Time{}) // also writes the SHA-256 sidecar
+	return nil
 }
 
 type limitWriter struct {

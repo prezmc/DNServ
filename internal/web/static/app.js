@@ -762,6 +762,16 @@ function serversCard(sum, s) {
     h('p', { class: 'muted small' }, 'Answers each server gave its devices. Devices pick a server themselves, so an even split is not expected.'));
 }
 
+// listChangedCell says when a list's owner last changed it, and warns
+// when a list looks abandoned.
+function listChangedCell(l) {
+  if (!l.changed) return h('td', { class: 'muted nowrap', title: 'The list doesn’t say, and no new version has arrived since DNServ started keeping track.' }, 'not known yet');
+  const how = { list: 'From the date in the list itself.', server: 'From the date the list’s server gave.', seen: 'When a download first brought new contents.' }[l.changed_from] || '';
+  const days = (Date.now() - new Date(l.changed).getTime()) / 86400000;
+  return h('td', { class: 'nowrap', title: how },
+    days > 180 ? h('span', { class: 'badge warn', title: how + ' Not changed in over 6 months: it may no longer be maintained.' }, ago(l.changed)) : ago(l.changed));
+}
+
 // steady redraws part of the dashboard without moving what the user is
 // looking at: cards above the first one in view may grow or shrink as data
 // changes, so the page scrolls by the same amount to keep that card still.
@@ -783,36 +793,67 @@ function steady(redraw) {
   if (now) se.scrollTop += now.getBoundingClientRect().top - top;
 }
 
+// fmtEvery says how often a beat repeats: every 30 s, every 5 min.
+function fmtEvery(sec) {
+  if (sec < 90) return 'every ' + sec + ' s';
+  if (sec < 5400) return 'every ' + Math.round(sec / 60) + ' min';
+  return 'every ' + Math.round(sec / 3600) + ' h';
+}
+
+// beaconsCard lists names devices look up on a steady beat, which is how
+// analytics, telemetry and trackers usually behave. Hovering a row shows
+// the devices; the buttons block or allow the name.
+async function beaconsCard(box) {
+  let d;
+  try { d = await api('GET', '/analytics/beacons?range=24h&limit=8'); } catch (_) { return; }
+  if (!d.detail) { box.replaceChildren(); return; }
+  const rows = d.domains || [];
+  const who = (x) => (x.who || []).map(w => w.label + (w.label !== w.addr ? ' (' + w.addr + ')' : '') + ': ' + fmtEvery(w.period) + ', ' + fmtNum(w.n) + ' lookups').join('\n');
+  steady(() => box.replaceChildren(h('div', { class: 'card d-beacons' },
+    h('div', { class: 'row spread' }, h('h2', {}, 'Repeating lookups'), h('span', { class: 'muted small' }, 'Last 24 hours')),
+    !rows.length ? h('p', { class: 'muted' }, 'No device is looking anything up on a steady beat.') :
+      h('table', { class: 'top' }, h('tbody', {}, rows.map(x => h('tr', { title: who(x) || null },
+        h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(x.name, '24h') }, x.name), ' ', riskBadge(x.risk),
+          h('div', { class: 'small' }, h('span', { class: 'badge' }, fmtEvery(x.period)), ' ',
+            h('span', { class: 'muted' }, x.devices === 1 ? (x.who && x.who[0] ? x.who[0].label : '1 device') : x.devices + ' devices', x.blocked ? ' · blocked' : '', x.type ? ' · ' + [x.type.category, x.type.company].filter(Boolean).join(' · ') : ''))),
+        h('td', { class: 'num' }, fmtNum(x.n)),
+        h('td', { class: 'nowrap' }, domainButton(x.name, x.now)))))),
+    h('p', { class: 'muted small' }, 'Names a device asks for on a steady beat, as analytics, telemetry and trackers often do (and also clocks and mail checks). Hover a row to see which devices.'))));
+}
+
 // ---------- arranging the dashboard ----------
 
 // DASH_CARDS are the dashboard cards a user can move, widen or hide, in
 // their default order.
+// Each has a default size: s(mall), m(edium), l(arge) or f(ull width).
 const DASH_CARDS = [
-  ['tiles', 'Totals'], ['security', 'Security'], ['chart', 'Queries chart'], ['health', 'Health'], ['flow', 'Traffic map'],
-  ['servers', 'Servers'], ['domains', 'Top domains'], ['blocked', 'Top blocked'], ['devices', 'Devices'], ['perf', 'Response times'],
-  ['top', 'Top blocking lists'], ['check', 'Check a domain'], ['lists', 'Lists'],
+  ['tiles', 'Totals', 'f'], ['security', 'Security', 'm'], ['health', 'Health', 'm'], ['chart', 'Queries chart', 'l'], ['servers', 'Servers', 's'],
+  ['flow', 'Traffic map', 'f'], ['domains', 'Top domains', 's'], ['blocked', 'Top blocked', 's'], ['devices', 'Devices', 's'], ['beacons', 'Repeating lookups', 'm'], ['perf', 'Response times', 's'],
+  ['top', 'Top blocking lists', 's'], ['check', 'Check a domain', 's'], ['lists', 'Lists', 'f'],
 ];
-// DASH_FULL are the cards that already use the whole width.
-const DASH_FULL = new Set(['tiles', 'security', 'flow', 'lists']);
+// DASH_SIZES are the sizes as columns of 12: on wide screens, medium
+// screens (small and medium become half, large full) and phones (all full).
+const DASH_SIZES = { s: [4, 6, 12, 'Small'], m: [6, 6, 12, 'Medium'], l: [8, 12, 12, 'Large'], f: [12, 12, 12, 'Full width'] };
 
-// dashLayout reads a saved layout ("name", "-name" hidden, "name:w" wide)
-// into the full list of cards, adding any card the layout doesn't name in
-// its default place.
+// dashLayout reads a saved layout ("name", "-name" hidden, "name:m" a
+// size) into the full list of cards, adding any card the layout doesn't
+// name in its default place.
 function dashLayout(saved) {
-  const known = new Map(DASH_CARDS);
+  const known = new Map(DASH_CARDS.map(([n, label, size]) => [n, { label, size }]));
   const out = [], seen = new Set();
   for (const e of saved || []) {
     const hidden = e.startsWith('-'), [name, flag] = e.replace(/^-/, '').split(':');
     if (!known.has(name) || seen.has(name)) continue;
     seen.add(name);
-    out.push({ name, label: known.get(name), hidden, wide: flag === 'w' });
+    const k = known.get(name), size = flag === 'w' ? 'f' : DASH_SIZES[flag] ? flag : k.size;
+    out.push({ name, label: k.label, hidden, size, def: k.size });
   }
-  DASH_CARDS.forEach(([name, label], i) => {
+  DASH_CARDS.forEach(([name, label, size], i) => {
     if (seen.has(name)) return;
     // Put a new card after the card that comes before it by default.
     const prev = DASH_CARDS.slice(0, i).reverse().find(([n]) => seen.has(n));
     const at = prev ? out.findIndex(c => c.name === prev[0]) + 1 : 0;
-    out.splice(at, 0, { name, label, hidden: false, wide: false });
+    out.splice(at, 0, { name, label, hidden: false, size, def: size });
     seen.add(name);
   });
   return out;
@@ -820,11 +861,11 @@ function dashLayout(saved) {
 
 function dashSaved(cards) {
   const def = DASH_CARDS.map(([n]) => n).join();
-  if (cards.map(c => c.name).join() === def && !cards.some(c => c.hidden || c.wide)) return [];
-  return cards.map(c => (c.hidden ? '-' : '') + c.name + (c.wide ? ':w' : ''));
+  if (cards.map(c => c.name).join() === def && !cards.some(c => c.hidden || c.size !== c.def)) return [];
+  return cards.map(c => (c.hidden ? '-' : '') + c.name + (c.size !== c.def ? ':' + c.size : ''));
 }
 
-// applyDashLayout orders, widens and hides the cards with one style sheet,
+// applyDashLayout orders, sizes and hides the cards with one style sheet,
 // so cards keep their place when they are redrawn.
 function applyDashLayout(cards, arranging) {
   // A constructed style sheet, which the page's content security policy
@@ -833,9 +874,10 @@ function applyDashLayout(cards, arranging) {
     applyDashLayout.sheet = new CSSStyleSheet();
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, applyDashLayout.sheet];
   }
-  applyDashLayout.sheet.replaceSync(cards.map((c, i) => '.dash .d-' + c.name + '{order:' + (10 + i) + '}' +
-    (c.wide ? '.dash .d-' + c.name + '{grid-column:1 / -1}' : '') +
-    (c.hidden ? '.dash .d-' + c.name + (arranging ? '{opacity:.45}' : '{display:none}') : '')).join('\n'));
+  const rule = (c, i) => { const sel = '.dash .d-' + c.name; return sel + '{order:' + (10 + i) + ';grid-column:span ' + DASH_SIZES[c.size][2] + '}' +
+    (c.hidden ? sel + (arranging ? '{opacity:.45}' : '{display:none}') : ''); };
+  const at = (w, k) => '@media (min-width:' + w + 'px){' + cards.map(c => '.dash .d-' + c.name + '{grid-column:span ' + DASH_SIZES[c.size][k] + '}').join('') + '}';
+  applyDashLayout.sheet.replaceSync(cards.map(rule).join('\n') + '\n' + at(900, 1) + '\n' + at(1240, 0));
 }
 
 // dashArrange turns on arrange mode: each card gets a bar to move it
@@ -863,7 +905,8 @@ function dashArrange(dash, bar, done) {
         h('span', { class: 'grip', title: 'Drag to move', 'aria-hidden': 'true' }, '⠿'), h('span', { class: 'grow' }),
         h('button', { type: 'button', class: 'secondary small', title: 'Move earlier', 'aria-label': 'Move ' + c.label + ' earlier', disabled: i === 0, onclick: () => move(c.name, i - 1) }, '←'),
         h('button', { type: 'button', class: 'secondary small', title: 'Move later', 'aria-label': 'Move ' + c.label + ' later', disabled: i === cards.length - 1, onclick: () => move(c.name, i + 1) }, '→'),
-        DASH_FULL.has(c.name) ? null : h('button', { type: 'button', class: 'secondary small', 'aria-pressed': String(c.wide), onclick: () => { c.wide = !c.wide; redraw(); } }, 'Wide'),
+        h('div', { class: 'seg small', role: 'group', 'aria-label': 'Size of ' + c.label }, Object.entries(DASH_SIZES).map(([k, v]) =>
+          h('button', { type: 'button', title: v[3], 'aria-label': v[3], 'aria-pressed': String(c.size === k), onclick: () => { c.size = k; redraw(); } }, k === 'f' ? 'Full' : k.toUpperCase()))),
         h('button', { type: 'button', class: 'secondary small', onclick: () => { c.hidden = !c.hidden; redraw(); } }, c.hidden ? 'Show' : 'Hide')));
     });
   };
@@ -909,6 +952,7 @@ async function dashboard(main) {
   const flowBox = h('div');
   const secBox = h('div');
   const extraBox = h('div');
+  const beaconBox = h('div');
   const ver = h('p', { class: 'muted small d-ver' });
   // The period applies to the tiles, chart and top lists, like the time
   // picker at the top of a cloud DNS console.
@@ -930,7 +974,7 @@ async function dashboard(main) {
         shownHash = location.hash;
         route();
       } }, k))) : null);
-  const dash = h('div', { class: 'dash' }, arrangeBar, pauseBox, body, secBox, chartBox, flowBox, extraBox, devBox, checkDomainCard(), ver);
+  const dash = h('div', { class: 'dash' }, arrangeBar, pauseBox, body, secBox, chartBox, flowBox, extraBox, devBox, beaconBox, checkDomainCard(), ver);
   applyDashLayout(dashLayout(ME && ME.dashboard), false);
   fill(main, head, dash);
   const pause = pauseControl(pauseBtn, pauseBox, () => load());
@@ -1007,9 +1051,9 @@ async function dashboard(main) {
           can('querylog.view') ? '#/queries' + (rq ? '?' + rq : '') : null, series.map(p => p.total)),
         tile('Blocked', total ? fmtNum(blocked) : '0', total ? pct(blocked) + ' of queries' : null,
           can('querylog.view') ? '#/queries?result=blocked' + (rq ? '&' + rq : '') : null, series.map(p => p.blocked)),
-        tile('Answered from cache', cacheable ? fmtPct(cached / cacheable) : '—', total ? [fmtNum(cached), ' answers · ', pct(cached), ' of all queries'] : null,
+        tile('Answered from cache', cacheable ? fmtPct(cached / cacheable) : '—', total ? [fmtNum(cached), ' of ', fmtNum(cacheable), ' allowed lookups'] : null,
           can('dashboard.view') ? '#/performance' + (rq ? '?' + rq : '') : null, series.map(p => { const n = p.total - (p.blocked || 0) - (p.local || 0); return n > 0 ? p.cached / n : 0; }),
-          'Of the lookups that weren’t blocked or local names. The second line counts every query.'),
+          'Allowed lookups only: blocked ones and local names never need the cache. Counting every query, ' + pct(cached) + ' came from the cache.'),
         tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0), s.filter && s.filter.lists ? s.filter.lists.filter(l => !l.allowlist).length + ' lists' : null,
           ['lists.manage', 'rules.edit'].some(can) ? '#/settings' : null)),
       fromHist ? serversCard(hist.sum, s) : null,
@@ -1022,8 +1066,8 @@ async function dashboard(main) {
               h('td', {}, fmtNum(hu ? hu.tries : u.queries)), h('td', {}, fmtNum(hu ? hu.failed : u.failures)));
           })))) : null),
       (s.filter && s.filter.lists && s.filter.lists.length) ? h('div', { class: 'card d-lists' }, h('div', { class: 'row spread' }, h('h2', {}, 'Lists'), h('div', { class: 'row' }, clearCacheButton(), updateListsButton())), h('div', { class: 'scroll' }, h('table', {},
-        h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', {}, 'Updated'), h('th', {}, 'Status'))),
-        h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', {}, ago(l.updated)),
+        h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', { title: 'When this server last downloaded the list' }, 'Downloaded'), h('th', { title: 'When the list’s owner last changed it' }, 'Last changed'), h('th', {}, 'Status'))),
+        h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', { class: 'nowrap' }, ago(l.updated)), listChangedCell(l),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
     ));
     ver.textContent = 'DNServ ' + s.version;
@@ -1066,7 +1110,7 @@ async function dashboard(main) {
   // The security overview feeds both its card and the chart's risk dots.
   const security = () => (can('dashboard.view') ? api('GET', '/analytics/security?range=' + range).catch(() => null) : Promise.resolve(null));
   const charts = () => { const p = security(); p.then(sec => securityCard(secBox, range, sec, charts)); return dashboardChart(chartBox, range, p); };
-  const extras = () => (can('dashboard.view') ? Promise.all([dashboardExtras(extraBox, range), dashboardFlow(flowBox, range)]) : null);
+  const extras = () => (can('dashboard.view') ? Promise.all([dashboardExtras(extraBox, range), dashboardFlow(flowBox, range), beaconsCard(beaconBox)]) : null);
   await Promise.all([load(), loadDevices(), charts(), extras()]);
   let tick = 0;
   timer = setInterval(() => {
@@ -1636,8 +1680,6 @@ function bucketLabel(t, step, long) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-// queryChart draws allowed and blocked queries per bucket as stacked
-// bars, with a tooltip per bar and a table for screen readers.
 // queryChart draws queries over time. opts.risky (bucket start -> count)
 // marks the buckets where a high-risk domain got an answer.
 function queryChart(sum, opts) {
@@ -1667,17 +1709,27 @@ function queryChart(sum, opts) {
   pts.forEach((p, i) => {
     const x = padL + i * bw + (bw - barW) / 2;
     const allowed = p.total - p.blocked;
+    const cached = Math.min(allowed, p.cached || 0);
     const r = Math.min(3, barW / 2);
-    const yA = y(allowed), yB = y(p.total);
-    if (allowed > 0) g.push(svg('rect', { x, y: yA, width: barW, height: Math.max(1, y(0) - yA), rx: r, class: 'bar-allowed' }));
-    if (p.blocked > 0) g.push(svg('rect', { x, y: yB, width: barW, height: Math.max(1, yA - yB - (allowed > 0 ? 2 : 0)), rx: r, class: 'bar-blocked' }));
+    const yB = y(p.total);
+    // Stacked from the bottom: from the cache, other allowed, blocked.
+    let base = 0;
+    [[cached, 'bar-cached'], [allowed - cached, 'bar-allowed'], [p.blocked, 'bar-blocked']].forEach(([v, cls]) => {
+      if (v <= 0) return;
+      const top = y(base + v), bottom = y(base);
+      g.push(svg('rect', { x, y: top, width: barW, height: Math.max(1, bottom - top - (base > 0 ? 2 : 0)), rx: r, class: cls }));
+      base += v;
+    });
     const rn = risky.get(p.t);
     if (rn) g.push(svg('circle', { cx: x + barW / 2, cy: Math.max(4, yB - 6), r: 3.5, class: 'risk-dot' }));
     if (i % every === 0) g.push(svg('text', { x: x + barW / 2, y: H - 6, 'text-anchor': 'middle', class: 'axis' }, document.createTextNode(bucketLabel(p.t, step))));
     const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - padB, class: 'hit' });
     const show = () => {
+      const pct = (v) => p.total ? ' (' + (100 * v / p.total).toFixed(1) + '%)' : '';
       fill(tip, h('b', {}, bucketLabel(p.t, step, true)), h('div', {}, fmtNum(p.total), ' queries'),
-        h('div', {}, h('span', { class: 'key blocked' }), fmtNum(p.blocked), ' blocked', p.total ? ' (' + (100 * p.blocked / p.total).toFixed(1) + '%)' : ''),
+        h('div', {}, h('span', { class: 'key cached' }), fmtNum(cached), ' allowed from cache', pct(cached)),
+        h('div', {}, h('span', { class: 'key allowed' }), fmtNum(allowed - cached), ' allowed, looked up', pct(allowed - cached)),
+        h('div', {}, h('span', { class: 'key blocked' }), fmtNum(p.blocked), ' blocked', pct(p.blocked)),
         rn ? h('div', {}, h('span', { class: 'key risk' }), fmtNum(rn), ' risky ', rn === 1 ? 'answer' : 'answers') : null,
         p.total ? h('div', { class: 'muted' }, (p.ms_sum / p.total).toFixed(1), ' ms average') : null);
       tip.hidden = false;
@@ -1689,12 +1741,12 @@ function queryChart(sum, opts) {
     hit.addEventListener('mouseleave', () => { tip.hidden = true; });
     g.push(hit);
   });
-  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Queries over time: allowed and blocked' }, g);
+  const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Queries over time: allowed from cache, allowed and blocked' }, g);
   const table = h('details', { class: 'small' }, h('summary', { class: 'muted' }, 'Show as a table'),
-    h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'))),
-      h('tbody', {}, pts.filter(p => p.total).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.total)), h('td', {}, fmtNum(p.blocked))))))));
+    h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'From cache'), h('th', {}, 'Blocked'))),
+      h('tbody', {}, pts.filter(p => p.total).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.total)), h('td', {}, fmtNum(p.cached || 0)), h('td', {}, fmtNum(p.blocked))))))));
   return h('div', {},
-    h('div', { class: 'legend small' }, h('span', {}, h('span', { class: 'key allowed' }), 'Allowed'), h('span', {}, h('span', { class: 'key blocked' }), 'Blocked'),
+    h('div', { class: 'legend small' }, h('span', {}, h('span', { class: 'key cached' }), 'Allowed from cache'), h('span', {}, h('span', { class: 'key allowed' }), 'Allowed, looked up'), h('span', {}, h('span', { class: 'key blocked' }), 'Blocked'),
       risky.size ? h('span', {}, h('span', { class: 'key risk' }), 'A risky domain got through') : null),
     h('div', { class: 'chart-wrap' }, chart, tip), table);
 }
@@ -2263,8 +2315,10 @@ async function dashboardFlow(box, range) {
       acts.push(h('span', { class: 'muted' }, 'Busiest: '));
       n.domains.forEach(d => acts.push(ql ? h('a', { href: q({ search: d }), class: 'mono' }, d) : h('button', { type: 'button', class: 'link mono', onclick: () => domainDialog(d, range) }, d)));
     }
-    fill(detail, head, acts.length ? h('p', { class: 'row flow-acts' }, acts) : null,
+    const prof = n.col === 0 && n.device && ql ? h('div', { class: 'dev-profile' }, h('p', { class: 'muted small' }, 'Loading this device\u2019s profile\u2026')) : null;
+    fill(detail, head, acts.length ? h('p', { class: 'row flow-acts' }, acts) : null, prof,
       h('p', { class: 'muted small' }, h('button', { type: 'button', class: 'link', onclick: () => { st.sel = ''; draw(); } }, 'Clear selection')));
+    if (prof) deviceProfile(prof, n.device, n.label, range);
   }
 
   draw();
@@ -2276,6 +2330,85 @@ async function dashboardFlow(box, range) {
     document.addEventListener('fullscreenchange', redraw);
   }
   box.flowRedraw = () => { if (box.isConnected) draw(); };
+}
+
+// deviceProfile shows how one device uses the internet: when it is busy,
+// what kinds of service and which companies it talks to, its busiest
+// and blocked sites, risky lookups and anything it asks for on a beat.
+// Built from the same history as the rest of the dashboard, filtered to
+// the device's addresses.
+async function deviceProfile(box, device, label, range) {
+  const c = 'client=' + encodeURIComponent(device), rg = 'range=' + range;
+  let sum, top, risky, beats;
+  try {
+    [sum, top, risky, beats] = await Promise.all([
+      api('GET', '/analytics/summary?' + rg + '&' + c),
+      api('GET', '/analytics/top?by=domains&limit=500&' + rg + '&' + c),
+      api('GET', '/analytics/risky?limit=8&' + rg + '&' + c).catch(() => null),
+      api('GET', '/analytics/beacons?range=24h&limit=8&' + c).catch(() => null),
+    ]);
+  } catch (e) { fill(box, h('p', { class: 'muted small' }, 'Couldn’t load the profile: ', e.message)); return; }
+  if (!box.isConnected) return;
+  const k = sum.counts || {};
+  if (!k.total) { fill(box, h('p', { class: 'muted small' }, 'No lookups from this device in this period.')); return; }
+  const rows = top.rows || [];
+  const allowed = k.total - k.blocked, cacheable = allowed - (k.local || 0);
+  // What it uses: allowed lookups grouped by kind of service and company.
+  const byType = new Map(), byCo = new Map();
+  for (const r of rows) {
+    const n = r.total - r.blocked;
+    if (n <= 0) continue;
+    const t = r.type || {};
+    const cat = t.category || 'Unknown', co = t.company || 'Unknown';
+    byType.set(cat, (byType.get(cat) || 0) + n);
+    byCo.set(co, (byCo.get(co) || 0) + n);
+  }
+  const ranked = (m) => [...m].filter(([key]) => key !== 'Unknown' && key !== 'Other').sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const shareList = (title, list) => {
+    const most = list.length ? list[0][1] : 0;
+    return h('div', {}, h('h3', {}, title), !list.length ? h('p', { class: 'muted small' }, 'Nothing known yet.') :
+      h('table', { class: 'top' }, h('tbody', {}, list.map(([key, n]) => h('tr', {},
+        h('td', {}, key, bar(n, most)), h('td', { class: 'num' }, fmtPct(n / (allowed || 1))))))));
+  };
+  // count: 'allowed', 'blocked' or 'all' lookups of each domain.
+  const domainList = (title, list, count, empty) => {
+    const blocked = count === 'blocked';
+    const num = (r) => count === 'all' ? r.total : blocked ? r.blocked : r.total - r.blocked;
+    const most = list.length ? Math.max(...list.map(num)) : 0;
+    return h('div', {}, h('h3', {}, title), !list.length ? h('p', { class: 'muted small' }, empty) :
+      h('table', { class: 'top' }, h('tbody', {}, list.map(r => {
+        const n = num(r);
+        return h('tr', {}, h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(r.key, range) }, r.key), ' ', riskBadge(r.risk),
+          count === 'all' && r.blocked ? h('span', { class: 'muted small' }, r.blocked === r.total ? ' all blocked' : ' ' + fmtNum(r.blocked) + ' blocked') : null,
+          blocked ? null : typeLine(r.type), bar(n, most, blocked)), h('td', { class: 'num' }, fmtNum(n)));
+      }))));
+  };
+  const busiest = rows.filter(r => r.total > r.blocked).sort((a, b) => (b.total - b.blocked) - (a.total - a.blocked)).slice(0, 8);
+  const blockedTop = rows.filter(r => r.blocked).sort((a, b) => b.blocked - a.blocked).slice(0, 8);
+  const riskRows = (risky && risky.rows) || [];
+  const beatRows = (beats && beats.domains) || [];
+  const stat = (v, what, title) => h('div', { class: 'dp-stat', title: title || null }, h('b', {}, v), h('span', { class: 'muted small' }, what));
+  fill(box,
+    h('h3', { class: 'dp-title' }, 'Profile: ', label, h('span', { class: 'muted small' }, ' · ', RANGES[range] || range)),
+    h('div', { class: 'dp-stats' },
+      stat(fmtNum(k.total), 'lookups'),
+      stat(fmtPct(k.blocked / k.total), 'blocked', fmtNum(k.blocked) + ' blocked lookups'),
+      stat(cacheable > 0 ? fmtPct(k.cached / cacheable) : '—', 'from cache', fmtNum(k.cached) + ' of ' + fmtNum(cacheable) + ' allowed lookups'),
+      stat(fmtNum(rows.length) + (rows.length >= 500 ? '+' : ''), 'domains'),
+      stat(fmtNum(riskRows.length), riskRows.length === 1 ? 'risky domain' : 'risky domains'),
+      k.total ? stat(fmtMs(k.ms_sum / k.total), 'average answer') : null),
+    h('div', { class: 'dp-chart' }, queryChart(sum)),
+    h('div', { class: 'dp-grid' },
+      shareList('Kinds of service', ranked(byType)),
+      shareList('Companies', ranked(byCo)),
+      domainList('Busiest sites', busiest, 'allowed', 'No allowed lookups.'),
+      domainList('Most blocked', blockedTop, 'blocked', 'Nothing blocked.'),
+      riskRows.length ? domainList('Risky lookups', riskRows.slice(0, 8), 'all', '') : null,
+      h('div', {}, h('h3', {}, 'Repeating lookups ', h('span', { class: 'muted small' }, '(last 24 hours)')), !beatRows.length ? h('p', { class: 'muted small' }, 'Nothing on a steady beat.') :
+        h('table', { class: 'top' }, h('tbody', {}, beatRows.map(x => h('tr', {},
+          h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(x.name, '24h') }, x.name), ' ', h('span', { class: 'badge' }, fmtEvery(x.period)), x.blocked ? h('span', { class: 'muted small' }, ' blocked') : null),
+          h('td', { class: 'num' }, fmtNum(x.n)), h('td', { class: 'nowrap' }, domainButton(x.name, x.now)))))))),
+    h('p', { class: 'muted small' }, 'Shares are of this device’s allowed lookups. Kinds of service and companies come from the domain catalog, so lesser-known sites aren’t counted there.'));
 }
 
 // ---------- performance ----------
@@ -2447,6 +2580,60 @@ function distChart(dist) {
     h('tbody', {}, shown.filter(r => r.all).map(r => h('tr', {}, h('td', { class: 'nowrap' }, label(r), bar(r.all, top)), h('td', { class: 'num' }, fmtNum(r.all)), h('td', { class: 'num' }, fmtNum(r.lookups)), h('td', { class: 'num' }, fmtPct(r.cum / total)))))));
 }
 
+// CACHE_REASONS explain each reason a lookup wasn't answered from the
+// cache, and what might help (c is the cache settings).
+const CACHE_REASONS = {
+  first: ['First lookup', 'The first time a name was asked for on that server in this period. Every name has to be looked up once.',
+    (c, multi) => multi ? 'Each server keeps its own cache, so devices that use both servers fill both.' : ''],
+  short: ['Very short cache time', 'The site asked for its answer to be kept under a minute (common for ad, tracking and CDN names), and it had run out.',
+    (c) => 'Raising the minimum cache time keeps them longer, at the cost of answers being a little older' + (c.min_ttl ? ' (now ' + c.min_ttl + ' s).' : ' (now off).') + (c.prefetch ? '' : ' Prefetch also helps popular names.')],
+  expired: ['Expired', 'Asked again after the answer’s cache time had run out.',
+    (c) => [c.prefetch ? 'Prefetch is on, so popular names are refreshed before they expire.' : 'Turning on prefetch refreshes popular names before they expire.',
+      c.serve_stale ? ' Serve-stale is on: when upstream is slow, the expired answer is used.' : ''].join('')],
+  early: ['Should have been cached', 'Asked again while the last answer should still have been in the cache.',
+    (c) => 'The cache was restarted or cleared, or was full' + (c.max_entries ? ' (it holds ' + fmtNum(c.max_entries) + ' answers)' : '') + '.' +
+      (c.max_ttl ? ' The cache also keeps answers at most ' + fmtDur(c.max_ttl) + ', whatever the site asks for.' : '') + (c.persist ? '' : ' Keeping the cache across restarts would help after updates.')],
+  failed: ['Failed', 'The lookup failed, or came right after one that did. Failures aren’t cached, so each retry goes upstream.', () => 'See the upstream servers below for timeouts and errors.'],
+  unknown: ['No cache time recorded', 'Answers without records (names that don’t exist, or have no address of that type), or history from before DNServ kept cache times.', () => ''],
+};
+
+// cacheReport shows why lookups weren't answered from the cache.
+async function cacheReport(box, range, multi) {
+  const r = ['30d', '90d'].includes(range) ? '7d' : range;
+  let d;
+  try { d = await api('GET', '/analytics/cache?range=' + r); } catch (_) { return; }
+  const total = d.hits + d.misses;
+  if (!total) return;
+  const reasons = d.reasons.filter(x => x.n > 0);
+  const colors = { first: 'var(--s-4)', short: 'var(--s-blocked)', expired: 'var(--s-allowed)', early: 'var(--warn)', failed: 'var(--bad)', unknown: 'var(--muted)' };
+  const strip = h('div', { class: 'cache-strip', role: 'img', 'aria-label': 'Cache hits and misses' },
+    h('span', { class: 'seg-hit', title: 'From the cache: ' + fmtNum(d.hits) }, ''),
+    reasons.map(x => h('span', { title: CACHE_REASONS[x.reason][0] + ': ' + fmtNum(x.n) }, '')));
+  // Bar widths and colors are set as properties (the page's security
+  // policy allows that, not style attributes).
+  const segs = [...strip.children];
+  segs[0].style.flexGrow = d.hits; segs[0].style.background = 'var(--s-3)';
+  reasons.forEach((x, i) => { segs[i + 1].style.flexGrow = x.n; segs[i + 1].style.background = colors[x.reason]; });
+  fill(box, h('div', { class: 'card' },
+    h('h2', {}, 'Why aren’t more answers from the cache?'),
+    h('p', {}, h('b', {}, fmtPct(d.hits / total)), ' of the lookups that could use the cache were answered from it', r !== range ? ' (last 7 days)' : '', '. The other ', fmtNum(d.misses), ' went upstream, for these reasons:'),
+    strip,
+    h('div', { class: 'cache-reasons' }, reasons.map(x => {
+      const [title, about, hint] = CACHE_REASONS[x.reason] || [x.reason, '', () => ''];
+      const tip = hint(d.cache, multi);
+      return h('details', {},
+        h('summary', {}, h('span', { class: 'dot' }), ' ', h('b', {}, title), ' ', h('span', { class: 'muted' }, fmtNum(x.n), ' · ', fmtPct(x.n / total), ' of lookups')),
+        h('p', { class: 'small' }, about, tip ? [' ', h('span', { class: 'muted' }, tip)] : null),
+        x.domains.length ? h('table', { class: 'top' }, h('tbody', {}, x.domains.map(m => h('tr', {},
+          h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(m.name, r) }, m.name)),
+          h('td', { class: 'num nowrap muted small' }, m.ttl ? 'kept ' + (m.ttl < 60 ? m.ttl + ' s' : fmtDur(m.ttl)) : ''),
+          h('td', { class: 'num' }, fmtNum(m.n)))))) : null);
+    })),
+    h('p', { class: 'muted small' }, 'Each lookup that went upstream is compared with the same name’s earlier lookups on the same server. ',
+      isAdmin() ? ['Cache settings are under ', h('a', { href: '#/settings' }, 'Settings'), '.'] : '')));
+  box.querySelectorAll('.cache-reasons summary .dot').forEach((dot, i) => { dot.style.background = colors[reasons[i].reason]; });
+}
+
 async function performancePage(main) {
   const params = hashParams();
   const st = { range: RANGES[params.get('range')] ? params.get('range') : '24h' };
@@ -2469,6 +2656,8 @@ async function performancePage(main) {
     const from = Math.floor(new Date(r.from).getTime() / 1000), to = Math.floor(new Date(r.to).getTime() / 1000);
     const tile = (label, value, note, title) => h('div', { class: 'tile', title }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), note ? h('div', { class: 'small' }, note) : null);
     const multiNode = (r.nodes || []).length > 1;
+    const cacheBox = h('div');
+    if (r.detail) cacheReport(cacheBox, st.range, multiNode);
     const usualWhat = v.usual_from === 'before' ? 'Compared with the 7 days before.' : v.usual_from === 'period' ? 'Compared with a typical ' + (r.step >= 86400 ? 'day' : r.step >= 3600 ? (r.step > 3600 ? r.step / 3600 + ' hours' : 'hour') : (r.step / 60) + ' minutes') + ' in this period.' : 'Not enough history yet to say what is usual.';
     fill(body,
       !r.stats && !r.detail ? msg('warn', 'Query history is turned off, so there is nothing to show. ' + (isAdmin() ? 'Turn it on under Settings → Query history.' : 'An admin can turn it on.')) : null,
@@ -2491,6 +2680,7 @@ async function performancePage(main) {
         tile('Failed (SERVFAIL)', fmtNum(s.failed), [fmtPct(s.fail_rate), u ? [' · ', usualNote(s.fail_rate, u.fail_rate, fmtPct, true)] : null])),
       h('div', { class: 'card' }, h('h2', {}, 'Response times'), s.queries ? latencyChart(v, r.step, from, to, v.anomalies.filter(a => !a.server)) : h('p', { class: 'muted' }, 'No queries in this period.'),
         s.queries ? h('p', { class: 'muted small' }, 'Times are measured inside DNServ, from receiving a query to having the answer ready. ', usualWhat) : null),
+      cacheBox,
       h('div', { class: 'card' }, h('h2', {}, 'Upstream servers'),
         !v.upstreams.length ? h('p', { class: 'muted' }, 'No upstream lookups in this period.') : h('div', { class: 'scroll' }, h('table', {},
           h('thead', {}, h('tr', {}, multiNode ? h('th', {}, 'Server') : null, h('th', {}, 'Upstream'), h('th', { class: 'num' }, 'Tries'), h('th', { class: 'num' }, 'Average'), h('th', { class: 'num' }, 'Median'), h('th', { class: 'num' }, '95%'), h('th', { class: 'num' }, 'Slowest'), h('th', { class: 'num' }, 'Timeouts'), h('th', { class: 'num' }, 'Errors'))),
