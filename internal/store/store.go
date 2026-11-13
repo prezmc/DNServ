@@ -10,6 +10,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -145,6 +146,41 @@ type User struct {
 	// Dashboard is the user's own order of the dashboard cards; a card
 	// listed with a leading "-" is hidden. Empty means the default.
 	Dashboard []string `json:"dashboard,omitempty"`
+
+	// Passkeys sign the user in with Face ID, Touch ID, Windows Hello, a
+	// phone or a security key. They are added after the authenticator
+	// app, which stays as the fallback.
+	Passkeys []Passkey `json:"passkeys,omitempty"`
+}
+
+// Passkey is one registered WebAuthn credential. Only its public key is
+// stored; the private key never leaves the device.
+type Passkey struct {
+	ID         []byte    `json:"id"` // credential ID
+	Name       string    `json:"name"`
+	PublicKey  []byte    `json:"public_key"` // COSE key
+	RPID       string    `json:"rp_id"`      // the domain it was made for
+	AAGUID     []byte    `json:"aaguid,omitempty"`
+	SignCount  uint32    `json:"sign_count,omitempty"`
+	Transports []string  `json:"transports,omitempty"`
+	Attachment string    `json:"attachment,omitempty"`
+	AttType    string    `json:"attestation_type,omitempty"`
+	AttFormat  string    `json:"attestation_format,omitempty"`
+	UV         bool      `json:"uv,omitempty"`
+	BE         bool      `json:"backup_eligible,omitempty"`
+	BS         bool      `json:"backup_state,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	LastUsed   time.Time `json:"last_used,omitzero"`
+}
+
+// PasskeyByID returns the user's passkey with the credential ID, or nil.
+func (u *User) PasskeyByID(id []byte) *Passkey {
+	for i := range u.Passkeys {
+		if bytes.Equal(u.Passkeys[i].ID, id) {
+			return &u.Passkeys[i]
+		}
+	}
+	return nil
 }
 
 // MFAEnrolled reports whether the user has a confirmed second factor.

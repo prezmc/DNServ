@@ -8,6 +8,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 |---|---|
 | First run | `GET /setup`, `POST /setup` `{code, username, password}`, `POST /setup/join` `{code, join_code, host}`, or `POST /setup/restore` (multipart: `file`, `passphrase`, `code`) |
 | Sign in | `POST /auth/login`, then `POST /auth/mfa` `{code}` (authenticator or recovery code) |
+| Passkeys | Sign in alone: `POST /auth/passkey/begin` then `/finish` `{ticket, credential}`. Instead of the code: `POST /auth/mfa/passkey/begin` then `/finish`. Manage: `GET /auth/passkeys`, `POST /auth/passkeys/begin` `{password, host}` then `/finish` `{ticket, name, credential}`, `PATCH /auth/passkeys/{id}` `{name}`, `DELETE /auth/passkeys/{id}`. Browser sessions only |
 | Enroll MFA | `POST /auth/totp/begin` (returns the secret and `otpauth://` URL), `POST /auth/totp/confirm` `{code}` |
 | You | `GET /auth/me` (includes your `dashboard` layout), `PUT /auth/dashboard` `{layout}` (card names in order; `-name` hides a card, `name:s\|m\|l\|f` sets its size: small, medium, large or full width; `[]` is the default), `POST /auth/password`, `GET`/`DELETE /auth/sessions`, `POST /auth/logout`, `POST /auth/recovery-codes` `{password}`, `POST /auth/authenticator/begin` `{password}` then `/confirm` `{code}` |
 | Users | `GET`/`POST /users`, `PATCH`/`DELETE /users/{id}`, `POST /users/{id}/password`, `POST /users/{id}/reset-mfa` |

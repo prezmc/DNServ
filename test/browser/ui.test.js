@@ -329,3 +329,52 @@ step('sign out and back in with the authenticator', async () => {
   await page.locator('.msg.err').first().waitFor();
   problems.length = 0; // the 401 is expected
 });
+
+step('add a passkey, then sign in with it', async () => {
+  // Passkeys need a secure context and a name: localhost is both.
+  const base = node.url.replace('127.0.0.1', 'localhost');
+  const pc = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const pp = await pc.newPage();
+  pp.setDefaultTimeout(10000);
+  const signedIn = () => pp.getByRole('heading', { name: 'Your account', exact: true }).waitFor();
+  pp.on('pageerror', e => problems.push('passkey page error: ' + e.message));
+  try {
+    const cdp = await pc.newCDPSession(pp);
+    await cdp.send('WebAuthn.enable');
+    await cdp.send('WebAuthn.addVirtualAuthenticator', { options: { protocol: 'ctap2', transport: 'internal', hasResidentKey: true,
+      hasUserVerification: true, isUserVerified: true, automaticPresenceSimulation: true } });
+    await pp.goto(base);
+    await pp.fill('#username', USER);
+    await pp.fill('#password', PASS);
+    await pp.click('button[type=submit]');
+    await pp.getByLabel('Authentication code').fill(await otp.next());
+    await pp.click('button[type=submit]');
+    await pp.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
+    await pp.goto(base + '#/account');
+    await pp.getByRole('button', { name: 'Add a passkey' }).click();
+    await pp.fill('#pkname', 'Test laptop');
+    await pp.fill('#pkpw', PASS);
+    await pp.getByRole('dialog').getByRole('button', { name: 'Continue' }).click();
+    await pp.getByRole('cell', { name: 'Test laptop' }).waitFor();
+    // Signed out, the passkey alone signs back in.
+    await pp.getByRole('navigation').getByRole('button', { name: 'Sign out' }).click();
+    await pp.getByRole('button', { name: 'Sign in with a passkey' }).click();
+    await signedIn();
+    // And it can stand in for the code after the password.
+    await pp.getByRole('navigation').getByRole('button', { name: 'Sign out' }).click();
+    await pp.fill('#username', USER);
+    await pp.fill('#password', PASS);
+    await pp.click('button[type=submit]');
+    await pp.getByRole('button', { name: 'Use a passkey instead' }).click();
+    await signedIn();
+    // Removing it.
+    await pp.goto(base + '#/account');
+    await pp.getByRole('button', { name: 'Remove' }).click();
+    await pp.getByRole('dialog').getByRole('button', { name: 'Remove' }).click();
+    await pp.getByRole('cell', { name: 'Test laptop' }).waitFor({ state: 'detached' });
+  } catch (e) {
+    throw new Error(e.message + '\npage says: ' + (await pp.locator('body').innerText().catch(() => '?')).slice(0, 500));
+  } finally {
+    await pc.close();
+  }
+});

@@ -49,7 +49,10 @@ Everything DNServ does today, in more detail than the README.
 - **Accounts with mandatory two-factor sign-in.** Admins, power users (an
   admin picks what each one may change) and viewers. Every account must set
   up an authenticator app before it can do anything, and gets ten one-time
-  recovery codes. Passwords are hashed with Argon2id; failed sign-ins are
+  recovery codes. Once that's done, add **passkeys** on your account page
+  to sign in with Face ID, Touch ID, Windows Hello or a device PIN instead
+  of the 6-digit code (needs the dashboard on HTTPS at a name, not an IP;
+  see [Passkeys](https.md#passkeys)). Passwords are hashed with Argon2id; failed sign-ins are
   throttled; sessions end on password change, MFA reset or disable.
 - **Settings change live.** Upstream mode, servers, tunnel, allowed
   networks, lists and rules saved through the API apply without a restart,
