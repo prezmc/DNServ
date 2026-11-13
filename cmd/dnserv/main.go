@@ -123,7 +123,12 @@ func run() error {
 	defer cl.Close()
 	go applyConsoleCommands(cl, st, base.DataDir, log)
 
-	cfg := st.State().Settings.Overlay(base)
+	// Everything below starts from this one copy of the state. A restarted
+	// node may still be catching up from the leader, so anything applied
+	// after this is picked up once the subscription further down is in
+	// place.
+	boot := st.State()
+	cfg := boot.Settings.Overlay(base)
 	if err := cfg.Validate(); err != nil {
 		log.Error("saved settings are invalid; using the file and environment config until they are fixed", "err", err)
 		cfg = base
@@ -194,9 +199,9 @@ func run() error {
 			g.SetObserver(obs)
 		}
 	}
-	srv.SetPolicy(policy.Build(st.State()))
+	srv.SetPolicy(policy.Build(boot))
 	selfID := cl.ID() // fixed for the life of the node
-	setPause(srv, st.State(), selfID)
+	setPause(srv, boot, selfID)
 	if loc, err := cfg.Location(); err == nil {
 		srv.SetTimeZone(loc)
 	}
@@ -219,7 +224,7 @@ func run() error {
 		Log: log.With("component", "https"),
 		Off: strings.EqualFold(os.Getenv("DNSERV_HTTPS"), "off"),
 	}
-	httpsMgr.Apply(st.State().HTTPS)
+	httpsMgr.Apply(boot.HTTPS)
 	if tc := cfg.DNS.TLS; len(tc.DoTListen)+len(tc.DoHListen) > 0 {
 		cert, fp, selfSigned, err := server.LoadOrCreateCert(tc, cfg.DataDir)
 		if err != nil {
@@ -272,7 +277,7 @@ func run() error {
 	intel.SetEnabled(cfg.Analytics.ThreatFeeds)
 	intel.SetTrusted(cfg.Analytics.TrustedDomains)
 	intel.SetScoring(cfg.Analytics.Scoring)
-	intel.SetAbuseCHKey(st.State().AbuseCHKey)
+	intel.SetAbuseCHKey(boot.AbuseCHKey)
 	go intel.Run(ctx)
 	adm.Intel = intel
 	if hist != nil {
@@ -434,12 +439,18 @@ func run() error {
 	// are compared with what DNS last used, not with the state before.
 	var (
 		subMu   sync.Mutex
-		shown   = st.State()
+		shown   = boot
 		holding atomic.Bool
 	)
-	st.Subscribe(func(_, new *store.State) {
+	// followState applies whatever changed since shown. It always reads the
+	// latest state, so a late or repeated call never goes backwards.
+	followState := func() {
 		subMu.Lock()
 		defer subMu.Unlock()
+		new := st.State()
+		if new == shown {
+			return
+		}
 		if new.Cluster.ID == "" && shown.Cluster.ID != "" {
 			holding.Store(true)
 			return
@@ -480,7 +491,10 @@ func run() error {
 			default:
 			}
 		}
-	})
+	}
+	st.Subscribe(func(_, _ *store.State) { followState() })
+	// Catch up on changes applied between reading boot and subscribing.
+	followState()
 	go func() {
 		applied := cfg
 		for {
@@ -511,7 +525,6 @@ func run() error {
 		MinVersion:     tls.VersionTLS12,
 		NextProtos:     []string{"http/1.1"},
 	})
-	httpsMgr.Apply(st.State().HTTPS) // catch changes applied before Subscribe
 	httpsMgr.Attach(webLn)
 	go httpsMgr.Run(ctx)
 	httpSrv := &http.Server{
