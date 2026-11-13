@@ -45,10 +45,11 @@ func newEnv(t *testing.T) *env {
 
 // client is one browser: a cookie jar plus the current CSRF token.
 type client struct {
-	e     *env
-	http  *http.Client
-	csrf  string
-	token string // API token instead of a cookie
+	e      *env
+	http   *http.Client
+	csrf   string
+	token  string // API token instead of a cookie
+	origin string // Origin header, if set
 }
 
 func (e *env) client() *client {
@@ -70,6 +71,9 @@ func (c *client) do(method, path string, body any, out any) int {
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.origin != "" {
+		req.Header.Set("Origin", c.origin)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {

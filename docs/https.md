@@ -77,6 +77,23 @@ an Nginx Proxy Manager proxy host pointing at `http://<server>:8080`. Set
 internet, limit it to your network (an Access List in Nginx Proxy
 Manager), because the dashboard controls your DNS.
 
+## Passkeys
+
+Browsers only allow passkeys on HTTPS and when the dashboard is opened by a
+name, never by IP address. So once HTTPS is on (or behind a reverse proxy
+with a real certificate), open the dashboard at its name, like
+`https://dns1.example.com:8080`, then **Your account > Passkeys > Add a
+passkey**.
+
+A passkey is made for the parent domain (`example.com` here), so the same
+passkey works on `dns2.example.com` and every other server under it. When
+that domain is shared hosting such as `duckdns.org`, the browser refuses and
+the passkey is made for that one server's name instead.
+
+The authenticator app and recovery codes keep working, so you can always
+sign in from a browser that has no passkey. An admin's **Reset 2FA** also
+removes a user's passkeys.
+
 ## Locked out
 
 Plain `http://` keeps working unless the redirect is on. If a bad

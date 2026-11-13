@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,6 +115,10 @@ const (
 	OpFilterResume   = "filtering.resume"    // FilterResume
 	OpHistoryClear   = "history.clear"       // HistoryClear (audit record only)
 	OpRiskDismiss    = "risk.dismiss"        // RiskDismiss
+	OpPasskeyAdd     = "user.passkey_add"    // PasskeyAdd
+	OpPasskeyRename  = "user.passkey_rename" // PasskeyRef
+	OpPasskeyDelete  = "user.passkey_delete" // PasskeyRef
+	OpPasskeyUsed    = "user.passkey_used"   // PasskeyUsed
 )
 
 // VirusTotalKey sets (or, empty, removes) the VirusTotal API key. It is
@@ -171,6 +176,39 @@ type TOTPUsed struct {
 	Step int64
 }
 type RecoveryUsed struct{ ID, Hash string }
+
+// PasskeyAdd registers a passkey for a user.
+type PasskeyAdd struct {
+	UserID  string
+	Passkey Passkey
+}
+
+// PasskeyRef names one of a user's passkeys (Name is for renames).
+type PasskeyRef struct {
+	UserID string
+	ID     []byte
+	Name   string
+}
+
+// PasskeyUsed records a sign-in with a passkey.
+type PasskeyUsed struct {
+	UserID      string
+	ID          []byte
+	SignCount   uint32
+	BackupState bool
+}
+
+// MaxPasskeys is how many passkeys one user may register.
+const MaxPasskeys = 20
+
+func passkeyName(n string) (string, error) {
+	n = strings.TrimSpace(n)
+	if n == "" || utf8.RuneCountInString(n) > 60 {
+		return "", errors.New("give the passkey a name of up to 60 characters")
+	}
+	return n, nil
+}
+
 type RecoveryReset struct {
 	ID     string
 	Hashes []string
@@ -387,7 +425,84 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 			return nil, nil, ErrNotFound
 		}
 		u.TOTPSecret, u.TOTPPending, u.RecoveryHashes, u.MFAResetAt = "", "", nil, c.Time
+		u.Passkeys = nil
 		return nil, audit(fmt.Sprintf("reset MFA for %q; they must enroll again at next sign-in", u.Username), nil, nil), nil
+
+	case OpPasskeyAdd:
+		var d PasskeyAdd
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		u, ok := st.Users[d.UserID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		if !u.MFAEnrolled() {
+			return nil, nil, errors.New("set up the authenticator app before adding a passkey")
+		}
+		if len(d.Passkey.ID) == 0 || len(d.Passkey.PublicKey) == 0 || d.Passkey.RPID == "" {
+			return nil, nil, errors.New("passkey needs an id, key and domain")
+		}
+		name, err := passkeyName(d.Passkey.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(u.Passkeys) >= MaxPasskeys {
+			return nil, nil, fmt.Errorf("you can have up to %d passkeys; remove one first", MaxPasskeys)
+		}
+		for _, o := range st.Users {
+			if o.PasskeyByID(d.Passkey.ID) != nil {
+				return nil, nil, errors.New("this passkey is already registered")
+			}
+		}
+		d.Passkey.Name, d.Passkey.CreatedAt, d.Passkey.LastUsed = name, c.Time, time.Time{}
+		u.Passkeys = append(u.Passkeys, d.Passkey)
+		return nil, audit(fmt.Sprintf("added passkey %q for %q", name, u.Username), nil, nil), nil
+
+	case OpPasskeyRename, OpPasskeyDelete:
+		var d PasskeyRef
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		u, ok := st.Users[d.UserID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		pk := u.PasskeyByID(d.ID)
+		if pk == nil {
+			return nil, nil, ErrNotFound
+		}
+		if c.Op == OpPasskeyDelete {
+			old := pk.Name
+			u.Passkeys = slices.DeleteFunc(u.Passkeys, func(p Passkey) bool { return bytes.Equal(p.ID, d.ID) })
+			return nil, audit(fmt.Sprintf("removed passkey %q for %q", old, u.Username), nil, nil), nil
+		}
+		name, err := passkeyName(d.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		old := pk.Name
+		pk.Name = name
+		return nil, audit(fmt.Sprintf("renamed passkey %q to %q for %q", old, name, u.Username), nil, nil), nil
+
+	case OpPasskeyUsed:
+		var d PasskeyUsed
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		u, ok := st.Users[d.UserID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		pk := u.PasskeyByID(d.ID)
+		if pk == nil {
+			return nil, nil, ErrNotFound
+		}
+		if d.SignCount > pk.SignCount {
+			pk.SignCount = d.SignCount
+		}
+		pk.BS, pk.LastUsed = d.BackupState, c.Time
+		return nil, nil, nil // like authenticator codes, sign-ins aren't audited
 
 	case OpTokenCreate:
 		var d Token
@@ -626,12 +741,13 @@ type PublicUser struct {
 	Disabled    bool      `json:"disabled"`
 	MFAEnrolled bool      `json:"mfa_enrolled"`
 	Recovery    int       `json:"recovery_codes_left"`
+	Passkeys    int       `json:"passkeys"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
 func publicUser(u *User) PublicUser {
 	p := PublicUser{ID: u.ID, Username: u.Username, Role: u.Role, Perms: u.Perms, Disabled: u.Disabled,
-		MFAEnrolled: u.MFAEnrolled(), Recovery: len(u.RecoveryHashes), CreatedAt: u.CreatedAt}
+		MFAEnrolled: u.MFAEnrolled(), Recovery: len(u.RecoveryHashes), Passkeys: len(u.Passkeys), CreatedAt: u.CreatedAt}
 	if p.Role == RoleAdmin {
 		p.Perms = AllPerms
 	}

@@ -36,6 +36,7 @@ lab.
 | **Setup and accounts** | | | |
 | First-run setup code and wizard | `api.TestSetupAndSignIn` | setup wizard | yes |
 | Two-factor sign-in, recovery codes, new authenticator | `auth.TestTOTPVectors`, `api.TestRecoveryCodeSignIn`, `api.TestSelfServiceSecondFactor`, `store.TestTOTPReplayAndRecovery` | setup wizard, sign out and back in | |
+| Passkeys: add, sign in alone or instead of the code, rename, remove | `api.TestPasskeys`, `api.TestRPCandidates` | add a passkey, then sign in with it | |
 | Roles and permissions, API tokens | `api.TestRolesTokensAndSettings`, `api.TestPausePermissions` | a viewer can only look | |
 | User admin: passwords, reset two-factor, delete, sessions, tokens | `api.TestUserAdministration`, `api.TestPasswordChangeEndsOtherSessions` | a viewer signs in | |
 | Sign-in throttling, cross-origin requests refused | `api.TestLoginThrottle`, `api.TestCrossOriginBlocked`, `auth.TestThrottle` | | |
