@@ -184,6 +184,7 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dash.arranging [data-card] { outline: 2px dashed color-mix(in srgb, var(--accent) 55%, transparent); outline-offset: 2px; cursor: grab; }
 .dash.arranging [data-card] > :not(.arrange-bar) { pointer-events: none; }
 .arrange-bar button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+.arrange-bar .seg button { padding: .15rem .5rem; }
 .arrange-bar .grip { color: var(--muted); font-size: 1.1rem; cursor: grab; }
 .dash .d-pause { order: -1; }
 .dash .d-note { order: 0; margin-top: -.4rem; }
@@ -203,13 +204,7 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dash .d-lists { order: 12; }
 .dash .d-ver { order: 99; }
 .dash > div > .card, .dash .cols > .card { align-self: stretch; }
-@media (min-width: 900px) {
-  .dash .d-health, .dash .d-servers, .dash .d-domains, .dash .d-blocked, .dash .d-devices, .dash .d-perf, .dash .d-top, .dash .d-check { grid-column: span 6; }
-}
-@media (min-width: 1240px) {
-  .dash .d-chart { grid-column: 1 / span 8; }
-  .dash .d-health, .dash .d-servers, .dash .d-domains, .dash .d-blocked, .dash .d-devices, .dash .d-perf, .dash .d-top, .dash .d-check { grid-column: span 4; }
-}
+/* Card order and sizes come from the layout (applyDashLayout in app.js). */
 .dash .d-health th, .dash .d-health td:not(:first-child) { white-space: nowrap; }
 .servers .server { padding: .7rem 0; border-bottom: 1px solid var(--line); }
 .servers .server:first-child { padding-top: .2rem; }
@@ -329,6 +324,7 @@ td code { white-space: nowrap; }
 .chart .axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .chart .bar-allowed { fill: var(--s-allowed); }
 .chart .bar-blocked { fill: var(--s-blocked); }
+.chart .bar-cached { fill: var(--s-3); }
 .chart .hit { fill: transparent; }
 .chart .hit:hover { fill: var(--text); fill-opacity: .06; }
 .chart-tip {
@@ -339,6 +335,7 @@ td code { white-space: nowrap; }
 .key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: .35rem; vertical-align: -1px; }
 .key.allowed { background: var(--s-allowed); }
 .key.blocked { background: var(--s-blocked); }
+.key.cached { background: var(--s-3); }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 0 1rem; }
 table.top { width: 100%; }
 table.top td { vertical-align: top; }
@@ -490,3 +487,21 @@ details.parts tr.total td { font-weight: 700; border-top: 1px solid currentColor
 .tune-row input.num-in { width: 5rem; flex: none; text-align: right; }
 .seg.presets { margin-bottom: .3rem; }
 .preview { margin-top: 1rem; border-top: 1px solid var(--line); padding-top: .5rem; }
+
+/* cache report */
+.cache-strip { display: flex; height: 14px; border-radius: 7px; overflow: hidden; margin: .4rem 0 .8rem; background: var(--code); }
+.cache-strip > span { flex: 0 1 0; min-width: 2px; }
+.cache-reasons details { border-top: 1px solid var(--line); padding: .45rem 0; }
+.cache-reasons summary { cursor: pointer; }
+.cache-reasons .dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 3px; vertical-align: -1px; }
+
+/* Device profile under the traffic map */
+.dev-profile { margin: .6rem 0; padding: .75rem; border: 1px solid var(--line); border-radius: 10px; background: color-mix(in srgb, var(--code) 40%, transparent); }
+.dev-profile h3 { font-size: .9rem; margin: .2rem 0 .4rem; }
+.dev-profile .dp-title { font-size: 1rem; }
+.dp-stats { display: flex; flex-wrap: wrap; gap: .5rem 1.5rem; margin: .3rem 0 .6rem; }
+.dp-stat { display: flex; flex-direction: column; }
+.dp-stat b { font-size: 1.15rem; }
+.dp-chart { margin-bottom: .5rem; }
+.dp-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: .5rem 1.25rem; }
+.dp-grid table.top { width: 100%; }

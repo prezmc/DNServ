@@ -104,24 +104,43 @@ Everything DNServ does today, in more detail than the README.
   Admins can clear the performance stats (Performance page) or all query
   history (Settings → Query history) on every server.
 - **Arrange the Dashboard.** **Arrange** lets each user drag the cards
-  into their own order (or use the arrow buttons), make a card wide, or
+  into their own order (or use the arrow buttons), set each card's size
+  (small, medium, large or full width, so cards can sit side by side), or
   hide it. The layout is saved with the account, so it follows the user
   to any browser; **Back to default** undoes it. Cards that refresh keep
   the page still: what you're looking at doesn't move when a card above
   it grows or shrinks.
 - **Dashboard numbers.** Top domains lists only lookups that got answers
   (blocked ones are in Top blocked). The cache hit rate counts only
-  lookups that could come from the cache (not blocked ones or local
-  names), with the share of all queries underneath. The Devices card
-  shows the busiest devices over the period, or the most active in the
-  last 15 minutes.
+  allowed lookups that could come from the cache (not blocked ones or
+  local names), and its hover text gives the share of all queries.
+  Queries over time splits each bar into allowed from the cache, allowed
+  and looked up, and blocked. The Devices card shows the busiest devices
+  over the period, or the most active in the last 15 minutes.
+- **Why lookups miss the cache.** The Performance page breaks cache misses
+  down by reason: the first lookup of a name, a very short cache time set
+  by the site (under a minute), a cache time that ran out, asked again
+  while it should still have been cached, or a failed lookup. Each reason
+  lists the domains behind it. Worked out from the query history (which
+  now keeps each answer's cache time) when the page is opened.
+- **Repeating lookups.** A Dashboard card lists names a device asks for on
+  a steady beat (every 30 seconds, every 5 minutes), as analytics,
+  telemetry and trackers do. Hovering a row shows the devices and their
+  beat; Block and Allow act on the name.
+- **When a list last changed.** The Lists page shows when each list was
+  downloaded and when its owner last changed it (from the list's own
+  header date, the server's Last-Modified, or the first download with new
+  contents), and flags lists that haven't changed in six months.
 - **Traffic map.** A Dashboard card draws every lookup as a flow: the
   busiest devices, the DNS server that answered, how it was answered (cache,
   each upstream server, blocked, local names) and the services the lookups
   were for, grouped by company or by type (AdGuard's companies database,
   else the site's own domain). Switches hide internet, internal or blocked
   lookups; hovering shows counts and shares; clicking a device, an answer
-  or a service opens the matching Query log. Each server works out its part
+  or a service opens the matching Query log. Clicking a device also opens
+  its profile: when it is busy, the kinds of service and companies it
+  uses, its busiest and most blocked sites, risky lookups and anything it
+  looks up on a steady beat. Each server works out its part
   from its own history when the card is opened, so DNS answers never wait
   for it. History records which upstream server answered each lookup
   (older history shows as "Upstream").

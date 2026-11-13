@@ -28,8 +28,13 @@ type ListStatus struct {
 	Allowlist bool      `json:"allowlist"`
 	Rules     int       `json:"rules"`
 	Skipped   int       `json:"skipped"`
-	Updated   time.Time `json:"updated"`
+	Updated   time.Time `json:"updated"` // when this server last downloaded it
 	FromCache bool      `json:"from_cache"`
+	// Changed is when the list's owner last changed it, as far as can be
+	// told; ChangedFrom says how: "list" (its own header), "server" (the
+	// Last-Modified header) or "seen" (a download brought new contents).
+	Changed     time.Time `json:"changed,omitzero"`
+	ChangedFrom string    `json:"changed_from,omitempty"`
 	// SHA256 identifies the downloaded copy in use; FromLeader says it
 	// came from the cluster leader rather than the list's own server.
 	SHA256     string `json:"sha256,omitempty"`
@@ -178,6 +183,7 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 		if isURL(l.URL) {
 			st.SHA256, _ = fileSHA(e.localCopy(l.URL))
 		}
+		st.Changed, st.ChangedFrom = listChanged(e.localCopy(l.URL))
 		statuses = append(statuses, st)
 	}
 	for _, l := range cfg.Allowlists {
@@ -322,5 +328,10 @@ func (e *Engine) download(ctx context.Context, src, dst string) error {
 	if n > maxListBytes {
 		return fmt.Errorf("download %s: list larger than %d MB", src, maxListBytes>>20)
 	}
-	return os.Rename(tmp.Name(), dst)
+	old, _ := fileSHA(dst)
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		return err
+	}
+	noteCopy(dst, old, lastModified(resp.Header))
+	return nil
 }

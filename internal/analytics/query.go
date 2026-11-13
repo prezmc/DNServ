@@ -15,6 +15,8 @@ const (
 	KindTop     = "top"     // top domains, blocked domains or devices
 	KindSearch  = "search"  // individual queries, newest first
 	KindDomain  = "domain"  // one domain: totals, series, devices, caught by
+	KindCache   = "cache"   // why lookups weren't answered from the cache
+	KindBeacons = "beacons" // names devices look up on a steady beat
 	KindPerf    = "perf"    // response times, upstream health
 	KindFlow    = "flow"    // the traffic map
 	KindReach   = "reach"   // which devices reached given domains, and when
@@ -176,6 +178,12 @@ type Result struct {
 
 	// Flow only: one per node.
 	Flows []Flow `json:"flows,omitempty"`
+
+	// Cache only: misses by reason, and by domain and reason.
+	Misses []Miss `json:"misses,omitempty"`
+
+	// Beacons only: repeating lookups.
+	Beacons []Beacon `json:"beacons,omitempty"`
 }
 
 // Validate fills defaults and checks a query.
@@ -203,7 +211,7 @@ func (q *Query) Validate() error {
 		return fmt.Errorf("%w: too many clients", ErrBadQuery)
 	}
 	switch q.Kind {
-	case KindSummary, KindSearch, KindFlow:
+	case KindSummary, KindSearch, KindFlow, KindCache, KindBeacons:
 	case KindPerf:
 		if q.Baseline < 0 || q.Baseline > 30*86400 {
 			return fmt.Errorf("%w: baseline must be at most 30 days", ErrBadQuery)
@@ -292,6 +300,10 @@ func (s *Store) Run(ctx context.Context, q Query) (*Result, error) {
 		err = s.flow(ctx, &q, res)
 	case KindReach:
 		err = s.reach(ctx, &q, res)
+	case KindCache:
+		err = s.cacheMiss(ctx, &q, res)
+	case KindBeacons:
+		err = s.beacons(ctx, &q, res)
 	}
 	if err != nil {
 		return nil, err
@@ -637,6 +649,12 @@ func Merge(q Query, parts []*Result) *Result {
 	}
 	if q.Kind == KindPerf {
 		out.Perf = mergePerf(q, perfs)
+	}
+	if q.Kind == KindCache {
+		out.Misses = mergeMisses(parts)
+	}
+	if q.Kind == KindBeacons {
+		out.Beacons = mergeBeacons(parts)
 	}
 	for _, pt := range series {
 		out.Series = append(out.Series, *pt)

@@ -646,7 +646,7 @@ func (u *User) Public() PublicUser { return publicUser(u) }
 
 // validLayout checks a dashboard layout: card names made of lowercase
 // letters, digits and hyphens, each optionally hidden with a leading "-"
-// or widened with a trailing ":w".
+// or sized with a trailing ":s", ":m", ":l" or ":f".
 func validLayout(l []string) error {
 	if len(l) > 40 {
 		return errors.New("too many dashboard cards")
