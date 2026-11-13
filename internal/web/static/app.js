@@ -2607,7 +2607,7 @@ function cacheFillCard(fills, cfg) {
   if (!fills.length) return null;
   const evicting = ok.some(f => f.fill.evicted > 0 && f.fill.entries >= f.fill.max * 0.95);
   const row = (f) => {
-    if (!f.fill) return h('tr', {}, h('td', {}, h('b', {}, f.server)), h('td', { colspan: 3, class: 'muted small' }, f.error || 'No answer'));
+    if (!f.fill) return h('tr', {}, h('td', { class: 'fill-server' }, h('b', {}, f.server)), h('td', { colspan: 2, class: 'muted small' }, f.error || 'No answer'));
     const x = f.fill, used = x.max ? x.entries / x.max : 0;
     const meter = h('div', { class: 'fill-meter', role: 'img', 'aria-label': fmtPct(used) + ' full' },
       h('span', { class: 'fresh', title: fmtNum(x.fresh) + ' fresh' }), h('span', { class: 'stale', title: fmtNum(x.usable - x.fresh) + ' expired, kept for when upstream is down' }),
@@ -2617,11 +2617,11 @@ function cacheFillCard(fills, cfg) {
     b.style.width = (x.max ? 100 * (x.usable - x.fresh) / x.max : 0) + '%';
     c.style.width = (x.max ? 100 * (x.entries - x.usable) / x.max : 0) + '%';
     return h('tr', {},
-      h('td', { class: 'nowrap' }, h('b', {}, f.server)),
-      h('td', { class: 'grow' }, meter, h('div', { class: 'muted small' }, fmtNum(x.entries), ' of ', fmtNum(x.max), ' answers · ', fmtNum(x.fresh), ' fresh')),
-      h('td', { class: 'num' }, h('b', {}, fmtPct(used))),
-      h('td', { class: 'num small ' + (x.evicted ? 'worse' : 'muted'), title: 'Answers still good that were pushed out to make room, since the server started' },
-        x.evicted ? fmtNum(x.evicted) + ' pushed out' : 'none pushed out'));
+      h('td', { class: 'fill-server' }, h('b', {}, f.server)),
+      h('td', { class: 'grow' }, meter, h('div', { class: 'muted small' }, fmtNum(x.entries), ' of ', fmtNum(x.max), ' answers · ', fmtNum(x.fresh), ' fresh · ',
+        h('span', { class: x.evicted ? 'worse' : null, title: 'Answers still good that were pushed out to make room, since the server started' },
+          x.evicted ? fmtNum(x.evicted) + ' pushed out for room' : 'none pushed out'))),
+      h('td', { class: 'num' }, h('b', {}, fmtPct(used))));
   };
   return h('div', { class: 'card' },
     h('h2', {}, 'How full the cache is'),

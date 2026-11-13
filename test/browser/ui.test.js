@@ -289,13 +289,17 @@ step('a viewer signs in, sets up two-factor and can only look', async () => {
 });
 
 step('pages fit a phone screen', async () => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: Number(process.env.PHONE_WIDTH) || 390, height: 844 });
   try {
     for (const hash of ['', 'queries', 'settings', 'names', 'analytics', 'performance']) {
       await go(hash);
       await page.waitForTimeout(300);
       const over = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
-      assert.ok(over <= 1, '#/' + hash + ' scrolls sideways by ' + over + 'px on a phone');
+      // Name what sticks out (outside anything meant to scroll sideways).
+      const wide = over > 1 ? await page.evaluate(() => [...document.querySelectorAll('main *')]
+        .filter(e => e.getBoundingClientRect().right > window.innerWidth + 1 && !e.closest('.scroll'))
+        .slice(-3).map(e => e.tagName.toLowerCase() + (e.className ? '.' + String(e.className).split(' ').join('.') : '') + ' "' + (e.textContent || '').trim().slice(0, 40) + '"').join('; ')) : '';
+      assert.ok(over <= 1, '#/' + hash + ' scrolls sideways by ' + over + 'px on a phone: ' + wide);
     }
   } finally {
     await page.setViewportSize({ width: 1280, height: 900 });
