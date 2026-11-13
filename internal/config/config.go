@@ -224,7 +224,10 @@ type AnalyticsConfig struct {
 // History limits.
 const (
 	MaxHistoryDays = 365
-	MaxStatsDays   = 730
+	// The cache holds this many answers at least and at most.
+	MinCacheEntries = 1000
+	MaxCacheEntries = 5_000_000
+	MaxStatsDays    = 730
 )
 
 // Default returns a configuration that works out of the box: encrypted
@@ -458,8 +461,8 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("filtering: list %q has no url", l.Name))
 		}
 	}
-	if c.Cache.Enabled && c.Cache.MaxEntries <= 0 {
-		errs = append(errs, errors.New("cache.max_entries must be positive"))
+	if c.Cache.Enabled && (c.Cache.MaxEntries < MinCacheEntries || c.Cache.MaxEntries > MaxCacheEntries) {
+		errs = append(errs, fmt.Errorf("cache size must be %d to %d answers", MinCacheEntries, MaxCacheEntries))
 	}
 	return errors.Join(errs...)
 }

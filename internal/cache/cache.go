@@ -50,6 +50,13 @@ type Cache struct {
 	now    func() time.Time
 
 	hits, misses, stale, prefetches atomic.Int64
+	// evicted counts answers pushed out to make room while still usable
+	// (fresh, or within the serve-stale window): a sign the cache is too
+	// small.
+	evicted atomic.Int64
+	// size is the number of answers asked for (the shards together may
+	// hold a few fewer, from rounding).
+	size atomic.Int64
 }
 
 type shard struct {
@@ -75,6 +82,7 @@ func New(opt Options) *Cache {
 	for i := range c.shards {
 		c.shards[i] = shard{items: map[string]*list.Element{}, lru: list.New(), max: per}
 	}
+	c.size.Store(int64(max(opt.MaxEntries, shards)))
 	return c
 }
 
@@ -215,7 +223,11 @@ func (c *Cache) set(key string, m *dns.Msg, stored time.Time, ttl time.Duration)
 	for s.lru.Len() > s.max {
 		last := s.lru.Back()
 		s.lru.Remove(last)
-		delete(s.items, last.Value.(*entry).key)
+		old := last.Value.(*entry)
+		delete(s.items, old.key)
+		if stored.Sub(old.stored) <= old.ttl+c.opt.ServeStale {
+			c.evicted.Add(1)
+		}
 	}
 }
 
@@ -343,11 +355,68 @@ type Stats struct {
 	Misses     int64 `json:"misses"`
 	Stale      int64 `json:"stale"`
 	Prefetches int64 `json:"prefetches"`
+	Max        int   `json:"max"`     // how many answers it can hold
+	Evicted    int64 `json:"evicted"` // still-usable answers pushed out for room
 }
 
 // Stats returns cumulative counters.
 func (c *Cache) Stats() Stats {
-	return Stats{Entries: c.Len(), Hits: c.hits.Load(), Misses: c.misses.Load(), Stale: c.stale.Load(), Prefetches: c.prefetches.Load()}
+	return Stats{Entries: c.Len(), Hits: c.hits.Load(), Misses: c.misses.Load(), Stale: c.stale.Load(), Prefetches: c.prefetches.Load(),
+		Max: c.capacity(), Evicted: c.evicted.Load()}
+}
+
+func (c *Cache) capacity() int { return int(c.size.Load()) }
+
+// Resize changes how many answers the cache can hold, dropping the least
+// recently used ones if it now holds too many.
+func (c *Cache) Resize(maxEntries int) {
+	c.size.Store(int64(max(maxEntries, shards)))
+	per := max(maxEntries/shards, 1)
+	for i := range c.shards {
+		s := &c.shards[i]
+		s.mu.Lock()
+		s.max = per
+		for s.lru.Len() > s.max {
+			last := s.lru.Back()
+			s.lru.Remove(last)
+			delete(s.items, last.Value.(*entry).key)
+		}
+		s.mu.Unlock()
+	}
+}
+
+// Fill says how full the cache is: entries held, and how many of them
+// are still fresh or still usable when upstream is down (the rest have
+// expired and wait to be replaced). It walks every entry, so it is for
+// status pages, not the query path.
+type Fill struct {
+	Entries int   `json:"entries"`
+	Fresh   int   `json:"fresh"`
+	Usable  int   `json:"usable"` // fresh plus serve-stale
+	Max     int   `json:"max"`
+	Evicted int64 `json:"evicted"`
+}
+
+func (c *Cache) Fill() Fill {
+	now := c.now()
+	f := Fill{Max: c.capacity(), Evicted: c.evicted.Load()}
+	for i := range c.shards {
+		s := &c.shards[i]
+		s.mu.Lock()
+		for _, el := range s.items {
+			e := el.Value.(*entry)
+			age := now.Sub(e.stored)
+			f.Entries++
+			if age <= e.ttl {
+				f.Fresh++
+			}
+			if age <= e.ttl+c.opt.ServeStale {
+				f.Usable++
+			}
+		}
+		s.mu.Unlock()
+	}
+	return f
 }
 
 // --- persistence ---

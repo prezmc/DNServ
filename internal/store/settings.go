@@ -28,6 +28,9 @@ type Settings struct {
 	Allowlists       *[]config.ListConfig `json:"allowlists,omitempty"`
 	Rules            *[]string            `json:"rules,omitempty"`
 
+	// CacheSize is how many answers each server's cache holds.
+	CacheSize *int `json:"cache_size,omitempty"`
+
 	HistoryDays *int `json:"history_days,omitempty"`
 	StatsDays   *int `json:"stats_days,omitempty"`
 
@@ -93,6 +96,9 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.Rules != nil {
 		c.Filtering.Rules = append([]string(nil), (*s.Rules)...)
+	}
+	if s.CacheSize != nil {
+		c.Cache.MaxEntries = *s.CacheSize
 	}
 	if s.HistoryDays != nil {
 		c.History.Days = *s.HistoryDays
@@ -168,6 +174,9 @@ func (s *Settings) Merge(p Settings) {
 	if p.Rules != nil {
 		s.Rules = p.Rules
 	}
+	if p.CacheSize != nil {
+		s.CacheSize = p.CacheSize
+	}
 	if p.HistoryDays != nil {
 		s.HistoryDays = p.HistoryDays
 	}
@@ -188,7 +197,7 @@ func (s *Settings) Merge(p Settings) {
 // Touches reports which permission areas a patch changes.
 func (p Settings) Touches() (upstream, network, lists, rules bool) {
 	upstream = p.UpstreamMode != nil || p.UpstreamServers != nil || p.UpstreamStrategy != nil || p.TunnelInterface != nil ||
-		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil
+		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil || p.CacheSize != nil
 	network = p.AllowedNets != nil || p.LocalDNS != nil || p.TimeZone != nil || p.Records != nil
 	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.BlockedServices != nil || p.SafeSearch != nil || p.FilteringEnabled != nil || p.BlockMode != nil ||
 		p.ThreatFeeds != nil || p.TrustedDomains != nil || p.RiskScoring != nil

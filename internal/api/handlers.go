@@ -334,8 +334,27 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request, p *Principa
 	a.finishSignIn(w, r)
 }
 
+// sessionView is a session as listed: never its token hash or CSRF token.
+type sessionView struct {
+	ID        string    `json:"id"`
+	UserID    string    `json:"user_id"`
+	Stage     string    `json:"stage"`
+	Created   time.Time `json:"created"`
+	LastSeen  time.Time `json:"last_seen"`
+	IP        string    `json:"ip"`
+	UserAgent string    `json:"user_agent"`
+}
+
+func sessionViews(list []auth.Session) []sessionView {
+	out := make([]sessionView, 0, len(list))
+	for _, x := range list {
+		out = append(out, sessionView{ID: x.ID, UserID: x.UserID, Stage: x.Stage, Created: x.Created, LastSeen: x.LastSeen, IP: x.IP, UserAgent: x.UserAgent})
+	}
+	return out
+}
+
 func (a *API) mySessions(w http.ResponseWriter, r *http.Request, p *Principal) {
-	writeJSON(w, http.StatusOK, a.Sessions.List(p.User.ID))
+	writeJSON(w, http.StatusOK, sessionViews(a.Sessions.List(p.User.ID)))
 }
 
 func (a *API) revokeMySession(w http.ResponseWriter, r *http.Request, p *Principal) {
@@ -455,7 +474,7 @@ func (a *API) resetMFA(w http.ResponseWriter, r *http.Request, p *Principal) {
 }
 
 func (a *API) allSessions(w http.ResponseWriter, r *http.Request, p *Principal) {
-	writeJSON(w, http.StatusOK, a.Sessions.List(""))
+	writeJSON(w, http.StatusOK, sessionViews(a.Sessions.List("")))
 }
 
 func (a *API) revokeAnySession(w http.ResponseWriter, r *http.Request, p *Principal) {

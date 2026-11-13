@@ -61,6 +61,9 @@ type API struct {
 	AlsoOn func(ctx context.Context, name string) []filter.ListHit
 	// UpdateLists re-downloads every list now (runs in the background).
 	UpdateLists func()
+	// CacheFill says how full the answer cache is on this node and every
+	// other one.
+	CacheFill func(ctx context.Context) []CacheFill
 	// ClearCache empties the answer cache on this node and every other
 	// server, and reports what each one cleared.
 	ClearCache func(ctx context.Context) []CacheCleared

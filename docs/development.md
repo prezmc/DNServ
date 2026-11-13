@@ -7,6 +7,8 @@ go test -tags failover -v -timeout 30m ./test/failover/   # needs Docker
 go run ./cmd/dnserv -config dnserv.example.yaml
 ```
 
+Browser tests and the feature checklist: [testing.md](testing.md).
+
 Layout: `cmd/dnserv` (entry point), `internal/config`, `internal/filter`
 (rule parsing, compiled index, list downloads, bypass list),
 `internal/cache`, `internal/upstream` (DoH, DoT, plain),

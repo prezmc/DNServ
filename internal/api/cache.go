@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/prezmc/dnserv/internal/analytics"
+	"github.com/prezmc/dnserv/internal/cache"
 )
 
 // The cache report answers "why aren't more answers coming from the
@@ -50,12 +51,23 @@ func (a *API) analyticsCache(w http.ResponseWriter, r *http.Request, p *Principa
 		}
 	}
 	c := a.Effective().Cache
+	var fill []CacheFill
+	if a.CacheFill != nil {
+		fill = a.CacheFill(r.Context())
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"hits": hits, "misses": misses, "reasons": reasons, "nodes": nodes, "detail": res.Detail,
+		"hits": hits, "misses": misses, "reasons": reasons, "nodes": nodes, "detail": res.Detail, "fill": orEmpty(fill),
 		"cache": map[string]any{
 			"enabled": c.Enabled, "max_entries": c.MaxEntries, "prefetch": c.Prefetch, "persist": c.Persist,
 			"min_ttl": int64(c.MinTTL / time.Second), "max_ttl": int64(c.MaxTTL / time.Second),
 			"serve_stale": int64(c.ServeStale / time.Second), "negative_ttl": int64(c.NegativeTTL / time.Second),
 		},
 	})
+}
+
+// CacheFill is how full one server's answer cache is right now.
+type CacheFill struct {
+	Server string      `json:"server"`
+	Fill   *cache.Fill `json:"fill,omitempty"`
+	Error  string      `json:"error,omitempty"`
 }

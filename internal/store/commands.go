@@ -754,6 +754,8 @@ func clearField(s *Settings, f string) error {
 		s.Allowlists = nil
 	case "rules":
 		s.Rules = nil
+	case "cache_size":
+		s.CacheSize = nil
 	case "history_days":
 		s.HistoryDays = nil
 	case "stats_days":
