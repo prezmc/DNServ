@@ -3228,7 +3228,91 @@ const HTTPS_MODES = [
   ['upload', 'Upload a certificate', 'Paste a certificate and its private key, for example one from your own certificate authority. You’ll need to paste a new one before it expires.'],
   ['files', 'Certificate files in a folder', 'Read the certificate from a folder mounted into the container, such as Nginx Proxy Manager’s, Traefik’s, Caddy’s or certbot’s. Renewals are picked up within a minute.'],
   ['npm', 'From Nginx Proxy Manager', 'Sign in to Nginx Proxy Manager and pick one of its certificates. DNServ downloads it again twice a day, so renewals arrive on their own.'],
+  ['acme', 'Let’s Encrypt (built in)', 'DNServ gets a free trusted certificate from Let’s Encrypt for the names you list, shares it with your other servers, and renews it 30 days before it expires. Your servers don’t need to be reachable from the internet: you prove you own the names with a DNS record.'],
 ];
+
+const ACME_METHODS = [
+  ['dns_api', 'Automatic, through my DNS host', 'DNServ adds and removes the records through your DNS host’s API. Nothing to do at renewal.'],
+  ['helper', 'Set once, with a CNAME record', 'Add one CNAME record per name, one time only. It points the check at an acme-dns server, which DNServ updates at each renewal. Works with any DNS host, even ones without an API.'],
+  ['manual', 'By hand', 'DNServ shows you a TXT record to add for each name and carries on once it sees them. The values change at every renewal (every 60 days or so), so you’ll do this again each time.'],
+];
+
+const stripMd = (t) => String(t || '').replace(/`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\s*\(since v[\d.]+\)/g, '');
+
+// acmePanel is the Let's Encrypt part of the HTTPS card.
+function acmePanel(s) {
+  const a = s.acme || {};
+  const saved = new Set(a.saved_settings || []);
+  let hosts = null, hostCode = a.dns_host || '';
+  const method = h('select', { id: 'hamethod', name: 'acme_method' }, ACME_METHODS.map(([v, label]) => h('option', { value: v, selected: (a.method || 'dns_api') === v }, label)));
+  const methodNote = h('p', { class: 'muted small' });
+  const fields = h('div');
+  const hostInfo = h('div');
+  const hostPick = combo({ label: 'DNS host', placeholder: 'Type to search, such as Cloudflare', options: [], value: hostCode, onchange: (v) => { hostCode = v; drawFields(); } });
+  hostPick.addEventListener('focusin', loadHosts, { once: true });
+  async function loadHosts() {
+    if (hosts) return;
+    try {
+      hosts = (await api('GET', '/https/dns-hosts')).hosts || [];
+      hostPick.setOptions(hosts.map(x => ({ value: x.code, label: x.name, detail: x.code })));
+      drawFields();
+    } catch (e) { fill(hostInfo, msg('err', e.message)); }
+  }
+  const field = ([k, d], secret) => h('div', {},
+    h('label', { for: 'hds-' + k }, k),
+    h('input', { id: 'hds-' + k, 'data-setting': k, type: secret ? 'password' : 'text', spellcheck: 'false', autocomplete: 'new-password',
+      placeholder: saved.has(k) && a.dns_host === hostCode ? 'saved' : '' }),
+    h('p', { class: 'muted small' }, stripMd(d)));
+  function drawFields() {
+    const x = hosts && hosts.find(o => o.code === hostCode);
+    if (!x) { fill(fields); fill(hostInfo, hostCode && !hosts ? null : h('p', { class: 'muted small' }, 'About 190 DNS hosts are supported.')); return; }
+    const creds = x.credentials.filter(([, d]) => !/^alias to/i.test(d));
+    fill(hostInfo, h('p', { class: 'muted small' }, 'Fill in what your ', x.name, ' login needs; some hosts list alternatives, so you won’t need every box. Leave a saved value empty to keep it. ',
+      h('a', { href: 'https://go-acme.github.io/lego/dns/' + x.code + '/', target: '_blank', rel: 'noopener' }, 'How to get these for ' + x.name)));
+    fill(fields, creds.map(c => field(c, true)),
+      x.additional.length ? h('details', {}, h('summary', {}, 'More settings'), x.additional.map(c => field(c, false))) : null);
+  }
+  if (hostCode) loadHosts();
+  const records = (a.records || []);
+  const recordTable = records.length ? h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Type'), h('th', {}, 'Value'))),
+    h('tbody', {}, records.map(r => h('tr', {}, h('td', { class: 'mono small' }, r.name), h('td', {}, r.type), h('td', { class: 'mono small' }, r.value)))))) : null;
+  const helperBox = h('div', {},
+    h('label', { for: 'hahelper' }, 'acme-dns server'),
+    h('input', { id: 'hahelper', name: 'acme_helper', type: 'text', spellcheck: 'false', value: a.helper || '', placeholder: 'https://auth.acme-dns.io' }),
+    h('p', { class: 'muted small' }, 'Leave empty for the public one, or run your own (github.com/joohoi/acme-dns). Save, then add the CNAME records shown below at your DNS host.'),
+    a.method === 'helper' && records.length ? [msg('ok', 'Add these CNAME records at your DNS host, once. DNServ asks for the certificate as soon as they work.'), recordTable] : null);
+  const manualBox = h('div', {},
+    a.method === 'manual' && records.length ? [msg('warn', 'Add these TXT records at your DNS host now. DNServ checks every minute and carries on once it sees them.'), recordTable]
+      : a.method === 'manual' ? h('p', { class: 'muted small' }, 'After you save, the records to add appear here within a minute or two. Refresh this page to see them.') : null);
+  const apiBox = h('div', {}, h('label', {}, 'DNS host (where your domain’s DNS records are kept)'), hostPick, hostInfo, fields);
+  const showMethod = () => {
+    const m = method.value;
+    methodNote.textContent = (ACME_METHODS.find(x => x[0] === m) || [])[2] || '';
+    apiBox.hidden = m !== 'dns_api'; helperBox.hidden = m !== 'helper'; manualBox.hidden = m !== 'manual';
+  };
+  method.addEventListener('change', showMethod);
+  showMethod();
+  const panel = h('div', {},
+    h('label', { for: 'hanames' }, 'Names for the certificate (one per line)'),
+    h('textarea', { id: 'hanames', name: 'acme_names', class: 'short', spellcheck: 'false', placeholder: 'dns1.example.com\ndns2.example.com' }, (a.names || []).join('\n')),
+    h('p', { class: 'muted small' }, 'Names in a domain you own, one for each server. They only need to work on your network: point each at its server in Local names. One certificate lists them all and every server uses it, so no wildcard is needed.'),
+    h('label', { for: 'haemail' }, 'Email (optional)'),
+    h('input', { id: 'haemail', name: 'acme_email', type: 'text', inputmode: 'email', autocomplete: 'email', value: a.email || '', placeholder: 'you@example.com' }),
+    h('p', { class: 'muted small' }, 'Let’s Encrypt may use it to tell you about problems with your account.'),
+    h('label', { for: 'hamethod' }, 'How to prove you own the names'), method, methodNote,
+    apiBox, helperBox, manualBox,
+    h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'acme_staging', checked: !!a.staging }),
+      h('span', {}, 'Test run: use Let’s Encrypt’s staging service (browsers won’t trust the certificate)')));
+  panel.body = () => {
+    const settings = {};
+    fields.querySelectorAll('[data-setting]').forEach(i => { if (i.value.trim()) settings[i.dataset.setting] = i.value; });
+    const f = panel.closest('form');
+    return { method: method.value, names: lines(val(f, 'acme_names')), email: val(f, 'acme_email').trim(), staging: f.elements.acme_staging.checked,
+      helper: val(f, 'acme_helper').trim(), dns_host: hostPick.value, dns_settings: settings };
+  };
+  return panel;
+}
 
 function httpsCard(hs) {
   const s = hs.settings, servers = hs.servers || [];
@@ -3289,6 +3373,7 @@ function httpsCard(hs) {
     h('div', { class: 'actions left' }, listBtn), npmMsg,
     h('label', { for: 'hnpmcert' }, 'Certificate'), certSel,
     h('p', { class: 'muted small' }, 'Pick a certificate for the name you’ll open the dashboard with, such as dns1.example.com, and point that name at this server in Local names. A wildcard certificate (*.example.com) covers every server.'));
+  panels.acme = acmePanel(s);
 
   const redirect = h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'redirect', checked: s.redirect }),
     h('span', {}, 'Send browsers that open http:// to https://'));
@@ -3299,11 +3384,12 @@ function httpsCard(hs) {
       h('td', {}, n.server),
       h('td', {}, n.unreachable ? h('span', { class: 'badge warn', title: n.unreachable }, 'unreachable')
         : n.forced ? h('span', { class: 'badge warn', title: 'DNSERV_HTTPS=off is set on this server' }, 'forced off')
-        : n.on ? h('span', { class: 'badge ' + (n.error ? 'warn' : 'ok'), title: n.error || '' }, n.error ? 'on, with a problem' : 'on') : h('span', { class: 'badge' }, 'off')),
+        : n.on ? h('span', { class: 'badge ' + (n.error ? 'warn' : 'ok'), title: n.error || '' }, n.error ? 'on, with a problem' : 'on') : h('span', { class: 'badge' }, 'off'),
+        n.requesting ? h('span', { class: 'badge', title: 'This server is asking Let’s Encrypt for the certificate' }, 'requesting…') : null),
       h('td', { class: 'small' }, n.cert ? [n.cert.self_signed ? 'self-signed' : (n.cert.issuer || ''), ' · ', (n.cert.names || []).slice(0, 3).join(', ')] : '—'),
       h('td', { class: 'small' }, n.cert ? new Date(n.cert.not_after).toLocaleDateString() : '—'))))))
     : null;
-  const problems = servers.filter(n => n.error).map(n => msg('warn', n.server + ': ' + n.error + (n.cert && n.cert.self_signed && s.mode !== 'self_signed' ? ' Using a self-signed certificate until this is fixed.' : '')));
+  const problems = servers.filter(n => n.error && n.error !== s.fetch_error).map(n => msg('warn', n.server + ': ' + n.error + (n.cert && n.cert.self_signed && s.mode !== 'self_signed' ? ' Using a self-signed certificate until this is fixed.' : '')));
 
   const card = h('div', { class: 'card' },
     h('h2', {}, 'Dashboard HTTPS'),
@@ -3317,6 +3403,7 @@ function httpsCard(hs) {
       if (m === 'self_signed') body.names = lines(val(f, 'names'));
       if (m === 'upload') { body.cert_pem = val(f, 'cert'); body.key_pem = val(f, 'key'); }
       if (m === 'files') { body.cert_file = val(f, 'cert_file').trim(); body.key_file = val(f, 'key_file').trim(); }
+      if (m === 'acme') body.acme = panels.acme.body();
       if (m === 'npm') body.npm = { url: val(f, 'npm_url').trim(), email: val(f, 'npm_email').trim(), password: val(f, 'npm_password'), cert_id: Number(certSel.value) || 0 };
       const r = await api('PUT', '/https', body);
       fill(box, httpsCard(r));

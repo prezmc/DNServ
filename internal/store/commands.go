@@ -661,7 +661,7 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		return applyConfigRestore(st, c, dec)
 	case OpBackupConfig, OpBackupRestore:
 		return applyBackup(st, c, dec)
-	case OpHTTPSConfig, OpHTTPSCert:
+	case OpHTTPSConfig, OpHTTPSCert, OpHTTPSWait:
 		return applyHTTPS(st, c, dec)
 
 	case OpFilterPause:

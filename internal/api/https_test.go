@@ -3,7 +3,10 @@ package api
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -139,4 +142,77 @@ func (c *client) raw(method, path string) string {
 	var m json.RawMessage
 	c.do(method, path, nil, &m)
 	return string(m)
+}
+
+func TestHTTPSLetsEncrypt(t *testing.T) {
+	e := newEnv(t)
+	admin, _ := e.setupAdmin()
+	var tested []string
+	oldTest, oldReg := testDNSHost, registerHelper
+	defer func() { testDNSHost, registerHelper = oldTest, oldReg }()
+	testDNSHost = func(_ context.Context, host string, settings map[string]string, names []string) error {
+		if settings["CF_DNS_API_TOKEN"] == "bad" {
+			return errors.New("invalid token")
+		}
+		tested = append(tested, host+":"+settings["CF_DNS_API_TOKEN"])
+		return nil
+	}
+	n := 0
+	registerHelper = func(context.Context, string) (store.HelperAccount, error) {
+		n++
+		return store.HelperAccount{Username: "u", Password: "p", Subdomain: fmt.Sprint("s", n), FullDomain: fmt.Sprint("s", n, ".auth.example.org")}, nil
+	}
+	body := func(method string, names []string, settings map[string]string) map[string]any {
+		return map[string]any{"mode": "acme", "acme": map[string]any{"method": method, "email": "me@example.com", "names": names,
+			"staging": true, "dns_host": "cloudflare", "dns_settings": settings}}
+	}
+	admin.want(400, "PUT", "/api/v1/https", body("dns_api", []string{"*.example.com"}, map[string]string{"CF_DNS_API_TOKEN": "t"}), nil)
+	admin.want(400, "PUT", "/api/v1/https", body("dns_api", []string{"dns1.example.com"}, map[string]string{"CF_DNS_API_TOKEN": "bad"}), nil)
+	admin.want(400, "PUT", "/api/v1/https", body("dns_api", []string{"dns1.example.com"}, map[string]string{"NOT_A_SETTING": "x"}), nil)
+	admin.want(200, "PUT", "/api/v1/https", body("dns_api", []string{"DNS1.example.com", "dns2.example.com"}, map[string]string{"CF_DNS_API_TOKEN": "t1"}), nil)
+	h := e.api.Store.State().HTTPS
+	if h.Mode != store.HTTPSACME || h.ACME.AccountKey == "" || h.ACME.Directory != store.LetsEncryptStaging ||
+		strings.Join(h.ACME.Names, ",") != "dns1.example.com,dns2.example.com" {
+		t.Fatalf("saved: %+v", h.ACME)
+	}
+	key := h.ACME.AccountKey
+
+	// The token isn't sent back; saving with it empty keeps it.
+	var got struct {
+		Settings struct {
+			ACME struct {
+				Saved   []string          `json:"saved_settings"`
+				Records []store.DNSRecord `json:"records"`
+			} `json:"acme"`
+		} `json:"settings"`
+	}
+	var raw json.RawMessage
+	admin.want(200, "GET", "/api/v1/https", nil, &raw)
+	json.Unmarshal(raw, &got)
+	if strings.Contains(string(raw), "t1") || strings.Contains(string(raw), "PRIVATE") || len(got.Settings.ACME.Saved) != 1 {
+		t.Fatalf("GET leaks or lost settings: %s", raw)
+	}
+	admin.want(200, "PUT", "/api/v1/https", body("dns_api", []string{"dns1.example.com", "dns2.example.com"}, map[string]string{"CF_DNS_API_TOKEN": ""}), nil)
+	if tested[len(tested)-1] != "cloudflare:t1" || e.api.Store.State().HTTPS.ACME.AccountKey != key {
+		t.Fatalf("token or account key not kept: %v", tested)
+	}
+
+	// Helper: one account per name, kept on re-save; CNAMEs shown.
+	admin.want(200, "PUT", "/api/v1/https", body("helper", []string{"dns1.example.com"}, nil), nil)
+	admin.want(200, "PUT", "/api/v1/https", body("helper", []string{"dns1.example.com", "dns2.example.com"}, nil), nil)
+	admin.want(200, "GET", "/api/v1/https", nil, &got)
+	if n != 2 || len(got.Settings.ACME.Records) != 2 || got.Settings.ACME.Records[0].Value != "s1.auth.example.org" {
+		t.Fatalf("helper: n=%d %+v", n, got.Settings.ACME.Records)
+	}
+
+	// By hand: records the request waits for show up.
+	admin.want(200, "PUT", "/api/v1/https", body("manual", []string{"dns1.example.com"}, nil), nil)
+	if _, err := e.api.Store.Apply(store.NewCommand(store.OpHTTPSWait, "system", store.HTTPSWait{Mode: "acme",
+		Records: []store.DNSRecord{{Name: "_acme-challenge.dns1.example.com", Type: "TXT", Value: "abc"}}})); err != nil {
+		t.Fatal(err)
+	}
+	admin.want(200, "GET", "/api/v1/https", nil, &got)
+	if len(got.Settings.ACME.Records) != 1 || got.Settings.ACME.Records[0].Value != "abc" {
+		t.Fatalf("waiting records: %+v", got.Settings.ACME.Records)
+	}
 }

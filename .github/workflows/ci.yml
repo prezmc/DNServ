@@ -32,7 +32,11 @@ jobs:
           if [ -f /etc/apparmor.d/usr.sbin.unbound ]; then
             sudo apparmor_parser -R /etc/apparmor.d/usr.sbin.unbound || true
           fi
+      - name: Install Pebble (Let's Encrypt's test server, for the certificate tests)
+        run: GOBIN=$RUNNER_TEMP/bin go install github.com/letsencrypt/pebble/v2/cmd/pebble@v2.10.3
       - run: go test -race ./...
+        env:
+          PEBBLE_BIN: ${{ runner.temp }}/bin/pebble
       - name: Benchmarks (smoke)
         run: go test -run '^$' -bench . -benchtime 200ms ./internal/...
 

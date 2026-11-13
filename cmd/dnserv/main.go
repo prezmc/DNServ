@@ -253,6 +253,10 @@ func run() error {
 			_, err := st.Apply(store.NewCommand(store.OpHTTPSCert, "system", c))
 			return err
 		},
+		ProposeWait: func(w store.HTTPSWait) error {
+			_, err := st.Apply(store.NewCommand(store.OpHTTPSWait, "system", w))
+			return err
+		},
 		Log: log.With("component", "https"),
 		Off: strings.EqualFold(os.Getenv("DNSERV_HTTPS"), "off"),
 	}
