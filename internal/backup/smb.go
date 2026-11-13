@@ -3,11 +3,13 @@ package backup
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -98,6 +100,41 @@ func (c *SMB) file(name string) string {
 // winPath turns a slash path into the backslash form SMB uses.
 func winPath(p string) string { return strings.ReplaceAll(p, "/", `\`) }
 
+// The share's folder listing isn't used: the SMB library's directory
+// parsing can be crashed by a bad server (GO-2026-5051, no fix yet). An
+// index file in the folder records the backups DNServ wrote instead, and
+// each entry is checked with Stat when listed.
+const smbIndex = ".dnserv-backups.json"
+
+type smbEntry struct {
+	Name     string    `json:"name"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+}
+
+func (c *SMB) readIndex(fs *smb2.Share) ([]smbEntry, error) {
+	b, err := fs.ReadFile(winPath(c.file(smbIndex)))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, smbError("reading the backup index", err)
+	}
+	var out []smbEntry
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, nil // unreadable: start again
+	}
+	return out, nil
+}
+
+func (c *SMB) writeIndex(fs *smb2.Share, idx []smbEntry) error {
+	b, _ := json.MarshalIndent(idx, "", "  ")
+	if err := fs.WriteFile(winPath(c.file(smbIndex)), b, 0o600); err != nil {
+		return smbError("writing the backup index", err)
+	}
+	return nil
+}
+
 // Put writes one file, through a temporary name so a half-written backup
 // never looks like a real one.
 func (c *SMB) Put(ctx context.Context, name string, b []byte) error {
@@ -117,7 +154,13 @@ func (c *SMB) Put(ctx context.Context, name string, b []byte) error {
 			_ = fs.Remove(tmp)
 			return smbError("renaming", err)
 		}
-		return nil
+		idx, err := c.readIndex(fs)
+		if err != nil {
+			return err
+		}
+		idx = slices.DeleteFunc(idx, func(e smbEntry) bool { return e.Name == name })
+		idx = append(idx, smbEntry{Name: name, Size: int64(len(b)), Modified: time.Now().UTC()})
+		return c.writeIndex(fs, idx)
 	})
 }
 
@@ -140,39 +183,46 @@ func (c *SMB) Get(ctx context.Context, name string) (b []byte, err error) {
 	return b, err
 }
 
-// Delete removes one file.
+// Delete removes one file. One already gone counts as removed.
 func (c *SMB) Delete(ctx context.Context, name string) error {
 	return c.with(ctx, func(fs *smb2.Share) error {
-		if err := fs.Remove(winPath(c.file(name))); err != nil {
+		if err := fs.Remove(winPath(c.file(name))); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return smbError("deleting", err)
 		}
-		return nil
+		idx, err := c.readIndex(fs)
+		if err != nil {
+			return err
+		}
+		n := len(idx)
+		idx = slices.DeleteFunc(idx, func(e smbEntry) bool { return e.Name == name })
+		if len(idx) == n {
+			return nil
+		}
+		return c.writeIndex(fs, idx)
 	})
 }
 
-// List returns the files in the folder. A folder that doesn't exist yet
-// is empty.
+// List returns the backups DNServ wrote to the folder that are still
+// there. A folder that doesn't exist yet is empty.
 func (c *SMB) List(ctx context.Context) (out []S3Object, err error) {
 	err = c.with(ctx, func(fs *smb2.Share) error {
-		dir := winPath(c.T.Folder)
-		ents, err := fs.ReadDir(dir)
+		idx, err := c.readIndex(fs)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				return nil
-			}
-			return smbError("listing the folder", err)
+			return err
 		}
-		for _, e := range ents {
-			if !e.IsDir() {
-				out = append(out, S3Object{Key: e.Name(), Size: e.Size(), Modified: e.ModTime().UTC()})
+		for _, e := range idx {
+			info, err := fs.Stat(winPath(c.file(e.Name)))
+			if err != nil || info.IsDir() {
+				continue // removed by hand
 			}
+			out = append(out, S3Object{Key: e.Name, Size: info.Size(), Modified: info.ModTime().UTC()})
 		}
 		return nil
 	})
 	return out, err
 }
 
-// Test checks DNServ can write, list, read and delete in the folder.
+// Test checks DNServ can write, read and delete in the folder.
 func (c *SMB) Test(ctx context.Context) error {
 	name := ".dnserv-test-" + time.Now().UTC().Format("20060102-150405")
 	data := []byte("DNServ checks it can write backups here. Safe to delete.\n")
@@ -187,8 +237,8 @@ func (c *SMB) Test(ctx context.Context) error {
 			return smbError("writing a test file", err)
 		}
 		defer fs.Remove(p)
-		if _, err := fs.ReadDir(winPath(c.T.Folder)); err != nil {
-			return smbError("listing the folder", err)
+		if _, err := c.readIndex(fs); err != nil {
+			return err
 		}
 		got, err := fs.ReadFile(p)
 		if err != nil {
