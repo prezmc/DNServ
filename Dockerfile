@@ -17,7 +17,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 
 # Alpine with Unbound for recursive and tunnel modes. Unbound runs as a
 # child of dnserv, as the same unprivileged user, on loopback only.
-FROM alpine:3.22 AS runtime
+FROM alpine:3.24 AS runtime
 RUN apk upgrade --no-cache \
  && apk add --no-cache unbound dnssec-root ca-certificates tzdata \
  && addgroup -S -g 65532 dnserv && adduser -S -u 65532 -G dnserv -h /data dnserv \
