@@ -22,6 +22,7 @@ services:
     environment:
       - TZ=${TZ:-UTC}                                         # your time zone, used by schedules
       - DNSERV_CLUSTER_ADVERTISE=${DNSERV_CLUSTER_ADVERTISE:-} # only when other servers must reach this one at a different address or port
+      - DNSERV_HTTPS=${DNSERV_HTTPS:-}                         # set to off in .env to get back in after a bad certificate
 
 volumes:
   dnserv-data:

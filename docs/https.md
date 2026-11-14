@@ -36,9 +36,10 @@ Private DNS and iOS profiles need.
 
 A trusted certificate is for a name, such as `dns1.example.com`, not an
 address. Open the dashboard with that name. To make the name work at home,
-add it under **Local names** pointing at the server's address. A wildcard
-certificate (`*.example.com`) covers all your servers. Otherwise use one
-certificate per server name, or one certificate that lists every name.
+add it under **Local names** pointing at the server's address. Use one
+certificate that lists every server's name (Let's Encrypt does this), or a
+wildcard certificate (`*.example.com`) from another source if you already
+have one.
 
 ### Let's Encrypt (built in)
 
@@ -119,26 +120,24 @@ Manager), because the dashboard controls your DNS.
 
 ## Passkeys
 
-Browsers only allow passkeys on HTTPS and when the dashboard is opened by a
-name, never by IP address. So once HTTPS is on (or behind a reverse proxy
-with a real certificate), open the dashboard at its name, like
-`https://dns1.example.com:8080`, then **Your account > Passkeys > Add a
-passkey**.
-
-A passkey is made for that server's own name (`dns1.example.com` here), so
-no other site under `example.com` can ask for it. Add one on each server:
-open `https://dns2.example.com` and add another there. Each server's passkey
-works even while the other server is down. Passkeys made by older versions
-for the whole domain keep working until you remove them.
-
-The authenticator app and recovery codes keep working, so you can always
-sign in from a browser that has no passkey. An admin's **Reset 2FA** also
-removes a user's passkeys.
+Passkeys need HTTPS with a trusted certificate, and the dashboard opened by
+its name. Each passkey works only on the server name it was made on, so add
+one on each server. See [Signing in](sign-in.md#passkeys).
 
 ## Locked out
 
-Plain `http://` keeps working unless the redirect is on. If a bad
-certificate keeps you out, start the container with `DNSERV_HTTPS=off`,
-fix the setting, and remove the variable again.
+Plain `http://<address>:8080` keeps working unless the redirect is on. If a
+bad certificate keeps you out, turn HTTPS off on one server for a moment.
+In its folder, add this line to `.env`:
+
+```bash
+DNSERV_HTTPS=off
+```
+
+and run `docker compose up -d`. Open `http://<address>:8080`, fix the
+setting under **Settings > Dashboard HTTPS**, then remove the line and run
+`docker compose up -d` again.
+
+For password or two-factor trouble, see [Locked out](sign-in.md#locked-out).
 
 [Back to the README](../README.md)

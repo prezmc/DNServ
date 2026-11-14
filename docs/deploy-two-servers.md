@@ -24,7 +24,7 @@ the "What happens when" table is checked by the failover tests in
 |---|---|---|
 | 53 UDP and TCP | Your devices | DNS |
 | 853 TCP | Your devices (optional) | DNS over TLS (Android Private DNS and others) |
-| 443 TCP | Your devices (optional) | DNS over HTTPS, if you uncomment it in the compose file |
+| 443 TCP | You, and devices using DNS over HTTPS | Dashboard over HTTPS (`https://<name>/`) and DNS over HTTPS |
 | 8080 TCP | You, from your own network | Dashboard and setup |
 | 8081 TCP | The other DNServ server and the witness only | Keeping settings in sync. Encrypted and authenticated with the cluster's own certificates |
 
@@ -34,6 +34,7 @@ servers (ufw shown, with your network as `192.168.1.0/24`):
 ```sh
 sudo ufw allow from 192.168.1.0/24 to any port 53
 sudo ufw allow from 192.168.1.0/24 to any port 853 proto tcp
+sudo ufw allow from 192.168.1.0/24 to any port 443 proto tcp
 sudo ufw allow from 192.168.1.0/24 to any port 8080 proto tcp
 sudo ufw allow from 192.168.1.20 to any port 8081 proto tcp   # the other server
 sudo ufw allow from 192.168.1.30 to any port 8081 proto tcp   # the witness
@@ -54,32 +55,107 @@ sudo systemctl restart systemd-resolved
 
 ## Set up
 
-1. **First server.** Copy [`docker-compose.yml`](../docker-compose.yml) to
-   it (set `TZ` to your time zone) and run `docker compose up -d`. Run
-   `docker compose logs` to see the setup code, open
-   `http://<first server>:8080`, enter the code and follow the wizard.
-2. **Second server.** Same file, `docker compose up -d`. On the first
-   server's dashboard open **Cluster** and choose **Make a join code**. Check
-   that "Other nodes reach this one at" is the first server's address. Open
-   `http://<second server>:8080`, enter its setup code from its log, choose
-   **No, add this server to my DNServ** and paste the join code. A few
-   seconds later the second server has the same accounts, settings and
-   blocklists, and both show as healthy on the Cluster page.
-3. **Witness (optional).** Make another join code; the dialog shows the
-   command to run on the third machine, or use
-   [`deploy/docker-compose.witness.yml`](../deploy/docker-compose.witness.yml)
-   with the code in `DNSERV_JOIN`.
-4. **Router.** In your router's DHCP settings, set the DNS servers to the two
-   DNServ addresses, first server first. Devices pick up the change when
-   they renew their lease (reconnect to Wi-Fi to hurry one along). Remove
-   any other DNS servers there, or devices will use them to get around
-   blocking.
+The example uses two servers at `192.168.1.10` and `192.168.1.20`, and the
+names `dns1.example.com` and `dns2.example.com` in a domain you own.
 
-The servers find each other by the addresses on the Cluster page. If they are
-on different networks (two sites over a VPN, for example), set
-`DNSERV_CLUSTER_ADVERTISE=<address the other server uses>:8081` in each
-server's `.env` file (see [`.env.example`](../.env.example)). Do the same if
-you moved the cluster port with `DNSERV_CLUSTER_PORT`, using the new port.
+### 1. Install DNServ on both servers
+
+On each server, the [standard install](install.md#install):
+
+```bash
+mkdir -p ~/dnserv && cd ~/dnserv
+curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml
+echo "TZ=America/Chicago" > .env
+docker compose up -d
+docker compose logs | grep setup_code
+```
+
+If a port is already taken on one server, set another one in that server's
+`.env` (see [The .env file](install.md#the-env-file)). For the cluster
+port, also set `DNSERV_CLUSTER_ADVERTISE` to that server's address and the
+new port, for example:
+
+```bash
+DNSERV_CLUSTER_PORT=8091
+DNSERV_CLUSTER_ADVERTISE=192.168.1.10:8091
+```
+
+Set `DNSERV_CLUSTER_ADVERTISE` too if the servers are on different
+networks (two sites over a VPN, say), with the address the other server
+uses to reach this one.
+
+### 2. Set up the first server
+
+Open `http://192.168.1.10:8080`, enter its setup code and follow the
+wizard.
+
+### 3. Join the second server
+
+1. On the first server's dashboard, open **Cluster** and choose **Make a
+   join code**. Check that "Other nodes reach this one at" is the first
+   server's address (and port, if you changed it).
+
+   <img src="images/setup/cluster-add-node.webp" alt="The Add a node card on the Cluster page" width="700">
+
+   <img src="images/setup/cluster-join-code.webp" alt="The join code dialog" width="520">
+
+2. Open `http://192.168.1.20:8080`, enter its own setup code, choose **No,
+   add this server to my DNServ**, and paste the join code.
+
+   <img src="images/setup/wizard-join.webp" alt="Pasting the join code on the second server" width="380">
+
+A few seconds later the second server has the same accounts, settings and
+blocklists, and both show as healthy on the Cluster page. From now on, sign
+in to either one with the same account.
+
+<img src="images/setup/cluster-two-nodes.webp" alt="Both servers on the Cluster page" width="700">
+
+### 4. Witness (optional)
+
+Make another join code. The dialog shows the command to run on the third
+machine, or use
+[`deploy/docker-compose.witness.yml`](../deploy/docker-compose.witness.yml)
+with the code in `DNSERV_JOIN`.
+
+### 5. Point your router at both
+
+In your router's DHCP settings, set the DNS servers to the two addresses,
+first server first. Devices pick up the change when they renew their lease
+(reconnect to Wi-Fi to hurry one along). Remove any other DNS servers there,
+or devices will use them to get around blocking.
+
+### 6. Names and HTTPS (optional)
+
+Everything works over plain HTTP at `http://<server>:8080`, which is how a
+new install starts. Do this step only if you want each server to have a
+name, a trusted certificate (a padlock in the browser) and passkey sign-in.
+
+1. **Local names.** Under **Local names**, add `dns1.example.com` pointing
+   at `192.168.1.10` and `dns2.example.com` pointing at `192.168.1.20`.
+   They're shared, so both servers answer for both names.
+
+   <img src="images/setup/local-names.webp" alt="Local names for both servers" width="700">
+2. **Certificate.** Under **Settings > Dashboard HTTPS**, choose **Let's
+   Encrypt (built in)** and list both names. Pick your DNS host and paste
+   its API token (for Cloudflare, one token). The leader asks for one
+   certificate covering both names, usually within a minute, and both
+   servers use it. See [Dashboard HTTPS](https.md#lets-encrypt-built-in).
+
+   <img src="images/setup/https-letsencrypt.webp" alt="Let's Encrypt settings with two names and a Cloudflare token" width="600">
+
+   Once it's issued, the table under the form shows both servers using it:
+
+   <img src="images/setup/https-issued.webp" alt="Both servers using the Let's Encrypt certificate" width="700">
+3. **Check it.** Open `https://dns1.example.com` and
+   `https://dns2.example.com`. Both should show a padlock with no warning.
+   Once they do, you can tick **Send browsers that open http:// to
+   https://**.
+4. **Passkeys.** On each server, open it by name and add a passkey under
+   **Your account > Passkeys**. A passkey only works on the server name it
+   was made on, so you add one per server. See
+   [Signing in](sign-in.md#with-more-than-one-server).
+
+Bookmark both names. If one server is down, use the other.
 
 ## What happens when
 
