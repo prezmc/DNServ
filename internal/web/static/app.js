@@ -46,6 +46,57 @@ function fuzzyScore(q, text) {
   return score;
 }
 
+function plural(n, one, many) { return fmtNum(n) + ' ' + (n === 1 ? one : many); }
+
+// editDistance is the Damerau-Levenshtein distance between a and b
+// (a swapped pair of letters counts as one edit), giving up past max.
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev2 = null, prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let best = i;
+    for (let j = 1; j <= b.length; j++) {
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+      cur.push(v);
+      best = Math.min(best, v);
+    }
+    if (best > max) return max + 1;
+    prev2 = prev; prev = cur;
+  }
+  return prev[b.length];
+}
+
+// fuzzyFind scores how well a search matches some fields (name, address,
+// and so on): higher is better, -1 is no match. Each word typed must match
+// one field, as a plain substring, as letters in order ("lvrm" finds
+// "Living room"), or with a typo or two against the start of a word
+// ("samsnug" finds "Samsung", "iphnoe" finds "iPhone").
+function fuzzyFind(q, fields) {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return 0;
+  const texts = fields.filter(Boolean).map(f => String(f).toLowerCase());
+  const words = texts.flatMap(t => t.split(/[\s.\-_:,()'’·]+/)).filter(Boolean);
+  let total = 0;
+  for (const t of terms) {
+    let best = -1;
+    for (const text of texts) best = Math.max(best, fuzzyScore(t, text));
+    if (best < 0 && t.length >= 3 && /[a-z]/.test(t)) {
+      const max = t.length >= 7 ? 2 : 1;
+      for (const w of words) {
+        // Compare with the start of the word too, so a half-typed,
+        // misspelled word still finds it.
+        const d = Math.min(editDistance(t, w, max), w.length > t.length ? editDistance(t, w.slice(0, t.length), max) : max + 1);
+        if (d <= max) best = Math.max(best, 100 - 40 * d);
+      }
+    }
+    if (best < 0) return -1;
+    total += best;
+  }
+  return total;
+}
+
 // combo is a select box you can type into: typing narrows the choices with
 // fuzzy matching (letters in order, so "lvrm" finds "Living room TV").
 // opts.options is [{value, label, detail}]; detail (an IP, say) is shown
@@ -1424,6 +1475,8 @@ function editDevice(d, groups) {
   if (first) { first.focus(); first.select(); }
 }
 
+let deviceSearch = ''; // kept while you rename devices, which redraws the page
+
 async function devices(main) {
   page(main, 'Devices', h('p', { class: 'muted' }, 'Loading…'));
   let list, gs, settingsHint = null;
@@ -1438,11 +1491,29 @@ async function devices(main) {
   }
   const gnames = {};
   groups.forEach(g => { gnames[g.id] = g.name; });
+  const tableOpts = { groups: groups.length ? gnames : null, groupList: groups };
+  const tableBox = h('div', {});
+  const count = h('span', { class: 'muted small', 'aria-live': 'polite' });
+  const search = h('input', { type: 'search', class: 'dev-search', 'aria-label': 'Search devices', placeholder: 'Search by name, address or group',
+    spellcheck: 'false', autocomplete: 'off', value: deviceSearch });
+  const draw = () => {
+    deviceSearch = search.value;
+    const q = search.value.trim();
+    const shown = q ? list.map(d => ({ d, s: fuzzyFind(q, [d.name, d.hostname, ...(d.addrs || []), d.group && gnames[d.group], d.id ? null : 'unnamed']) }))
+      .filter(x => x.s >= 0).sort((a, b) => b.s - a.s).map(x => x.d) : list;
+    count.textContent = q ? shown.length + ' of ' + plural(list.length, 'device', 'devices') : plural(list.length, 'device', 'devices');
+    tableBox.replaceChildren(shown.length ? deviceTable(shown, tableOpts)
+      : h('p', { class: 'muted' }, 'No device matches “' + q + '”. Try part of a name or an address, such as 192.168.1.'));
+  };
+  search.addEventListener('input', draw);
+  search.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && search.value) { ev.preventDefault(); search.value = ''; draw(); } });
+  draw();
   page(main, 'Devices',
     h('p', { class: 'muted' }, 'Every device that has used DNServ since it started, most recent first.'),
     settingsHint,
-    h('div', { class: 'card' }, deviceTable(list, { groups: groups.length ? gnames : null, groupList: groups })),
+    h('div', { class: 'card' }, h('div', { class: 'row spread dev-search-row' }, search, count), tableBox),
     groupsCard(groups, list, gs));
+  if (deviceSearch) search.focus();
 }
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

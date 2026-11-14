@@ -520,3 +520,6 @@ details.parts tr.total td { font-weight: 700; border-top: 1px solid currentColor
 .key.fill-stale { background: color-mix(in srgb, var(--s-3) 45%, var(--code)); }
 .key.fill-old { background: color-mix(in srgb, var(--muted) 40%, var(--code)); }
 .bundles { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+
+.dev-search-row { gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.dev-search-row .dev-search { flex: 1 1 16rem; max-width: 26rem; margin: 0; }
