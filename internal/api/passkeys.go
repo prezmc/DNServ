@@ -25,12 +25,11 @@ import (
 // the device, plus Face ID, a fingerprint or the device PIN) or stand in
 // for the 6-digit code after the password.
 //
-// The relying party ID is the dashboard's domain. When the dashboard is
-// opened at a name with three or more labels (dns1.example.com), a passkey
-// is made for the parent domain (example.com) so the same passkey works on
-// every server under it; the browser refuses that for public suffixes, and
-// the page then retries for the full name. Browsers allow passkeys only
-// over HTTPS (or on localhost) and never for an IP address.
+// The relying party ID is the server's own name (dns1.example.com), so a
+// passkey can't be used by any other site under the same domain; each
+// server gets its own passkey. Passkeys made by older versions for the
+// parent domain (example.com) still work for signing in. Browsers allow
+// passkeys only over HTTPS (or on localhost) and never for an IP address.
 
 func (a *API) passkeyRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/auth/passkeys", a.authed("", a.listPasskeys))
@@ -127,18 +126,19 @@ func (a *API) rpOrigin(r *http.Request) (origin, host string, err error) {
 	return o, host, nil
 }
 
-// rpCandidates lists the relying party IDs a page at host may use, widest
-// first: the parent domain (when host has three or more labels), then host.
+// rpCandidates lists the relying party IDs a page at host may use: host
+// itself, then the parent domain (when host has three or more labels),
+// which only older passkeys use.
 func rpCandidates(host string) []string {
 	if i := strings.IndexByte(host, '.'); i > 0 && strings.Count(host, ".") >= 2 {
-		return []string{host[i+1:], host}
+		return []string{host, host[i+1:]}
 	}
 	return []string{host}
 }
 
 // rpFor picks the relying party ID for a sign-in: the first candidate that
 // some stored passkey was made for (of user, or of anyone when user is
-// nil), else the widest.
+// nil), else host itself.
 func rpFor(st *store.State, user *store.User, host string) string {
 	cands := rpCandidates(host)
 	for _, c := range cands {
@@ -234,9 +234,6 @@ func (a *API) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request, p *Pr
 	}
 	var req struct {
 		Password string
-		// Host makes the passkey for this server's full name only, after
-		// the browser refused the parent domain.
-		Host bool
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -257,10 +254,7 @@ func (a *API) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request, p *Pr
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	rpID := rpCandidates(host)[0]
-	if req.Host {
-		rpID = host
-	}
+	rpID := host
 	rp, err := newRP(rpID, origin)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())

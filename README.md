@@ -29,14 +29,14 @@
 ## Quick start
 
 ```bash
-docker run -d --name dnserv --restart unless-stopped \
-  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 -p 8081:8081 \
-  -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
-
-docker logs dnserv 2>&1 | grep setup_code
+mkdir -p ~/dnserv && cd ~/dnserv
+curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml
+echo "TZ=America/Chicago" > .env      # your time zone
+docker compose up -d
+docker compose logs | grep setup_code
 ```
 
-You can also run `docker compose up -d` with the included [`docker-compose.yml`](docker-compose.yml).
+Anything different on your server, such as a port that's already taken, goes in `.env` (see [Installing](docs/install.md#the-env-file)). Prefer `docker run`? See [Without compose](docs/install.md#without-compose).
 
 Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 
@@ -45,17 +45,17 @@ Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 | <img src="docs/images/setup-code.png" alt="Enter the setup code" width="420"><br>**1.** Enter the code from the log | <img src="docs/images/setup-mfa.png" alt="Set up two-factor sign-in" width="420"><br>**2.** Create your account and scan the QR code |
 | <img src="docs/images/setup-basics.png" alt="Pick upstream and blocklists" width="420"><br>**3.** Pick how lookups leave your network, and your blocklists | <img src="docs/images/setup-done.png" alt="Setup finished" width="420"><br>**4.** Point your router's DHCP DNS at the server |
 
-Is port 53 already in use? See [Installing](docs/install.md) for systemd-resolved, non-root and reverse proxy notes.
+Is port 53 already in use? See [Installing](docs/install.md) for systemd-resolved and other notes.
 
-**Updating:** run `docker compose pull && docker compose up -d`. Settings and history are kept. Coming from DNServe, the old name? See [Upgrading from DNServe](docs/install.md#upgrading-from-dnserve).
+**Updating:** run `docker compose pull && docker compose up -d`. Settings and history are kept. Set up with an older compose file or the old DNServe name? See [Moving an existing server to the standard compose file](docs/install.md#moving-an-existing-server-to-the-standard-compose-file).
 
 ## A second server
 
-1. Start the same image on another machine, with port 8081 open between the two.
+1. Install the same way on another machine, with port 8081 open between the two.
 2. On the first server, open **Cluster** and choose **Make a join code**.
 3. On the new server, enter its setup code, choose **No, add this server to my DNServ**, and paste the join code.
 
-Then add the second server as your router's second DNS server. To keep taking changes while either server is down, add a witness on a third machine. The [two-server guide](docs/deploy-two-servers.md) covers firewalls, upgrades, and what happens when something fails.
+Then add the second server as your router's second DNS server. For a trusted certificate on both, give each server a name under **Local names** and turn on Let's Encrypt under **Settings > Dashboard HTTPS**; then add a passkey on each server. To keep taking changes while either server is down, add a witness on a third machine. The [two-server guide](docs/deploy-two-servers.md) covers firewalls, upgrades, and what happens when something fails.
 
 ## Screenshots
 
@@ -72,13 +72,14 @@ Then add the second server as your router's second DNS server. To keep taking ch
 | | |
 |---|---|
 | [Features](docs/features.md) | Everything DNServ does, in detail |
-| [Installing and configuring](docs/install.md) | Ports, notes for some hosts, and environment variables |
+| [Installing and configuring](docs/install.md) | Install, update, the `.env` file, ports and environment variables |
+| [Signing in](docs/sign-in.md) | Two-factor, passkeys on one or more servers, getting back in |
 | [Clustering](docs/clustering.md) | Nodes, witnesses, leader controls and recovery |
-| [Two-server guide](docs/deploy-two-servers.md) | Step-by-step deploy and failure scenarios |
+| [Two-server guide](docs/deploy-two-servers.md) | Step-by-step deploy with names, HTTPS and passkeys, and failure scenarios |
 | [Two floating DNS addresses](docs/floating-dns-addresses.md) | More than two nodes behind keepalived |
 | [Filtering](docs/filtering.md) | Rule syntax, blocked services, safe search, stopping bypass |
 | [Security and risk scoring](docs/risk-scoring.md) | Threat feeds, the Security card, how scores add up, tuning |
-| [Dashboard HTTPS](docs/https.md) | Self-signed, your own certificate, or one from Nginx Proxy Manager |
+| [Dashboard HTTPS](docs/https.md) | Let's Encrypt (built in), Nginx Proxy Manager, your own certificate or self-signed |
 | [Backups and history](docs/backups.md) | Encrypted backups, schedules, restore |
 | [Moving from AdGuard Home](docs/adguard-import.md) | What the importer brings across |
 | [Tunnel mode](docs/tunnel-mode.md) | Recursive DNS through a WireGuard VPN |

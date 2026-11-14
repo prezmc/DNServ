@@ -52,7 +52,7 @@ Everything DNServ does today, in more detail than the README.
   recovery codes. Once that's done, add **passkeys** on your account page
   to sign in with Face ID, Touch ID, Windows Hello or a device PIN instead
   of the 6-digit code (needs the dashboard on HTTPS at a name, not an IP;
-  see [Passkeys](https.md#passkeys)). Passwords are hashed with Argon2id; failed sign-ins are
+  one per server; see [Signing in](sign-in.md#passkeys)). Passwords are hashed with Argon2id; failed sign-ins are
   throttled; sessions end on password change, MFA reset or disable.
 - **Settings change live.** Upstream mode, servers, tunnel, allowed
   networks, lists and rules saved through the API apply without a restart,
@@ -148,15 +148,28 @@ Everything DNServ does today, in more detail than the README.
 - **Traffic map.** A Dashboard card draws every lookup as a flow: the
   busiest devices, the DNS server that answered, how it was answered (cache,
   each upstream server, blocked, local names) and the services the lookups
-  were for, grouped by company or by type (AdGuard's companies database,
-  else the site's own domain). Switches hide internet, internal or blocked
+  were for, grouped **By company** (AdGuard's companies database, else the
+  site's own domain) or **By category**: what people use them for, such as
+  social media, streaming, gaming, shopping, news, messaging, work and
+  email, OS and cloud services, smart home and TV, CDNs, ads and tracking
+  and network lookups. Categories come from DNServ's own table of popular
+  apps and sites (including the blocked services catalog), then from the
+  companies database's tracker types and owners; anything else is Other.
+  Clicking a category breaks it out into its busiest apps and sites
+  (Netflix, YouTube, Spotify…), and **All categories** folds it back. The
+  browser remembers which grouping you picked. Switches hide internet, internal or blocked
   lookups; hovering shows counts and shares; clicking a device, an answer
   or a service opens the matching Query log. Clicking a device redraws
   the map with only that device's lookups (the servers that answered them,
   how, and what they were for) and opens its profile: when it is busy,
   the kinds of service and companies it uses, its busiest and most
   blocked sites, risky lookups and anything it looks up on a steady beat.
-  **All devices** goes back. Each server works out its part
+  **All devices** goes back. The map shows only the busiest ten devices,
+  so a search box above it finds any device by name or address (letters
+  in order, so "lvrm" finds "Living room TV"). The map also has its own
+  page, **Traffic map** in the menu, whose address follows the picked
+  device (`#/traffic?device=…`) so it can be bookmarked; each row on the
+  Devices page has a **Traffic map** link to it. Each server works out its part
   from its own history when the card is opened, so DNS answers never wait
   for it. History records which upstream server answered each lookup
   (older history shows as "Upstream").

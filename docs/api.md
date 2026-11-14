@@ -27,7 +27,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Analytics | `GET /analytics/summary`, `/analytics/top?by=domains\|allowed\|blocked\|clients\|lists` (`allowed` leaves out blocked lookups), `/analytics/performance`, `/analytics/domain?name=`, `/analytics/queries?search=&result=&before=`, `/analytics/export` (CSV), `/analytics/risky`, `/analytics/intel` (sources), `/analytics/alsoon?name=`, `POST /analytics/virustotal?name=`; `GET`/`PUT /virustotal` `{key}` (never returned); `PUT /abusech` `{key}` (never returned). `/analytics/queries` and `/analytics/export` also take `risk=low\|medium\|high`. The history views take `range=15m\|1h\|24h\|7d\|30d\|90d` and `client=` (IP or device id), and merge every node's history |
 | Settings history | `GET /config/versions`, `GET /config/versions/{id}` (with the changes going back would make), `POST /config/versions/{id}/restore` |
 | Backups | `GET /backups`, `POST /backups/passphrase` `{passphrase, password}`, `PUT /backups/schedule` `{every: daily\|weekly\|"", at: "HH:MM", keep, offsite}`, `POST /backups/download`, `GET /backups/files/{local\|offsite\|s3\|smb}/{name}`, `PUT /backups/s3` `{endpoint, region, bucket, prefix, access_key, secret_key, path_style}` (checks the bucket first; empty `secret_key` keeps the saved one; empty `bucket` turns uploads off), `PUT /backups/smb` `{server, share, folder, user, password, domain}` (`server` may hold the whole `\\server\share\folder`; same rules as S3), `POST /backups/{s3\|smb}/upload`, `POST /backups/restore` (multipart: `file`, `passphrase`, `password`) |
-| Security and traffic | `GET /analytics/security` (verdict, high-risk domains that got answers and who reached them, threats blocked, risky hours), `POST /analytics/dismiss` `{name, undo}` (domains.allowblock), `GET /analytics/flow?group=company\|type` (traffic map; with `client=` just that device's lookups). Take `range=` and `client=` like the other history views |
+| Security and traffic | `GET /analytics/security` (verdict, high-risk domains that got answers and who reached them, threats blocked, risky hours), `POST /analytics/dismiss` `{name, undo}` (domains.allowblock), `GET /analytics/flow?group=company\|category` (traffic map; with `client=` just that device's lookups; `open=<category>` breaks one category into its apps and sites). Take `range=` and `client=` like the other history views |
 | Cache and repeating lookups | `GET /analytics/cache` (up to 7 days: cache hits, misses and why they missed: `first`, `short` cache time, `expired`, `early`, `failed`, `unknown`, each with its top domains, plus `fill`: each server's cache right now, `{server, fill: {entries, fresh, usable, max, evicted}}`), `GET /analytics/beacons?limit=` (names devices look up on a steady beat in the last 24 hours, with the devices and their period when you may see the Query log). Take `range=` and `client=` |
 | Risk scoring | `GET /analytics/scoring` (scoring in force, defaults, presets, sources, name checks), `POST /analytics/scoring/preview` with a scoring (levels now vs proposed over the last 7 days, and what would rise or drop). Save with `PATCH /settings` `{risk_scoring}` (lists.manage); reset with `POST /settings/reset` `{fields: ["risk_scoring"]}` |
 | Cluster | `GET /cluster`, `POST /cluster/join-codes` `{host}`, `PUT /cluster/nodes/{id}` `{name, never_leader}`, `DELETE /cluster/nodes/{id}`, `POST /cluster/preferred` `{id}`, `POST /cluster/transfer` `{to}`, `POST /cluster/recover` `{password, accept_risk}`, `POST /cluster/join` `{join_code, host, password}` |
@@ -39,18 +39,8 @@ Permissions: `dashboard.view`, `querylog.view`, `data.export`,
 user), and the admin-only `users.manage`, `cluster.manage`,
 `backups.manage`, `audit.view`.
 
-Lost your phone? Sign in with a recovery code, or have another admin reset
-your MFA. If the only admin is locked out, stop the node and run:
-
-```bash
-docker stop dnserv
-docker run --rm -v dnserv-data:/data ghcr.io/prezmc/dnserv -reset-mfa USERNAME
-docker start dnserv
-```
-
-That clears the account's second factor when the node starts (you set it up
-again at the next sign-in) and is recorded in the audit log. In a cluster
-the node must reach the leader for it to apply. Add `-reset-password` to also
-print a new temporary password.
+Lost your phone, or the only admin is locked out? See
+[Locked out](sign-in.md#locked-out) for recovery codes, admin resets and the
+`-reset-mfa` recovery command.
 
 [Back to the README](../README.md)

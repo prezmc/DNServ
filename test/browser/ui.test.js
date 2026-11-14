@@ -112,7 +112,7 @@ step('DNS answers through the fake upstream', async () => {
 });
 
 step('every page opens without errors', async () => {
-  const pages = [['', 'Dashboard'], ['devices', 'Devices'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['queries', 'Query log'],
+  const pages = [['', 'Dashboard'], ['devices', 'Devices'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['traffic', 'Traffic map'], ['queries', 'Query log'],
     ['names', 'Local names'], ['settings', 'Settings'], ['users', 'Users'], ['cluster', 'Cluster'], ['backups', 'Backups & history'],
     ['import', 'Import from AdGuard Home'], ['audit', 'Audit log'], ['account', 'Your account']];
   for (const [hash, title] of pages) {
@@ -219,6 +219,35 @@ step('dashboard shows the lookups', async () => {
   await until('the full map', async () => (await page.locator('.flow-focus').count()) === 0);
 });
 
+step('the traffic map finds any device, not just the busiest', async () => {
+  // Twelve more devices: more than the map has room for, so the quietest
+  // one is folded into Other devices and can only be found by search.
+  for (let i = 2; i <= 13; i++) {
+    for (let j = 0; j < 16 - i; j++) await lookup(node.dnsPort, 'd' + i + '-' + j + '.example.test', 3000, '127.0.0.' + i);
+  }
+  await go('devices');
+  await page.getByRole('link', { name: 'Traffic map' }).first().waitFor();
+  await go('traffic');
+  await heading('Traffic map').waitFor();
+  await until('the quiet device folded away', async () => {
+    await go('traffic');
+    return (await page.locator('.flow-node').getByText(/Other devices/).count()) > 0;
+  });
+  const search = page.getByRole('combobox', { name: 'Show one device' });
+  await search.click();
+  await search.fill('127.0.0.13');
+  await page.getByRole('option', { name: /127\.0\.0\.13/ }).click();
+  await page.locator('.flow-focus').getByText(/Showing only/).waitFor();
+  assert.match(page.url(), /#\/traffic\?device=127\.0\.0\.13/, 'the address follows the device');
+  await until('only that device on the map', async () => (await page.locator('.flow-node text').first().textContent()) === '127.0.0.13');
+  await page.locator('.dev-profile').getByText(/Profile:/).waitFor();
+  // A link straight to a device opens its map.
+  await go('traffic?device=127.0.0.12');
+  await page.locator('.flow-focus').getByText(/Showing only/).waitFor();
+  await page.getByRole('button', { name: 'All devices' }).click();
+  await until('the full map', async () => (await page.locator('.flow-focus').count()) === 0);
+});
+
 step('the devices page search finds devices despite typos', async () => {
   for (const [name, addr] of [['Living room TV', '192.168.50.91'], ['Shannon iPhone', '192.168.50.74'], ['Kitchen speaker', '192.168.50.33']]) {
     await api('POST', '/devices', { name, addrs: [addr] });
@@ -278,6 +307,12 @@ step('backups: set a passphrase and download a backup', async () => {
   assert.ok(size > 100, 'backup file has ' + size + ' bytes');
   // Encrypted: the admin's name isn't readable in the file.
   assert.ok(!fs.readFileSync(await dl.path()).includes(Buffer.from(USER + '"')), 'backup is encrypted');
+  // Where backups go: this server is on, the others offer set-up dialogs.
+  await page.getByRole('heading', { name: 'Where backups go' }).waitFor();
+  assert.equal(await page.locator('.dest.on').count(), 1);
+  await page.locator('.dest', { hasText: 'Network share' }).getByRole('button', { name: 'Set up' }).click();
+  await page.getByRole('dialog').getByLabel('Share').waitFor();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
 });
 
 step('a viewer signs in, sets up two-factor and can only look', async () => {

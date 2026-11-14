@@ -19,17 +19,17 @@ nobody can open one. Keep it in a password manager.
   `/data/backups` (the last 14 by default).
 - **A copy off the server:** mount a folder from a NAS or another disk into
   the container (for example `-v /mnt/nas/dnserv:/backups`) and enter
-  `/backups` as the copy folder. The leading node writes one copy of each
+  `/backups` under **Mounted folder**. The leading node writes one copy of each
   backup there.
-- **A network share (SMB):** under Automatic backups, open **Also copy to a
-  network share** and enter the share as Windows or macOS shows it
+- **A network share (SMB):** under **Where backups go**, choose **Set up** on **Network share**
+  and enter the share as Windows or macOS shows it
   (`\\nas.local\backups\dnserv` or `smb://192.168.1.254/backups`), with
   a user name and password. DNServ talks SMB 2/3 itself, so nothing needs
   mounting on the server. **Check and save** writes, reads and deletes a
   test file first; **Copy a backup now** sends one straight away. The
   leading node writes one copy of each scheduled backup and keeps the same
   number there. The password is stored like the S3 secret key.
-- **Off-site in S3:** under Automatic backups, open **Also upload to S3**
+- **Off-site in S3:** under **Where backups go**, choose **Set up** on **S3 storage**
   and enter the bucket. Amazon S3, Backblaze B2, Cloudflare R2, Wasabi,
   MinIO and other S3-compatible storage work: leave Endpoint empty for
   Amazon, otherwise enter the service's host (for example
@@ -37,7 +37,7 @@ nobody can open one. Keep it in a password manager.
   "bucket in the path" for MinIO and most NAS apps. **Check and save**
   writes, reads and deletes a small test file before saving. The leading
   node then uploads one copy of each scheduled backup and keeps the same
-  number there as locally; **Upload a backup now** sends one straight away.
+  number there as locally; **Copy a backup now** sends one straight away.
   Give the key access to that bucket only (list, read, write, delete). The
   secret key is stored on your servers, never shown again, and isn't in
   backups. Files are encrypted before upload, so the storage provider can't

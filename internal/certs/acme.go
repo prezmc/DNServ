@@ -41,6 +41,10 @@ type DNSHostInfo struct {
 	URL         string      `json:"url,omitempty"`
 	Credentials [][2]string `json:"credentials"` // name, description
 	Additional  [][2]string `json:"additional"`
+	// Main is the recommended way to sign in, with plain labels, for
+	// popular hosts (empty for the rest); Help says where to get it.
+	Main []SimpleField `json:"main,omitempty"`
+	Help string        `json:"help,omitempty"`
 }
 
 // dnshosts.json is made by scripts/gen-dnshosts.py.
@@ -58,6 +62,9 @@ var dnsHosts = sync.OnceValue(func() []DNSHostInfo {
 	}
 	for _, h := range all {
 		if !unsupportedHosts[h.Code] {
+			if sh, ok := simpleHosts[h.Code]; ok {
+				h.Main, h.Help = sh.fields, sh.help
+			}
 			out = append(out, h)
 		}
 	}

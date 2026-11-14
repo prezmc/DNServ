@@ -60,8 +60,9 @@ function parse(b) {
 
 const RCODES = { 0: 'NOERROR', 2: 'SERVFAIL', 3: 'NXDOMAIN', 5: 'REFUSED' };
 
-// lookup asks a DNS server for name's A records.
-function lookup(port, name, timeoutMs = 3000) {
+// lookup asks a DNS server for name's A records. from is the local
+// address to ask from (any 127.x.y.z on Linux), to look like another device.
+function lookup(port, name, timeoutMs = 3000, from) {
   return new Promise((resolve, reject) => {
     const s = dgram.createSocket('udp4');
     const id = Math.floor(Math.random() * 65535);
@@ -72,7 +73,8 @@ function lookup(port, name, timeoutMs = 3000) {
       const r = parse(m);
       resolve({ rcode: RCODES[r.rcode] || String(r.rcode), a: r.a });
     });
-    s.send(query(id, name, 1), port, '127.0.0.1');
+    const send = () => s.send(query(id, name, 1), port, '127.0.0.1');
+    if (from) s.bind(0, from, send); else send();
   });
 }
 

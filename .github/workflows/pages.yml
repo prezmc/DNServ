@@ -28,9 +28,10 @@ jobs:
       - uses: actions/checkout@v7
       - name: Assemble the site
         run: |
-          mkdir -p _site/images
-          cp site/* _site/
+          mkdir -p _site/images/setup
+          cp -r site/* _site/
           cp docs/images/*.png _site/images/
+          cp docs/images/setup/*.webp _site/images/setup/
           cp internal/web/static/logo.svg internal/web/static/favicon-32.png internal/web/static/apple-touch-icon.png _site/
       - uses: actions/upload-pages-artifact@v5
       - id: deploy
