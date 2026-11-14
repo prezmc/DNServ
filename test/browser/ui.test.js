@@ -257,6 +257,12 @@ step('backups: set a passphrase and download a backup', async () => {
   assert.ok(size > 100, 'backup file has ' + size + ' bytes');
   // Encrypted: the admin's name isn't readable in the file.
   assert.ok(!fs.readFileSync(await dl.path()).includes(Buffer.from(USER + '"')), 'backup is encrypted');
+  // Where backups go: this server is on, the others offer set-up dialogs.
+  await page.getByRole('heading', { name: 'Where backups go' }).waitFor();
+  assert.equal(await page.locator('.dest.on').count(), 1);
+  await page.locator('.dest', { hasText: 'Network share' }).getByRole('button', { name: 'Set up' }).click();
+  await page.getByRole('dialog').getByLabel('Share').waitFor();
+  await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
 });
 
 step('a viewer signs in, sets up two-factor and can only look', async () => {

@@ -4047,6 +4047,10 @@ async function backupsPage(main) {
       : h('p', { class: 'muted' }, 'No changes yet. Each change you save from now on appears here.'));
 
   // Backups.
+  const files = bk.files || [];
+  const whereName = { local: 'This server', offsite: 'Mounted folder', smb: 'Network share', s3: 'S3 storage' };
+  const count = (w) => files.filter(x => x.where === w);
+
   const backupCard = !bk.configured ? setupBackups() : scheduleCard();
 
   function setupBackups() {
@@ -4062,8 +4066,7 @@ async function backupsPage(main) {
   }
 
   function scheduleCard() {
-    const files = bk.files || [];
-    return h('div', { class: 'card' }, h('h2', {}, 'Backups'),
+    return [destinationsCard(), h('div', { class: 'card' }, h('h2', {}, 'Backups'),
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'button', onclick: async (ev) => {
         ev.target.disabled = true;
         try { await fetchFile('POST', '/backups/download'); } catch (e) { toast(e.message, 'err'); }
@@ -4080,29 +4083,13 @@ async function backupsPage(main) {
         h('input', { id: 'at', name: 'at', type: 'time', value: bk.at || '03:00' }),
         h('p', { class: 'muted small' }, 'In ', h('b', {}, bk.time_zone), ' time, the same as group schedules.', can('network.manage') ? [' ', h('a', { href: '#/settings' }, 'Change')] : null),
         h('label', { for: 'keep' }, 'Keep the last'),
-        h('div', { class: 'row' }, h('input', { id: 'keep', name: 'keep', type: 'number', min: 1, max: 365, value: bk.keep || bk.default_keep }), h('span', { class: 'muted' }, 'backups')),
-        h('label', { for: 'offsite' }, 'Also copy to a folder (optional)'),
-        h('input', { id: 'offsite', name: 'offsite', type: 'text', value: bk.offsite || '', placeholder: '/backups', spellcheck: 'false' }),
-        h('p', { class: 'muted small' }, 'Every node keeps its own backups in ', h('code', {}, bk.dir || '/data/backups'),
-          '. To keep copies off the server too, mount a folder from your NAS or another disk into the container (for example ', h('code', {}, '-v /mnt/nas/dnserv:/backups'),
-          ') and enter its path here. The leading node writes one copy per backup there.'),
+        h('div', { class: 'row' }, h('input', { id: 'keep', name: 'keep', type: 'number', min: 1, max: 365, value: bk.keep || bk.default_keep }), h('span', { class: 'muted' }, 'backups, in each place they go')),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save schedule')),
       ], async (f) => {
-        await api('PUT', '/backups/schedule', { every: val(f, 'every'), at: val(f, 'at'), keep: parseInt(val(f, 'keep'), 10) || 0, offsite: val(f, 'offsite').trim() });
+        await api('PUT', '/backups/schedule', { every: val(f, 'every'), at: val(f, 'at'), keep: parseInt(val(f, 'keep'), 10) || 0, offsite: bk.offsite || '' });
         setTimeout(route, 900);
         return val(f, 'every') ? 'Saved. Backups run ' + (val(f, 'every') === 'daily' ? 'every day' : 'every Sunday') + ' at ' + val(f, 'at') + '.' : 'Saved. Automatic backups are off.';
       }),
-      smbSection(),
-      s3Section(),
-      h('h3', {}, 'Saved backups'),
-      Object.entries(bk.remote_errors || {}).map(([w, e]) => msg('warn', 'Couldn’t list the ' + (w === 's3' ? 'S3 bucket' : 'network share') + ': ' + e)),
-      files.length ? h('div', { class: 'scroll' }, h('table', {},
-        h('thead', {}, h('tr', {}, h('th', {}, 'Made'), h('th', {}, 'By node'), h('th', {}, 'Where'), h('th', {}, 'Size'), h('th', {}))),
-        h('tbody', {}, files.map(x => h('tr', {},
-          h('td', { class: 'nowrap' }, fmtTime(x.created)), h('td', {}, x.node || '—'),
-          h('td', {}, x.where === 'offsite' ? 'Copy folder' : x.where === 's3' ? 'S3 bucket' : x.where === 'smb' ? 'Network share' : 'This node'), h('td', { class: 'small muted' }, fmtSize(x.size)),
-          h('td', {}, h('button', { class: 'link', onclick: () => fetchFile('GET', '/backups/files/' + x.where + '/' + encodeURIComponent(x.name)).catch(e => toast(e.message, 'err')) }, 'Download')))))))
-        : h('p', { class: 'muted' }, bk.every ? 'None yet. The first one is made at the next scheduled time.' : 'None saved on this node. Turn on automatic backups above, or download one now.'),
       h('details', {}, h('summary', {}, 'Change the backup passphrase'),
         h('p', { class: 'muted small' }, 'New backups use the new passphrase. Backups you already have still open with the old one, so keep it until they’re no longer needed.'),
         form({}, [passphraseFields('New backup passphrase'), h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Change passphrase'))], async (f) => {
@@ -4110,86 +4097,142 @@ async function backupsPage(main) {
           await api('POST', '/backups/passphrase', { passphrase: val(f, 'pp'), password: val(f, 'password') });
           f.reset();
           return 'Changed. New backups use the new passphrase.';
-        })));
+        }))),
+    savedCard()];
   }
 
-  function lastUpload(last) {
-    if (!last) return null;
-    return last.error ? msg('err', 'The last copy from this server (' + fmtTime(last.at) + ') failed: ' + last.error) : msg('ok', 'Last copy from this server: ' + fmtTime(last.at) + '.');
+  // Where backups go: one tile per destination, each with its state.
+  function destinationsCard() {
+    const ups = bk.uploads || {};
+    const errs = bk.remote_errors || {};
+    const tile = (o) => {
+      const fs = count(o.where);
+      let state = ['', 'Off'];
+      if (o.on) {
+        const err = (o.last && o.last.error) || errs[o.where];
+        state = err ? ['bad', 'Problem'] : ['ok', 'On'];
+      }
+      return h('div', { class: 'dest' + (o.on ? ' on' : '') },
+        h('div', { class: 'dest-head' }, h('span', { class: 'dest-icon' }, svg('svg', { viewBox: '0 0 24 24', class: 'ico', 'aria-hidden': 'true' }, svg('path', { d: o.icon }))), h('b', {}, o.title),
+          h('span', { class: 'pill ' + state[0] }, h('span', { class: 'dot' }), state[1])),
+        h('p', { class: 'small' }, o.on ? o.where_text : o.blurb),
+        o.on ? h('p', { class: 'small muted' }, fs.length ? fs.length + ' backup' + (fs.length === 1 ? '' : 's') + ', newest ' + fmtTime(fs[0].created) : (bk.every ? 'No backups there yet. The next scheduled one goes here too.' : 'No backups there yet.')) : null,
+        o.last && o.last.error ? h('p', { class: 'small bad-text' }, 'Last copy failed ' + fmtTime(o.last.at) + ': ' + o.last.error) : null,
+        errs[o.where] ? h('p', { class: 'small bad-text' }, 'Couldn’t list it: ' + errs[o.where]) : null,
+        o.action ? h('div', { class: 'actions' },
+          h('button', { class: o.on ? '' : 'primary', type: 'button', onclick: o.action }, o.on ? 'Change' : 'Set up'),
+          o.on && o.copy ? h('button', { class: 'link', type: 'button', onclick: o.copy }, 'Copy a backup now') : null) : null);
+    };
+    return h('div', { class: 'card' }, h('h2', {}, 'Where backups go'),
+      h('p', { class: 'muted' }, 'Every server always keeps its own copies. Add a place off the server, so a dead disk or a lost server doesn’t take your backups with it. The leading server sends one copy of each scheduled backup to each place that’s on.'),
+      !bk.offsite && !bk.smb && !bk.s3 ? msg('warn', 'Backups are only on the servers themselves right now. Set up a network share or S3 storage to keep a copy somewhere else.') : null,
+      h('div', { class: 'dests' },
+        tile({ where: 'local', icon: 'M3 4h18v7H3zM3 13h18v7H3zM7 7.5h.01M7 16.5h.01', title: 'This server', on: true, where_text: h('span', {}, 'Always on, in ', h('code', {}, bk.dir || '/data/backups'), ' on each server.') }),
+        tile({ where: 'smb', icon: 'M3 6h18v12H3zM3 10h18M7 14h4M12 18v3M8 21h8', title: 'Network share', on: !!bk.smb, last: ups.smb, blurb: 'A shared folder on your NAS or a Windows PC, reached over SMB. Nothing to mount.',
+          where_text: bk.smb ? h('code', {}, bk.smb.where) : null, action: smbDialog, copy: () => copyNow('smb', bk.smb && bk.smb.where) }),
+        tile({ where: 's3', icon: 'M7 18h10a4 4 0 0 0 .5-8A6 6 0 0 0 6 9a4.5 4.5 0 0 0 1 9z', title: 'S3 storage', on: !!bk.s3, last: ups.s3, blurb: 'Amazon S3, Backblaze B2, Cloudflare R2, Wasabi, MinIO or any S3-compatible storage.',
+          where_text: bk.s3 ? h('span', {}, 'Bucket ', h('code', {}, bk.s3.bucket + (bk.s3.prefix ? '/' + bk.s3.prefix : '')), bk.s3.endpoint ? [' at ', h('code', {}, bk.s3.endpoint)] : null) : null,
+          action: s3Dialog, copy: () => copyNow('s3', bk.s3 && bk.s3.bucket) }),
+        tile({ where: 'offsite', icon: 'M3 6h6l2 2h10v11H3z', title: 'Mounted folder', on: !!bk.offsite, blurb: 'A folder from another disk or a NAS that you mount into the container yourself.',
+          where_text: bk.offsite ? h('code', {}, bk.offsite) : null, action: folderDialog })));
   }
 
-  function smbSection() {
+  async function copyNow(where, name) {
+    try { await api('POST', '/backups/' + where + '/upload', {}); toast('Copied a backup to ' + name); route(); } catch (e) { toast(e.message, 'err'); }
+  }
+
+  function savedCard() {
+    return h('div', { class: 'card' }, h('h2', {}, 'Saved backups'),
+      files.length ? h('div', { class: 'scroll' }, h('table', {},
+        h('thead', {}, h('tr', {}, h('th', {}, 'Made'), h('th', {}, 'By server'), h('th', {}, 'Where'), h('th', {}, 'Size'), h('th', {}))),
+        h('tbody', {}, files.map(x => h('tr', {},
+          h('td', { class: 'nowrap' }, fmtTime(x.created)), h('td', {}, x.node || '—'),
+          h('td', {}, whereName[x.where] || x.where), h('td', { class: 'small muted' }, fmtSize(x.size)),
+          h('td', {}, h('button', { class: 'link', onclick: () => fetchFile('GET', '/backups/files/' + x.where + '/' + encodeURIComponent(x.name)).catch(e => toast(e.message, 'err')) }, 'Download')))))))
+        : h('p', { class: 'muted' }, bk.every ? 'None yet. The first one is made at the next scheduled time.' : 'None saved yet. Turn on automatic backups, or download one now.'));
+  }
+
+  // turnOff is a "Turn off" button for a destination dialog.
+  const turnOff = (dl, label, run) => h('button', { class: 'link', type: 'button', onclick: async () => {
+    if (!(await ask('Stop sending backups to ' + label + '? Backups already there stay.', 'Stop'))) return;
+    try { await run(); toast('Turned off'); dl.close(); } catch (e) { toast(e.message, 'err'); }
+  } }, 'Turn off');
+
+  function smbDialog() {
     const t = bk.smb || {};
-    return h('details', { open: !!bk.smb }, h('summary', {}, bk.smb ? 'Off-site copies: network share ' + t.where : 'Also copy to a network share (SMB, optional)'),
-      h('p', { class: 'muted small' }, 'A shared folder on a NAS or a Windows PC, reached directly over SMB, so nothing has to be mounted on the server. The leading node writes one copy of each scheduled backup and keeps the same number there as above.'),
-      lastUpload((bk.uploads || {}).smb),
-      form({ 'data-track': true }, [
+    let dl;
+    dl = dialog('Network share', [
+      h('p', { class: 'muted small' }, 'A shared folder on a NAS or a Windows PC, reached directly over SMB 2 or newer, so nothing has to be mounted on the server.'),
+      form({}, [
         h('label', { for: 'smbsv' }, 'Share'),
-        h('input', { id: 'smbsv', name: 'server', type: 'text', value: bk.smb ? t.where : '', placeholder: '\\\\nas.local\\backups\\dnserv  or  smb://192.168.1.254/backups', spellcheck: 'false' }),
+        h('input', { id: 'smbsv', name: 'server', type: 'text', value: bk.smb ? t.where : '', placeholder: '\\\\nas.local\\backups\\dnserv  or  smb://192.168.1.254/backups', spellcheck: 'false', required: true }),
         h('p', { class: 'muted small' }, 'Server, share and (optionally) a folder inside it, written the way Windows or macOS show it. Add :port after the server if it doesn’t use 445.'),
         h('label', { for: 'smbus' }, 'User name'),
-        h('input', { id: 'smbus', name: 'user', type: 'text', value: t.user || '', autocomplete: 'off', spellcheck: 'false' }),
+        h('input', { id: 'smbus', name: 'user', type: 'text', value: t.user || '', autocomplete: 'off', spellcheck: 'false', required: true }),
         h('label', { for: 'smbpw' }, 'Password'),
         h('input', { id: 'smbpw', name: 'password', type: 'password', autocomplete: 'off', placeholder: t.password_set ? 'Saved. Leave empty to keep it.' : '' }),
         h('label', { for: 'smbdm' }, 'Domain or workgroup (usually empty)'),
         h('input', { id: 'smbdm', name: 'domain', type: 'text', value: t.domain || '', spellcheck: 'false' }),
-        h('p', { class: 'muted small' }, 'Use an account that can only reach this share. The password is kept on your servers, never shown again, and isn’t included in backups. Needs SMB 2 or newer, which every current NAS and Windows supports.'),
-        h('div', { class: 'actions' },
-          h('button', { class: 'primary', type: 'submit' }, 'Check and save'),
-          bk.smb ? h('button', { type: 'button', onclick: async (ev) => {
-            ev.target.disabled = true;
-            try { await api('POST', '/backups/smb/upload', {}); toast('Copied a backup to ' + t.where); route(); } catch (e) { toast(e.message, 'err'); }
-            ev.target.disabled = false;
-          } }, 'Copy a backup now') : null,
-          bk.smb ? h('button', { class: 'link', type: 'button', onclick: async () => {
-            if (!(await ask('Stop copying backups to ' + t.where + '? Backups already there stay.', 'Stop copying'))) return;
-            try { await api('PUT', '/backups/smb', { server: '' }); toast('Copies to the network share are off'); route(); } catch (e) { toast(e.message, 'err'); }
-          } }, 'Turn off') : null),
+        h('p', { class: 'muted small' }, 'Use an account that can only reach this share. The password is kept on your servers, never shown again, and isn’t included in backups.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Check and save'),
+          h('button', { type: 'button', onclick: () => dl.close() }, 'Cancel'),
+          bk.smb ? turnOff(dl, t.where, () => api('PUT', '/backups/smb', { server: '' })) : null),
       ], async (f) => {
         await api('PUT', '/backups/smb', { server: val(f, 'server').trim(), user: val(f, 'user').trim(), password: val(f, 'password'), domain: val(f, 'domain').trim() });
-        setTimeout(route, 900);
-        return 'Checked: DNServ can write, read and delete there. Saved.';
-      }));
+        toast('Checked: DNServ can write, read and delete there. Saved.');
+        dl.close();
+      })]);
+    dl.addEventListener('close', () => route());
   }
 
-  function s3Section() {
+  function s3Dialog() {
     const t = bk.s3 || {};
-    const last = (bk.uploads || {}).s3;
-    return h('details', { open: !!bk.s3 }, h('summary', {}, bk.s3 ? 'Off-site copies: S3 bucket ' + t.bucket : 'Also upload to S3 or S3-compatible storage (optional)'),
-      h('p', { class: 'muted small' }, 'Works with Amazon S3, Backblaze B2, Cloudflare R2, Wasabi, MinIO and other S3-compatible storage. The leading node uploads one copy of each scheduled backup and keeps the same number there as above. Backups are already encrypted with your passphrase before they leave the server.'),
-      lastUpload(last),
-      form({ 'data-track': true }, [
+    let dl;
+    dl = dialog('S3 storage', [
+      h('p', { class: 'muted small' }, 'Works with Amazon S3, Backblaze B2, Cloudflare R2, Wasabi, MinIO and other S3-compatible storage. Backups are encrypted with your passphrase before they leave the server.'),
+      form({}, [
         h('label', { for: 's3ep' }, 'Endpoint'),
-        h('input', { id: 's3ep', name: 'endpoint', type: 'text', value: t.endpoint || '', placeholder: 'Leave empty for Amazon S3, or e.g. s3.us-west-004.backblazeb2.com', spellcheck: 'false' }),
+        h('input', { id: 's3ep', name: 'endpoint', type: 'text', value: t.endpoint || '', placeholder: 'Empty for Amazon S3, or e.g. s3.us-west-004.backblazeb2.com', spellcheck: 'false' }),
         h('label', { for: 's3rg' }, 'Region'),
         h('input', { id: 's3rg', name: 'region', type: 'text', value: t.region || '', placeholder: 'e.g. eu-west-2 (R2: auto)', spellcheck: 'false' }),
         h('label', { for: 's3bk' }, 'Bucket'),
-        h('input', { id: 's3bk', name: 'bucket', type: 'text', value: t.bucket || '', spellcheck: 'false' }),
+        h('input', { id: 's3bk', name: 'bucket', type: 'text', value: t.bucket || '', spellcheck: 'false', required: true }),
         h('label', { for: 's3px' }, 'Folder in the bucket (optional)'),
         h('input', { id: 's3px', name: 'prefix', type: 'text', value: t.prefix || '', placeholder: 'dnserv', spellcheck: 'false' }),
         h('label', { for: 's3ak' }, 'Access key ID'),
-        h('input', { id: 's3ak', name: 'access_key', type: 'text', value: t.access_key || '', autocomplete: 'off', spellcheck: 'false' }),
+        h('input', { id: 's3ak', name: 'access_key', type: 'text', value: t.access_key || '', autocomplete: 'off', spellcheck: 'false', required: true }),
         h('label', { for: 's3sk' }, 'Secret access key'),
         h('input', { id: 's3sk', name: 'secret_key', type: 'password', autocomplete: 'off', placeholder: t.secret_set ? 'Saved. Leave empty to keep it.' : '' }),
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'path_style', checked: !!t.path_style }), ' Put the bucket in the path (needed by MinIO and some NAS apps)'),
         h('p', { class: 'muted small' }, 'Give the key permission to list, read, write and delete in this bucket only. The secret key is kept on your servers, never shown again, and isn’t included in backups.'),
-        h('div', { class: 'actions' },
-          h('button', { class: 'primary', type: 'submit' }, 'Check and save'),
-          bk.s3 ? h('button', { type: 'button', onclick: async (ev) => {
-            ev.target.disabled = true;
-            try { await api('POST', '/backups/s3/upload', {}); toast('Uploaded a backup to ' + t.bucket); route(); } catch (e) { toast(e.message, 'err'); }
-            ev.target.disabled = false;
-          } }, 'Upload a backup now') : null,
-          bk.s3 ? h('button', { class: 'link', type: 'button', onclick: async () => {
-            if (!(await ask('Stop uploading backups to ' + t.bucket + '? Backups already there stay.', 'Stop uploading'))) return;
-            try { await api('PUT', '/backups/s3', { bucket: '' }); toast('S3 uploads are off'); route(); } catch (e) { toast(e.message, 'err'); }
-          } }, 'Turn off') : null),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Check and save'),
+          h('button', { type: 'button', onclick: () => dl.close() }, 'Cancel'),
+          bk.s3 ? turnOff(dl, t.bucket, () => api('PUT', '/backups/s3', { bucket: '' })) : null),
       ], async (f) => {
         await api('PUT', '/backups/s3', { endpoint: val(f, 'endpoint').trim(), region: val(f, 'region').trim(), bucket: val(f, 'bucket').trim(), prefix: val(f, 'prefix').trim(),
           access_key: val(f, 'access_key').trim(), secret_key: val(f, 'secret_key'), path_style: f.elements.path_style.checked });
-        setTimeout(route, 900);
-        return 'Checked: DNServ can write, read and delete in ' + val(f, 'bucket').trim() + '. Saved.';
-      }));
+        toast('Checked: DNServ can write, read and delete in ' + val(f, 'bucket').trim() + '. Saved.');
+        dl.close();
+      })]);
+    dl.addEventListener('close', () => route());
+  }
+
+  function folderDialog() {
+    let dl;
+    dl = dialog('Mounted folder', [
+      h('p', { class: 'muted small' }, 'Mount a folder from your NAS or another disk into the container (for example ', h('code', {}, '-v /mnt/nas/dnserv:/backups'), ') and enter its path inside the container.'),
+      form({}, [
+        h('label', { for: 'offsite' }, 'Folder inside the container'),
+        h('input', { id: 'offsite', name: 'offsite', type: 'text', value: bk.offsite || '', placeholder: '/backups', spellcheck: 'false', required: true }),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save'),
+          h('button', { type: 'button', onclick: () => dl.close() }, 'Cancel'),
+          bk.offsite ? turnOff(dl, bk.offsite, () => api('PUT', '/backups/schedule', { every: bk.every, at: bk.at, keep: bk.keep, offsite: '' })) : null),
+      ], async (f) => {
+        await api('PUT', '/backups/schedule', { every: bk.every, at: bk.at, keep: bk.keep, offsite: val(f, 'offsite').trim() });
+        toast('Saved');
+        dl.close();
+      })]);
+    dl.addEventListener('close', () => route());
   }
 
   const restoreCard = h('details', { class: 'card' }, h('summary', {}, 'Restore from a backup file'),
@@ -4215,7 +4258,7 @@ async function backupsPage(main) {
       route();
     }));
 
-  page(main, title, history, backupCard, restoreCard);
+  page(main, title, backupCard, history, restoreCard);
 }
 
 // setupRestore: first run from a backup file.
