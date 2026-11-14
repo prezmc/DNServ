@@ -60,6 +60,26 @@ Everything DNServ does today, in more detail than the README.
   of the 6-digit code (needs the dashboard on HTTPS at a name, not an IP;
   one per server; see [Signing in](sign-in.md#passkeys)). Passwords are hashed with Argon2id; failed sign-ins are
   throttled; sessions end on password change, MFA reset or disable.
+- **One-click updates.** The **Updates** page says when a new version is
+  out and what changed, and **Install update** updates every server one
+  at a time (witness first, the leading server last), stopping if one
+  doesn't come back healthy. A backup is made before every update, and
+  **Roll back** puts the previous version back. Choose **Releases**
+  (numbered versions, the default) or **Every change**, and optionally
+  install updates automatically at a set hour. A small updater container
+  in the compose file does the work; see [Updates](updates.md).
+
+  ![Updates page](images/updates.png)
+- **Backups wherever you keep them.** Encrypted backups on a schedule,
+  kept on each server and copied to a mounted folder, a network share
+  over SMB (nothing to mount) or S3-compatible storage (Amazon S3,
+  Backblaze B2, Cloudflare R2, Wasabi, MinIO). See [Backups](backups.md).
+- **Dashboard HTTPS.** Off by default; turn it on under Settings and the
+  dashboard is at `https://<name>/` on port 443. Built-in Let's Encrypt
+  gets one free certificate for every server, checked through your DNS
+  host (pick it from a short list of popular hosts and paste a token, or
+  any of about 190 others), so nothing needs to be open to the internet.
+  See [Dashboard HTTPS](https.md).
 - **Settings change live.** Upstream mode, servers, tunnel, allowed
   networks, lists and rules saved through the API apply without a restart,
   and every change is in the audit log with who made it and what it was
@@ -99,6 +119,20 @@ Everything DNServ does today, in more detail than the README.
   up they are counted and dropped rather than waited on. People with only
   `dashboard.view` see totals and top domains; devices, the query log and
   exports need `querylog.view` (and `data.export`).
+- **A Query log that holds still.** The newest lookups stream in at the
+  top while the log is live. **Pause** stops it (the pill beside it says
+  Live or Paused) and **Resume** starts it again. It also holds still on
+  its own while you read: with the mouse over the list, the page scrolled
+  down into it, text selected, a row focused with the keyboard, or just
+  after Block or Allow so the note stays put. While it is held, new
+  lookups are counted and a pill at the top says "12 new queries"; click
+  it to show them.
+
+  ![Query log, paused, with new queries waiting](images/query-log-paused.png)
+- **Find any device.** The Devices page search box matches names,
+  hostnames, addresses and groups, and forgives typing: letters in order
+  ("lvrm" finds "Living room TV") and small typos ("livng") both work.
+  The traffic map's device search works the same way.
 - **Performance.** The **Performance** page shows how quickly DNServ
   answers: median, 95th and 99th percentile response times, how long
   lookups the cache couldn't answer took, cache hit rate and SERVFAILs,
@@ -107,8 +141,12 @@ Everything DNServ does today, in more detail than the README.
   slowest domains to look up and each device's cache hits. It flags
   anything unusual against the 7 days before (or the typical bucket for
   longer periods): slow lookups, failure surges, upstream servers timing
-  out or slowing down, query surges and cache hit drops. The Dashboard
-  shows the last hour and any warnings, and the **Top blocking lists**
+  out or slowing down, query surges and cache hit drops. The Dashboard's
+  **Response times, last hour** card shows the median and 95% of every
+  answer, the median of lookups the cache couldn't answer, and the cache
+  share, with a line giving those lookups' median, 95% and average (a
+  few slow ones pull the average well above the median). Times too small
+  to measure show as "under 0.1 ms". The card also names any warnings, and the **Top blocking lists**
   (Dashboard and Analytics) say which lists block the most. Response
   times come from what each node already measures; they are rolled up
   into 5-minute slots with latency histograms by the history writer, so
@@ -179,6 +217,12 @@ Everything DNServ does today, in more detail than the README.
   from its own history when the card is opened, so DNS answers never wait
   for it. History records which upstream server answered each lookup
   (older history shows as "Upstream").
+
+  ![Traffic map grouped by category](images/traffic-map-categories.png)
+
+  ![Streaming opened into its apps and sites](images/traffic-map-category-open.png)
+
+  ![One device's traffic and profile](images/traffic-map-device-page.png)
 - **Risk scores and domain types.** Analytics marks risky domains (0-100)
   from public threat feeds (URLhaus and ThreatFox from abuse.ch, Phishing
   Army, HaGeZi's Threat Intelligence Feeds) plus a few signs in the name

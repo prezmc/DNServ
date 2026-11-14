@@ -24,7 +24,7 @@ services:
       - WIREGUARD_ADDRESSES=10.64.0.2/32
       - SERVER_COUNTRIES=Sweden
       # Let your LAN reach DNServ through gluetun's firewall.
-      - FIREWALL_INPUT_PORTS=53,853,8080,8081
+      - FIREWALL_INPUT_PORTS=53,443,853,8080,8081
       # DNServ answers DNS on port 53, so gluetun's own DNS must be off
       # (DNS_SERVER on recent gluetun versions, DOT on older ones).
       - DNS_SERVER=off
@@ -33,8 +33,9 @@ services:
       # DNServ's ports are published here, because it shares this network.
       - "53:53/udp"
       - "53:53/tcp"
-      - "853:853/tcp"
-      - "8080:8080/tcp"
+      - "853:853/tcp"     # DNS over TLS for your devices
+      - "443:443/tcp"     # dashboard over HTTPS (https://<name>/) and DNS over HTTPS
+      - "8080:8080/tcp"   # dashboard and setup wizard
       - "8081:8081/tcp"   # node-to-node (clustering)
 
   dnserv:
@@ -45,8 +46,8 @@ services:
     depends_on: [vpn]
     environment:
       - TZ=America/Chicago
-      # Tunnel mode without a config file. The dashboard (step 1c) will
-      # manage these too.
+      # Tunnel mode without a config file. You can also change these
+      # later under Settings in the dashboard.
       - DNSERV_UPSTREAM_MODE=tunnel
       # gluetun's WireGuard interface. Check with
       # `docker exec dnserv-vpn ip link` if the node reports it missing.

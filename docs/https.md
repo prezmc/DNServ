@@ -54,10 +54,17 @@ Let's Encrypt checks that you own each name with a TXT record at
 `_acme-challenge.<name>` (the DNS-01 check). Pick how that record gets made:
 
 - **Automatic, through my DNS host.** Pick your DNS host from the list
-  (about 190, from [lego](https://go-acme.github.io/lego/dns/)) and fill in
-  its login, such as a Cloudflare API token with *Zone / Zone / Read* and
-  *Zone / DNS / Edit*. When you save, DNServ adds and removes a test record
-  for each name, so a wrong login shows up straight away.
+  (about 190, from [lego](https://go-acme.github.io/lego/dns/)). For the
+  popular ones (Cloudflare, Amazon Route 53, DigitalOcean, Porkbun,
+  Namecheap, GoDaddy, Hetzner, Gandi, Duck DNS, Linode, deSEC, IONOS,
+  Vultr, DNSimple) the form asks only for what you need, usually one API
+  token, with a line on where to make it, such as a Cloudflare API token
+  with *Zone / Zone / Read* and *Zone / DNS / Edit*. Other logins the host
+  supports are under **Other ways to sign in**. For the rest, the form
+  shows every setting lego lists for that host. Saved values aren't shown
+  again; leave a box empty to keep it. When you save, DNServ adds and
+  removes a test record for each name, so a wrong login shows up straight
+  away.
 - **Set once, with a CNAME record.** For DNS hosts with no API. DNServ
   makes an account on an [acme-dns](https://github.com/joohoi/acme-dns)
   server (the public `auth.acme-dns.io` unless you run your own) and shows

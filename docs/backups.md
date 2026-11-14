@@ -6,6 +6,8 @@ can compare any version with now and go back to it. Going back is itself a
 new version, so it can be undone. Accounts aren't part of the history, so
 going back never brings back an old password or a deleted user.
 
+![Backups page with a network share and S3 storage set up](images/backups.png)
+
 **Encrypted backups.** A backup is one `.dnsbak` file with the accounts,
 API tokens, settings, devices, groups and settings history. It is encrypted
 with a passphrase you choose when you set backups up (at least 12
