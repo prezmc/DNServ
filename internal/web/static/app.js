@@ -2306,7 +2306,7 @@ function flowColor(kind) {
 async function dashboardFlow(box, range, opts) {
   range = range || '24h';
   opts = opts || {};
-  const st = box.flowState || (box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: null });
+  const st = box.flowState || (box.flowState = { group: flowGroup(), open: '', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: null });
   // A refresh while someone is typing in the device search would throw
   // away what they typed, so it waits for the next one.
   const act = document.activeElement;
@@ -2315,7 +2315,7 @@ async function dashboardFlow(box, range, opts) {
   // With a device picked, the whole map is just that device's lookups.
   const only = st.device ? '&client=' + encodeURIComponent(st.device.key) : '';
   try {
-    [data, devs] = await Promise.all([api('GET', '/analytics/flow?range=' + range + '&group=' + st.group + only),
+    [data, devs] = await Promise.all([api('GET', '/analytics/flow?range=' + range + '&group=' + st.group + only + (st.group === 'category' && st.open ? '&open=' + encodeURIComponent(st.open) : '')),
       can('querylog.view') ? flowDevices(box) : []]);
   } catch (_) { return; } // keep the map shown until the next try
   const options = deviceOptions(devs, 'All devices');
@@ -2352,8 +2352,10 @@ async function dashboardFlow(box, range, opts) {
   const kindBoxes = FLOW_KINDS.map(([k, label, tip]) => h('label', { class: 'chip', title: tip },
     h('input', { type: 'checkbox', checked: st.kinds[k], onchange: (e) => { st.kinds[k] = e.target.checked; draw(); } }),
     h('span', { class: 'dot flow-k-' + k }), label));
-  const groupSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Group services by' }, [['company', 'By company'], ['type', 'By type']].map(([k, label]) =>
-    h('button', { type: 'button', 'aria-pressed': String(st.group === k), onclick: () => { if (st.group !== k) { st.group = k; st.sel = ''; dashboardFlow(box, range, opts); } } }, label)));
+  const groupSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Group sites by' }, [['company', 'By company', 'Sites grouped by the company that runs them'], ['category', 'By category', 'Sites grouped by what they are used for: social media, streaming, gaming and so on. Click a category to see its apps and sites.']].map(([k, label, title]) =>
+    h('button', { type: 'button', title, 'aria-pressed': String(st.group === k), onclick: () => { if (st.group !== k) { st.group = k; st.open = ''; st.sel = ''; flowGroup(k); dashboardFlow(box, range, opts); } } }, label)));
+  // openCat breaks a category into its apps and sites, or ('') puts it back.
+  const openCat = (c) => { st.open = c; st.sel = ''; dashboardFlow(box, range, opts); };
   // The device search: type part of a name or address (letters in order,
   // like the Query log's device filter) to map just that device.
   const picker = data.devices && options.length > 1 ? combo({ options, value: st.device ? st.device.key : '', label: 'Show one device', placeholder: 'Find a device…', class: 'dev flow-pick',
@@ -2370,7 +2372,11 @@ async function dashboardFlow(box, range, opts) {
       ? h('div', { class: 'msg info row flow-focus' }, h('span', {}, 'Showing only ', h('b', {}, st.device.label), '\u2019s lookups: the servers that answered them, how, and what they were for.'),
         h('span', { class: 'grow' }), opts.page ? null : h('a', { href: pageHash(st.device), class: 'small nowrap' }, 'Open as a page'),
         h('button', { type: 'button', class: 'secondary small', onclick: () => focus(null) }, 'All devices'))
-      : h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device, or find any device in the search box, to see only its traffic. Click an answer or a service to follow it.' : 'Click an answer or a service to follow it.'),
+      : h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device, or find any device in the search box, to see only its traffic. Click an answer or a service to follow it.' : 'Click an answer or a service to follow it.', st.group === 'category' ? ' Click a category to see its apps and sites.' : ''),
+    st.group === 'category' && st.open
+      ? h('div', { class: 'msg info row flow-focus' }, h('span', {}, h('b', {}, st.open), ' is broken out into its busiest apps and sites, on the right.'),
+        h('span', { class: 'grow' }), h('button', { type: 'button', class: 'secondary small', onclick: () => openCat('') }, 'All categories'))
+      : null,
     h('div', { class: 'row flow-kinds' }, kindBoxes, picker ? h('span', { class: 'grow' }) : null, picker),
     wrap, detail);
   steady(() => box.replaceChildren(card));
@@ -2414,7 +2420,7 @@ async function dashboardFlow(box, range, opts) {
       return [h('b', {}, n.label), h('div', {}, fmtNum(n.v), ' lookups · ', fmtPct(n.v / total), ' of all'),
         Object.keys(kinds).length > 1 ? h('div', { class: 'muted' }, FLOW_KINDS.filter(([k]) => kinds[k]).map(([k, label]) => label + ' ' + fmtPct(kinds[k] / n.v)).join(' · ')) : null,
         n.col === 3 && n.domains && n.domains.length ? h('div', { class: 'muted mono' }, n.domains.slice(0, 3).join(', ')) : null,
-        h('div', { class: 'muted small' }, n.col === 0 && n.device ? (st.device ? 'Click to see all devices' : 'Click to see only this device') : 'Click to follow')];
+        h('div', { class: 'muted small' }, n.col === 0 && n.device ? (st.device ? 'Click to see all devices' : 'Click to see only this device') : n.group ? 'Click to see its apps and sites' : n.parent ? 'In ' + n.parent + ' · click to follow' : 'Click to follow')];
     };
     const sel = st.sel && pos[st.sel] ? st.sel : '';
     const touches = (l) => l.s === sel || l.t === sel;
@@ -2436,7 +2442,7 @@ async function dashboardFlow(box, range, opts) {
     for (const id in pos) {
       const p = pos[id], n = p.n, leftSide = n.col === 0;
       const label = n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label;
-      const tx = leftSide ? p.x - 7 : p.x + nw + 7;
+      const tx = leftSide ? p.x - 7 : p.x + nw + (n.parent ? 15 : 7);
       const node = svg('g', { class: 'flow-node' + (sel === id ? ' sel' : ''), tabindex: 0, role: 'button', 'aria-label': n.label + ', ' + fmtNum(n.v) + ' lookups' },
         svg('rect', { x: p.x, y: p.y, width: nw, height: p.h, rx: 3, fill: n.col === 1 ? 'var(--text)' : n.col === 0 ? 'var(--muted)' : n.kind === 'service' ? 'var(--s-allowed)' : flowColor(n.kind) }),
         svg('rect', { x: leftSide ? p.x - left + 4 : p.x, y: p.y - 2, width: left - 4 + nw, height: p.h + 4, fill: 'transparent' }),
@@ -2447,11 +2453,19 @@ async function dashboardFlow(box, range, opts) {
       const pick = () => {
         hideTip();
         if (n.col === 0 && n.device && data.devices) { focus(st.device ? null : { key: n.device, label: n.label }); return; }
+        if (n.group && data.group === 'category') { openCat(n.group); return; }
         st.sel = st.sel === id ? '' : id; draw();
       };
       node.addEventListener('click', pick);
       node.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
       g.append(node);
+    }
+    // An opened category's apps and sites are bracketed under its name.
+    for (const kids of [cols[3].filter(n => n.parent && n.kind !== 'blocked'), cols[3].filter(n => n.parent && n.kind === 'blocked')]) {
+      if (!kids.length) continue;
+      const top = pos[kids[0].id].y, last = pos[kids[kids.length - 1].id], bx = X[3] + nw + 5;
+      g.append(svg('path', { d: `M${bx + 4},${top}H${bx}V${last.y + last.h}H${bx + 4}`, class: 'flow-bracket' }));
+      if (top > 14) g.append(svg('text', { x: X[3] + nw + 7, y: top - 5, class: 'n flow-group-head' }, (kids[0].kind === 'blocked' ? 'Blocked ' + kids[0].parent.toLowerCase() : kids[0].parent) + ' \u25be'));
     }
     fill(area, g);
     if (st.device && !sel) {
@@ -2506,6 +2520,15 @@ async function dashboardFlow(box, range, opts) {
   box.flowRedraw = () => { if (box.isConnected) draw(); };
 }
 
+// flowGroup reads (or, given one, remembers) how this browser last grouped
+// the traffic map's sites: 'company' or 'category'.
+function flowGroup(set) {
+  try {
+    if (set) localStorage.setItem('flow-group', set);
+    return localStorage.getItem('flow-group') === 'category' ? 'category' : 'company';
+  } catch (_) { return set || 'company'; }
+}
+
 // flowDevices is the device list for the map's search box, fetched at
 // most once a minute however often the map refreshes.
 function flowDevices(box) {
@@ -2524,7 +2547,7 @@ async function trafficPage(main) {
   const range = DASH_RANGES.includes(p.get('range')) ? p.get('range') : '24h';
   const box = h('div', { class: 'traffic-page' }, h('p', { class: 'muted' }, 'Loading…'));
   const dev = p.get('device');
-  box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: dev ? { key: dev, label: dev } : null };
+  box.flowState = { group: flowGroup(), open: '', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: dev ? { key: dev, label: dev } : null };
   const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, DASH_RANGES.map(k =>
     h('button', { type: 'button', 'aria-pressed': String(k === range), onclick: () => {
       const d = box.flowState.device;

@@ -437,6 +437,8 @@ td a:hover { text-decoration: underline; }
 .flow .band.off { stroke-opacity: .08; }
 .flow text { fill: var(--text); font-size: 12.5px; }
 .flow text.n { fill: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.flow .flow-bracket { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+.flow text.flow-group-head { font-size: 11px; letter-spacing: .02em; }
 .flow .flow-node { cursor: pointer; outline: none; }
 .flow .flow-node:hover text:not(.n), .flow .flow-node:focus-visible text:not(.n), .flow .flow-node.sel text:not(.n) { font-weight: 700; }
 .flow-tip {
