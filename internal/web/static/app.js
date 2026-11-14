@@ -1985,7 +1985,10 @@ async function queries(main) {
   };
   // useHistory: search each server's saved history (merged), or, when
   // history is off, the recent queries this server holds in memory.
-  let oldest = 0, live = true, useHistory = true, multi = false, risk = {};
+  // paused: the person pressed Pause (or loaded older rows). The list also
+  // holds still on its own while they read it (see held()); either way new
+  // queries are only counted, and the pill offers to show them.
+  let oldest = 0, newest = 0, paused = false, useHistory = true, multi = false, risk = {};
   const row = (e) => {
     const [label, kind] = RESULTS[e.result] || [e.result, ''];
     const why = e.rule ? e.rule + (e.list ? ' (' + e.list + ')' : '') : '';
@@ -2002,7 +2005,7 @@ async function queries(main) {
         why ? h('div', { class: 'muted small' }, why) : null),
       can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
         const action = blocked ? 'allow' : 'block';
-        try { await api('POST', '/domains', { domain: e.name, action }); ev.target.replaceWith(h('span', { class: 'small muted' }, blocked ? 'Allowed' : 'Blocked')); }
+        try { await api('POST', '/domains', { domain: e.name, action }); ev.target.replaceWith(h('span', { class: 'small muted' }, blocked ? 'Allowed' : 'Blocked')); acted = Date.now() + 15000; }
         catch (err) { toast(err.message, 'err'); }
       } }, blocked ? 'Allow' : 'Block')) : null);
   };
@@ -2035,6 +2038,9 @@ async function queries(main) {
     try { r = await q(); } catch (e) { info.replaceChildren(msg('err', e.message)); return; }
     body.replaceChildren(...r.queries.map(row));
     oldest = r.queries.length ? cursor(r.queries[r.queries.length - 1]) : 0;
+    newest = r.queries.length ? cursor(r.queries[0]) : 0;
+    waiting = 0;
+    status();
     more.hidden = r.queries.length < 100;
     info.textContent = !r.queries.length ? '' : useHistory
       ? 'Newest first, from every server’s saved history.'
@@ -2042,16 +2048,66 @@ async function queries(main) {
     if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, ['client', 'search', 'result', 'risk'].some(k => filter[k]) ? 'Nothing matches.' : 'No queries yet.')));
   };
   more.addEventListener('click', async () => {
-    live = false;
+    paused = true;
+    status();
     try {
       const r = await q({ before: String(oldest) });
       r.queries.forEach(e => body.append(row(e)));
       if (r.queries.length) oldest = cursor(r.queries[r.queries.length - 1]);
       more.hidden = r.queries.length < 100;
-      pause.checked = false;
     } catch (e) { toast(e.message, 'err'); }
   });
-  const pause = h('input', { type: 'checkbox', checked: true, onchange: (ev) => { live = ev.target.checked; if (live) load(); } });
+
+  // Live updates. The list holds still while the mouse is over it, while
+  // the person has scrolled down into it, has text selected or a row
+  // focused, or just pressed Allow/Block (so the note stays put).
+  let hover = false, acted = 0, waiting = 0;
+  const card = h('div', { class: 'card ql-card' });
+  const held = () => hover || acted > Date.now() || card.matches(':focus-within') && document.activeElement.matches(':focus-visible')
+    || card.getBoundingClientRect().top < -40
+    || (() => { const sel = document.getSelection(); return sel && !sel.isCollapsed && card.contains(sel.anchorNode); })();
+  card.addEventListener('pointerenter', (ev) => { if (ev.pointerType === 'mouse') hover = true; status(); });
+  card.addEventListener('pointerleave', () => { hover = false; status(); });
+  const liveDot = h('span', { class: 'dot' });
+  const liveText = h('span');
+  const livePill = h('span', { class: 'pill ql-live', 'aria-live': 'polite' }, liveDot, liveText);
+  const pauseBtn = h('button', { type: 'button', class: 'small ql-pause', onclick: () => {
+    paused = !paused;
+    if (!paused) load(); else status();
+  } });
+  const newPill = h('button', { type: 'button', class: 'ql-new', hidden: true, onclick: () => {
+    paused = false; hover = false; acted = 0;
+    card.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    load();
+  } });
+  function status() {
+    const h0 = !paused && held();
+    livePill.className = 'pill ql-live ' + (paused ? 'warn' : h0 ? '' : 'ok');
+    liveText.textContent = paused ? 'Paused' : h0 ? 'Held while you read' : 'Live';
+    livePill.title = paused ? 'New queries are counted but not shown until you resume.'
+      : h0 ? 'The list holds still while your mouse is over it, you’ve scrolled down, or text is selected. It carries on when you’re done.'
+      : 'New queries appear every few seconds.';
+    pauseBtn.replaceChildren(h('span', { class: 'ql-ico', 'aria-hidden': 'true' }, paused ? '\u25B6' : '\u275A\u275A'), paused ? 'Resume' : 'Pause');
+    pauseBtn.setAttribute('aria-pressed', paused ? 'true' : 'false');
+    newPill.hidden = !waiting;
+    if (waiting) newPill.replaceChildren(h('span', { class: 'dot' }), (waiting >= 100 ? '100+' : fmtNum(waiting)) + ' new ' + (waiting === 1 ? 'query' : 'queries'), h('b', {}, 'Show'));
+  }
+  // count() asks for the newest page and counts what's newer than the top row.
+  const count = async () => {
+    let r;
+    try { r = await q(); } catch (_) { return; }
+    let n = 0;
+    for (const e of r.queries) { if (cursor(e) > newest) n++; else break; }
+    waiting = n;
+    status();
+  };
+  const tick = () => {
+    if (document.hidden || document.querySelector('dialog[open]')) return;
+    if (paused || held()) count(); else load();
+  };
+  let scrollT = null;
+  const onScroll = () => { if (!card.isConnected) { removeEventListener('scroll', onScroll); return; } clearTimeout(scrollT); scrollT = setTimeout(status, 120); };
+  addEventListener('scroll', onScroll, { passive: true });
 
   const devOpts = deviceOptions(devs, 'All devices');
   if (filter.client && !devOpts.some(o => o.value === filter.client)) devOpts.push({ value: filter.client, label: filter.client });
@@ -2085,14 +2141,16 @@ async function queries(main) {
     try { await fetchFile('GET', '/analytics/export?' + qs({ limit: '50000' })); } catch (e) { toast(e.message, 'err'); }
   } }, 'Export CSV') : null;
 
+  card.append(h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Device'), h('th', {}, 'Domain'), h('th', {}, 'Result'), can('domains.allowblock') ? h('th', {}) : null)),
+    body)));
   page(main, 'Query log',
-    h('div', { class: 'row' }, devSel, search, resSel, riskSel, rangeSel, h('label', { class: 'inline' }, pause, 'Live'), exportBtn),
+    h('div', { class: 'row' }, devSel, search, resSel, riskSel, rangeSel, exportBtn, h('div', { class: 'ql-ctl' }, livePill, pauseBtn)),
     nodesNote, info,
-    h('div', { class: 'card' }, h('div', { class: 'scroll' }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Device'), h('th', {}, 'Domain'), h('th', {}, 'Result'), can('domains.allowblock') ? h('th', {}) : null)),
-      body)), h('div', { class: 'actions' }, more)));
+    h('div', { class: 'ql-new-wrap' }, newPill),
+    card, h('div', { class: 'actions' }, more));
   await load();
-  timer = setInterval(() => { if (live && !document.hidden && !document.querySelector('dialog[open]')) load(); }, 3000);
+  timer = setInterval(tick, 3000);
 }
 
 // ---------- analytics ----------
