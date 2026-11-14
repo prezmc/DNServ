@@ -219,6 +219,76 @@ step('dashboard shows the lookups', async () => {
   await until('the full map', async () => (await page.locator('.flow-focus').count()) === 0);
 });
 
+// The dashboard redraws itself every 5 seconds (charts and lists every
+// minute). This one runs in its own browser context with a fake clock, so
+// a minute of refreshes takes a moment, and watches the cards' places:
+// the card being read must not move, and no card in view may shrink, on
+// refreshes or on a reload. Layout shifts are counted too, the way
+// Chromium scores them for Core Web Vitals.
+step('dashboard cards stay put across refreshes and a reload', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, storageState: await context.storageState() });
+  try {
+    await ctx.addInitScript(() => {
+      window.__shift = 0;
+      new PerformanceObserver(l => { for (const e of l.getEntries()) if (!e.hadRecentInput) window.__shift += e.value; }).observe({ type: 'layout-shift', buffered: true });
+    });
+    const p = await ctx.newPage();
+    p.setDefaultTimeout(10000);
+    p.on('pageerror', e => problems.push('page error: ' + e.message));
+    await p.clock.install();
+    const ready = async () => {
+      await p.locator('.d-chart svg.chart').waitFor();
+      await p.locator('.d-flow svg.flow').waitFor();
+      await p.waitForFunction(() => document.querySelector('.dash') && document.querySelector('.dash').__ready && !document.querySelector('.dash .skel'));
+    };
+    // places: every card's top and height on screen, by name.
+    const places = () => p.evaluate(() => Object.fromEntries([...document.querySelectorAll('.dash > *, .dash > div:not(.card) > *')]
+      .map(el => [[...el.classList].find(c => c.startsWith('d-')), el.getBoundingClientRect()])
+      .filter(([k, r]) => k && r.height && !/^d-(pause|arrange|ver)$/.test(k))
+      .map(([k, r]) => [k, { top: Math.round(r.top), height: Math.round(r.height), bottom: Math.round(r.bottom) }])));
+    await p.goto(node.url + '#/');
+    await ready();
+    // Read the domain check card, low on the page, with the pointer on it.
+    await p.evaluate(() => { const c = document.querySelector('.dash .d-check'); window.scrollBy(0, c.getBoundingClientRect().top - 300); });
+    const box = await p.locator('.dash .d-check').boundingBox();
+    await p.mouse.move(box.x + 20, box.y + 20);
+    const before = await places();
+    const y0 = await p.evaluate(() => scrollY);
+    assert.ok(y0 > 0, 'the page scrolled down');
+    await p.evaluate(() => { window.__shift = 0; });
+    // New lookups change the counts and lists; then a minute of refreshes.
+    for (let i = 0; i < 4; i++) await lookup(node.dnsPort, 'steady' + i + '.example.test');
+    await p.clock.runFor(61000);
+    await p.waitForTimeout(1500); // let the refreshes' requests finish
+    await p.clock.runFor(5000);
+    await p.waitForTimeout(800);
+    const after = await places();
+    assert.ok(Math.abs(after['d-check'].top - before['d-check'].top) <= 1, 'the card being read stayed put: ' + before['d-check'].top + ' → ' + after['d-check'].top);
+    for (const [k, b] of Object.entries(before)) {
+      const a = after[k];
+      if (!a || b.bottom < 0 || b.top > 800) continue;
+      assert.ok(a.height >= b.height - 1, k + ' shrank while in view: ' + b.height + ' → ' + a.height);
+    }
+    const shift = await p.evaluate(() => window.__shift);
+    assert.ok(shift < 0.02, 'layout shift during refreshes: ' + shift);
+    // A reload opens at the same place, with the cards where they were.
+    const held = await places();
+    await p.reload();
+    await ready();
+    await p.waitForTimeout(300);
+    const y1 = await p.evaluate(() => scrollY);
+    // Not always to the pixel: cards held taller while in view come back at
+    // their natural height, and the page scrolls to make up for it.
+    assert.ok(Math.abs(y1 - y0) <= 200, 'reload keeps the scroll position: ' + y0 + ' → ' + y1);
+    const again = await places();
+    assert.ok(Math.abs(again['d-check'].top - held['d-check'].top) <= 4, 'after a reload the card is where it was: ' + held['d-check'].top + ' → ' + again['d-check'].top);
+    const shift2 = await p.evaluate(() => window.__shift);
+    assert.ok(shift2 < 0.05, 'layout shift during the reload: ' + shift2);
+  } finally {
+    await ctx.close();
+  }
+});
+
 step('the traffic map finds any device, not just the busiest', async () => {
   // Twelve more devices: more than the map has room for, so the quietest
   // one is folded into Other devices and can only be found by search.
