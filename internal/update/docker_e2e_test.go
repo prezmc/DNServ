@@ -20,9 +20,12 @@ import (
 
 func sh(t *testing.T, args ...string) string {
 	t.Helper()
-	out, err := exec.Command(args[0], args[1:]...).CombinedOutput()
+	var stderr strings.Builder
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Stderr = &stderr // pull progress goes here, not into the answer
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("%v: %v\n%s", args, err, out)
+		t.Fatalf("%v: %v\n%s%s", args, err, out, stderr.String())
 	}
 	return strings.TrimSpace(string(out))
 }
@@ -70,7 +73,6 @@ func TestDockerReplace(t *testing.T) {
 	sh(t, "docker", "run", "-d", "--name", "updtest", "--restart", "unless-stopped", "--network", "updtest-net", "--network-alias", "dns",
 		"-p", "127.0.0.1:18053:53/udp", "-e", "TZ=Europe/Dublin", "-l", "com.example.mine=yes",
 		"-v", "updtest-data:/data", "-v", "updtest-sock:"+SocketDir, "localhost:5000/updtest:latest")
-	sh(t, "docker", "tag", "alpine:3.22", "localhost:5000/updtest:latest") // move the name off, as a pull elsewhere would // only the registry has the name now; the container keeps its image
 	// Stand-in for the updater's own container, so the target is found
 	// the way the real one finds it: the other user of the socket volume.
 	self := sh(t, "docker", "run", "-d", "--name", "updtest-self", "-v", "updtest-sock:"+SocketDir, "alpine:3.22", "sleep", "3600")
