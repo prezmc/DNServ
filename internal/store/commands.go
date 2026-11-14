@@ -122,7 +122,21 @@ const (
 	OpUpdatePrefs    = "updates.prefs"       // UpdatePrefs
 	OpUpdateStart    = "updates.start"       // UpdateStart (audit record only)
 	OpUpdateSkip     = "updates.skip"        // UpdateSkip
+	OpUsageChoice    = "usage.choice"        // UsageChoice
+	OpUsageSent      = "usage.sent"          // UsageSent
 )
+
+// UsageChoice is an admin's answer about the weekly usage summary.
+type UsageChoice struct {
+	Send   bool `json:"send"`
+	Schema int  `json:"schema,omitempty"`
+}
+
+// UsageSent records the summary the leader sent for a week.
+type UsageSent struct {
+	Week   string          `json:"week"`
+	Report json.RawMessage `json:"report"`
+}
 
 // UpdateSkip sets the version that was rolled back from ("" clears it).
 type UpdateSkip struct {
@@ -767,6 +781,27 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		}
 		st.Updates.Skip = d.Revision
 		return nil, nil, nil
+
+	case OpUsageChoice:
+		var d UsageChoice
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		before := st.Usage
+		st.Usage.Choice, st.Usage.By, st.Usage.At, st.Usage.Schema = "no", c.Actor, c.Time, 0
+		if d.Send {
+			st.Usage.Choice, st.Usage.Schema = "yes", d.Schema
+			return nil, audit("turned on the weekly anonymous usage summary", before.Choice, "yes"), nil
+		}
+		return nil, audit("turned off the weekly anonymous usage summary", before.Choice, "no"), nil
+
+	case OpUsageSent:
+		var d UsageSent
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		st.Usage.SentWeek, st.Usage.SentAt, st.Usage.Last = d.Week, c.Time, d.Report
+		return nil, audit("sent the weekly anonymous usage summary for "+d.Week, nil, d.Report), nil
 
 	case OpAbuseCHKey:
 		var d AbuseCHKey

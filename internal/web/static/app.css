@@ -564,3 +564,4 @@ ul.changes li { margin: .15rem 0; }
 .ql-new b { text-decoration: underline; text-underline-offset: 2px; }
 .ql-new[hidden] { display: none; }
 @media (max-width: 760px) { .ql-new-wrap { top: 3.6rem; } .ql-ctl { margin-left: 0; } }
+pre.code { white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--line); padding: .6rem .8rem; border-radius: 6px; max-height: 22rem; overflow: auto; }

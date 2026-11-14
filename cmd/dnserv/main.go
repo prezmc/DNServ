@@ -42,6 +42,7 @@ import (
 	"github.com/prezmc/dnserv/internal/threat"
 	"github.com/prezmc/dnserv/internal/update"
 	"github.com/prezmc/dnserv/internal/upstream"
+	"github.com/prezmc/dnserv/internal/usage"
 	"github.com/prezmc/dnserv/internal/virustotal"
 	"github.com/prezmc/dnserv/internal/web"
 )
@@ -317,6 +318,24 @@ func run() error {
 	adm.Updates = newUpdates(cl, st, cfg.DataDir, filterReady.Load, adm.Backups.Loc, log)
 	adm.Updates.Backup = adm.Backups.SaveNow // a safety copy before every update or rollback
 	go adm.Updates.Run(ctx)
+	// The weekly anonymous usage summary: only when an admin said yes,
+	// only from the leader, never with DNSERV_USAGE_REPORT=off.
+	adm.Usage = &usage.Sender{
+		URL:      os.Getenv("DNSERV_USAGE_URL"),
+		Off:      strings.EqualFold(os.Getenv("DNSERV_USAGE_REPORT"), "off"),
+		Version:  version,
+		Channel:  func() string { return st.State().Updates.Channel },
+		IsLeader: func() bool { return cl.LocalStatus().State == "Leader" },
+		Allowed:  func() bool { return st.State().Usage.Sending(usage.Schema) },
+		SentWeek: func() string { return st.State().Usage.SentWeek },
+		Stats:    adm.UsageStats,
+		Sent: func(week string, report []byte) error {
+			_, err := st.Apply(store.NewCommand(store.OpUsageSent, "system", store.UsageSent{Week: week, Report: report}))
+			return err
+		},
+		Log: log.With("component", "usage"),
+	}
+	go adm.Usage.Run(ctx)
 	adm.QueryLog = qlog
 	if hist != nil {
 		adm.Analytics = hist

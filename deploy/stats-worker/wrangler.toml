@@ -1,0 +1,19 @@
+# DNServ usage summary receiver. Deployed by .github/workflows/stats-worker.yml,
+# which fills in database_id and the custom domain. See docs/usage-stats.md.
+name = "dnserv-stats"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+# Request logs would hold IP addresses: keep them off.
+[observability]
+enabled = false
+
+[triggers]
+crons = ["17 3 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dnserv-stats"
+database_id = "DATABASE_ID"
+migrations_dir = "migrations"
