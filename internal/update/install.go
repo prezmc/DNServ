@@ -14,7 +14,7 @@ import (
 // The installer adds the updater to a DNServ container that was set up
 // before the updater existed, with one command on its server:
 //
-//	docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater
+//	docker run --rm --pull always -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater
 //
 // DNServ can't do this itself: it has no access to Docker, on purpose, so
 // something that does (that command) has to start the updater once. It

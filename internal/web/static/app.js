@@ -4515,7 +4515,7 @@ const shortRev = (r) => (r ? r.slice(0, 7) : '?');
 const STEP_TEXT = { waiting: 'Waiting', updating: 'Updating', restarting: 'Restarting', done: 'Updated', skipped: 'Skipped', failed: 'Didn’t update' };
 const STEP_CLASS = { done: 'ok', failed: 'bad', updating: 'accent', restarting: 'accent' };
 
-const SETUP_CMD = 'sudo docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater';
+const SETUP_CMD = 'sudo docker run --rm --pull always -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater';
 
 async function updatesPage(main) {
   page(main, 'Updates', h('p', { class: 'muted' }, 'Loading…'));
