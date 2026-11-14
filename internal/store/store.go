@@ -73,6 +73,21 @@ type State struct {
 	// private key, so the API never returns it whole and backups leave it
 	// out.
 	HTTPS HTTPSConfig `json:"https,omitzero"`
+	// Updates is how DNServ looks for and installs new versions of
+	// itself. Not a setting either: it isn't in settings history.
+	Updates UpdatePrefs `json:"updates,omitzero"`
+}
+
+// UpdatePrefs say how DNServ looks for new versions. The zero value is
+// the default: check every few hours, install only when someone asks.
+type UpdatePrefs struct {
+	// NoCheck stops the checks for new versions (they ask the image
+	// registry, e.g. ghcr.io, what the newest image is).
+	NoCheck bool `json:"no_check,omitempty"`
+	// Auto installs a new version on every server, one at a time, at
+	// AutoHour (0-23, in the cluster's time zone).
+	Auto     bool `json:"auto,omitempty"`
+	AutoHour int  `json:"auto_hour,omitempty"`
 }
 
 // Device is a named client on the network, recognized by its addresses.

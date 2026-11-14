@@ -113,7 +113,7 @@ step('DNS answers through the fake upstream', async () => {
 
 step('every page opens without errors', async () => {
   const pages = [['', 'Dashboard'], ['devices', 'Devices'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['traffic', 'Traffic map'], ['queries', 'Query log'],
-    ['names', 'Local names'], ['settings', 'Settings'], ['users', 'Users'], ['cluster', 'Cluster'], ['backups', 'Backups & history'],
+    ['names', 'Local names'], ['settings', 'Settings'], ['users', 'Users'], ['cluster', 'Cluster'], ['backups', 'Backups & history'], ['updates', 'Updates'],
     ['import', 'Import from AdGuard Home'], ['audit', 'Audit log'], ['account', 'Your account']];
   for (const [hash, title] of pages) {
     await go(hash);

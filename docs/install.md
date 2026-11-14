@@ -38,7 +38,12 @@ Next steps:
 
 ## Update
 
-In the server's folder:
+Open **Updates** in the dashboard and press **Install update**. With two or
+more servers they update one at a time, so DNS keeps working. See
+[Updates](updates.md) for how it works and the small updater container that
+does it.
+
+By hand, in the server's folder:
 
 ```bash
 docker compose pull && docker compose up -d

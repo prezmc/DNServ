@@ -544,3 +544,8 @@ details.parts tr.total td { font-weight: 700; border-top: 1px solid currentColor
 .dest p { margin: .15rem 0; overflow-wrap: anywhere; }
 .dest .actions { margin-top: auto; padding-top: .4rem; }
 .dest-icon .ico { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Updates */
+.nav-new { margin-left: auto; font-size: .68rem; font-weight: 700; padding: 0 .4rem; border-radius: 99px; background: var(--brand); color: var(--panel); }
+ul.changes { margin: .25rem 0 .5rem; padding-left: 1.2rem; }
+ul.changes li { margin: .15rem 0; }

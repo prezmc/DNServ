@@ -53,6 +53,11 @@ jobs:
       - name: Image tags
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          # The revision and date also go on the multi-arch index, so a
+          # running DNServ can see what's newest with one small request
+          # (Updates page).
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ${{ steps.names.outputs.images }}
           tags: |
@@ -67,6 +72,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           build-args: VERSION=${{ github.ref_name }}-${{ github.sha }}
           # The Go stage cross-compiles (see the Dockerfile), so only the
           # small Alpine stage runs under emulation for arm64. That stage

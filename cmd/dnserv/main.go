@@ -40,6 +40,7 @@ import (
 	"github.com/prezmc/dnserv/internal/server"
 	"github.com/prezmc/dnserv/internal/store"
 	"github.com/prezmc/dnserv/internal/threat"
+	"github.com/prezmc/dnserv/internal/update"
 	"github.com/prezmc/dnserv/internal/upstream"
 	"github.com/prezmc/dnserv/internal/virustotal"
 	"github.com/prezmc/dnserv/internal/web"
@@ -62,6 +63,7 @@ func run() error {
 	healthcheck := flag.String("healthcheck", "", "probe http://ADDR/healthz and exit 0 if healthy (for container health checks)")
 	resetMFA := flag.String("reset-mfa", "", "recovery: clear USERNAME's two-factor setup when the node next starts, and exit (stop the node first)")
 	resetPassword := flag.Bool("reset-password", false, "with -reset-mfa: also set and print a new temporary password")
+	updater := flag.Bool("updater", false, "run as the updater container, which installs new versions of its DNServ container (needs the Docker socket)")
 	flag.Parse()
 
 	if *healthcheck != "" {
@@ -78,6 +80,9 @@ func run() error {
 		return fmt.Errorf("log level: %w", err)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
+	if *updater {
+		return runUpdater(log)
+	}
 
 	// Base config: built-in defaults, then the optional file, then
 	// DNSERV_* environment variables. Settings saved in the dashboard
@@ -304,6 +309,8 @@ func run() error {
 		Log: log.With("component", "backup"),
 	}
 	go adm.Backups.Run(ctx)
+	adm.Updates = newUpdates(cl, st, cfg.DataDir, filterReady.Load, adm.Backups.Loc, log)
+	go adm.Updates.Run(ctx)
 	adm.QueryLog = qlog
 	if hist != nil {
 		adm.Analytics = hist
@@ -642,6 +649,10 @@ func runWitness(base config.Config, st *store.Store, log *slog.Logger) error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// A witness can be updated from a node's dashboard too.
+	upd := newUpdates(cl, st, base.DataDir, func() bool { return cl.LocalStatus().LeaderID != "" }, func() *time.Location { return time.UTC }, log)
+	upd.Prefs = func() update.Prefs { return update.Prefs{} } // the nodes check and decide
+	go upd.Run(ctx)
 
 	go func() {
 		if cl.Joined() {

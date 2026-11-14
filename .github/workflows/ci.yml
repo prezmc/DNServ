@@ -155,6 +155,8 @@ jobs:
           tags: dnserv:failover-test
           cache-from: type=gha,scope=ci-image
           cache-to: ${{ env.SAVE_CACHE == 'true' && 'type=gha,mode=max,scope=ci-image' || '' }}
+      - name: Updater against real Docker
+        run: go test -tags docker -run TestDockerReplace -v -timeout 10m ./internal/update/
       - name: Failover tests
         env:
           DNSERV_IMAGE: dnserv:failover-test

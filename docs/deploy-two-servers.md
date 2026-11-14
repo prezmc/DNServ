@@ -204,7 +204,11 @@ DNServ** on the old one.
 
 ## Upgrading
 
-Upgrade one machine at a time, so one server is always answering DNS:
+The easy way: **Updates > Install update** in the dashboard does all of
+this for you, in this order, and stops if a server doesn't come back (see
+[Updates](updates.md)).
+
+By hand, upgrade one machine at a time, so one server is always answering DNS:
 
 1. The witness, if you have one.
 2. The server that isn't leading (the Cluster page shows which one leads).

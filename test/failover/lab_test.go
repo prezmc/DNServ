@@ -112,6 +112,12 @@ type lab struct {
 
 	probe   *prober
 	results []result
+
+	// updaters gives every node an updater container, as the standard
+	// compose file does; registry is the lab registry the nodes ask for
+	// the newest version (see update_lab_test.go).
+	updaters bool
+	registry string
 }
 
 type node struct {
@@ -161,8 +167,9 @@ func (l *lab) cleanup() {
 		return
 	}
 	for _, n := range l.order {
-		docker("rm", "-f", "-v", l.nodes[n].container)
-		docker("volume", "rm", "-f", l.nodes[n].container)
+		c := l.nodes[n].container
+		docker("rm", "-f", "-v", c, c+"-updater")
+		docker("volume", "rm", "-f", c, c+"-upd")
 	}
 	docker("network", "rm", l.prefix+"-lan")
 	docker("network", "rm", l.prefix+"-raft")
@@ -200,6 +207,13 @@ func (l *lab) create(name string, witness bool, env ...string) *node {
 	}
 	if witness {
 		args = append(args, "-e", "DNSERV_ROLE=witness")
+	}
+	if l.updaters {
+		args = append(args, "-v", n.container+"-upd:/run/dnserv-updater", "-e", "DNSERV_UPDATE_REGISTRY="+l.registry)
+		if _, err := docker("run", "-d", "--name", n.container+"-updater", "--network", "none", "-u", "0:0", "--no-healthcheck",
+			"-v", "/var/run/docker.sock:/var/run/docker.sock", "-v", n.container+"-upd:/run/dnserv-updater", l.image, "-updater"); err != nil {
+			l.t.Fatal(err)
+		}
 	}
 	for _, e := range env {
 		args = append(args, "-e", e)

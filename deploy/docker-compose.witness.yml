@@ -15,10 +15,28 @@ services:
       - "8081:8081/tcp"   # node-to-node (clustering)
     volumes:
       - dnserv-witness-data:/data
+      - dnserv-witness-updater:/run/dnserv-updater
     environment:
       - DNSERV_ROLE=witness
       - DNSERV_JOIN=DNSJ1-paste-your-join-code-here
       # - DNSERV_NODE_NAME=witness-pi
 
+  # Lets the nodes' dashboards update this witness too (Updates page).
+  # See docker-compose.yml for what it can and can't do; delete it to
+  # update by hand instead.
+  dnserv-witness-updater:
+    image: ghcr.io/prezmc/dnserv:latest
+    container_name: dnserv-witness-updater
+    restart: unless-stopped
+    command: ["-updater"]
+    user: "0:0"
+    network_mode: none
+    healthcheck:
+      disable: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - dnserv-witness-updater:/run/dnserv-updater
+
 volumes:
   dnserv-witness-data:
+  dnserv-witness-updater:
