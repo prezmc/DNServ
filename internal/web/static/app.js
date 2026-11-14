@@ -4466,22 +4466,13 @@ function addPasskey() {
     h('input', { id: 'pkpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
     h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Continue'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
   ], async (f) => {
-    const make = async (host) => {
-      const b = await api('POST', '/auth/passkeys/begin', { password: val(f, 'password'), host });
-      try {
-        return { b, cred: await navigator.credentials.create({ publicKey: pkOptions(b.options) }) };
-      } catch (e) {
-        // The browser refuses a parent domain that is a public suffix
-        // (like duckdns.org); make it for this server's name instead.
-        if (!host && e && e.name === 'SecurityError' && b.domain !== location.hostname) return make(true);
-        throw pkError(e);
-      }
-    };
-    const { b, cred } = await make(false);
+    const b = await api('POST', '/auth/passkeys/begin', { password: val(f, 'password') });
+    let cred;
+    try { cred = await navigator.credentials.create({ publicKey: pkOptions(b.options) }); } catch (e) { throw pkError(e); }
     await api('POST', '/auth/passkeys/finish', { ticket: b.ticket, name: val(f, 'name').trim(), credential: pkJSON(cred) });
     ME = await api('GET', '/auth/me');
     d.close();
-    toast(b.domain === location.hostname ? 'Passkey added for this server.' : 'Passkey added. It works on every DNServ server under ' + b.domain + '.');
+    toast('Passkey added for ' + b.domain + '. Add one on each of your other servers too.');
     route();
   }));
 }

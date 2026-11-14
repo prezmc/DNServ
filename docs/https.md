@@ -125,10 +125,11 @@ with a real certificate), open the dashboard at its name, like
 `https://dns1.example.com:8080`, then **Your account > Passkeys > Add a
 passkey**.
 
-A passkey is made for the parent domain (`example.com` here), so the same
-passkey works on `dns2.example.com` and every other server under it. When
-that domain is shared hosting such as `duckdns.org`, the browser refuses and
-the passkey is made for that one server's name instead.
+A passkey is made for that server's own name (`dns1.example.com` here), so
+no other site under `example.com` can ask for it. Add one on each server:
+open `https://dns2.example.com` and add another there. Each server's passkey
+works even while the other server is down. Passkeys made by older versions
+for the whole domain keep working until you remove them.
 
 The authenticator app and recovery codes keep working, so you can always
 sign in from a browser that has no passkey. An admin's **Reset 2FA** also
