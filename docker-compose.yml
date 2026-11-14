@@ -25,3 +25,4 @@ services:
 
 volumes:
   dnserv-data:
+    name: ${DNSERV_VOLUME:-}   # empty: the usual name; set in .env to keep using an existing volume

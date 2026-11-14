@@ -47,7 +47,7 @@ Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 
 Is port 53 already in use? See [Installing](docs/install.md) for systemd-resolved, non-root and reverse proxy notes.
 
-**Updating:** run `docker compose pull && docker compose up -d`. Settings and history are kept. Coming from DNServe, the old name? See [Upgrading from DNServe](docs/install.md#upgrading-from-dnserve).
+**Updating:** run `docker compose pull && docker compose up -d`. Settings and history are kept. Set up with an older compose file or the old DNServe name? See [Moving an existing server to the standard compose file](docs/install.md#moving-an-existing-server-to-the-standard-compose-file).
 
 ## A second server
 

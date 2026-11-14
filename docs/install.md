@@ -105,24 +105,28 @@ Notes:
 Environment variables override the optional config file; settings saved in
 the dashboard or API override both.
 
-## Upgrading from DNServe
+## Moving an existing server to the standard compose file
 
-The project was called DNServe until November 2026. Servers set up under
-the old name keep their data, but a few names changed. In each server's
-`docker-compose.yml`:
+Servers set up with an older compose file (including ones from before the
+DNServe to DNServ rename) or with `docker run` can switch to the standard
+`docker-compose.yml` and keep everything. In the server's folder:
 
-1. Change the image to `ghcr.io/prezmc/dnserv:latest`. The old image
-   name gets no more updates.
-2. Rename every `DNSERVE_` environment variable to `DNSERV_` (for
-   example `DNSERVE_CLUSTER_ADVERTISE` becomes `DNSERV_CLUSTER_ADVERTISE`).
-   The old names are ignored.
-3. Leave the `volumes:` lines as they are. The volume holds your settings
-   and history, and a new volume name would start an empty server.
+1. Find the data volume the current container uses:
+   `docker inspect <container name> --format '{{range .Mounts}}{{.Name}} {{end}}'`
+   (the container name is in `docker ps`, for example `dnserve`).
+2. Stop the old container: `docker compose down` (or `docker rm -f <name>`
+   for `docker run`). This keeps the volume and your data.
+3. Download the standard file:
+   `curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml`
+4. Create `.env` next to it with `DNSERV_VOLUME=<the volume name from step 1>`
+   and anything else this server needs from [`.env.example`](../.env.example),
+   such as `TZ` or a different cluster port with its
+   `DNSERV_CLUSTER_ADVERTISE`. Settings that used to be `DNSERVE_...`
+   variables are now `DNSERV_...`.
+5. `docker compose pull && docker compose up -d`, then open the dashboard
+   and check your settings and history are there.
 
-Then run `docker compose pull && docker compose up -d`. Update every
-server: nodes on either side of the rename still talk to each other, so
-the order doesn't matter. You'll need to sign in again, and Prometheus
-metrics now start with `dnserv_`. Backups made before the rename restore
-as normal.
+You'll need to sign in again after the rename, and Prometheus metrics start
+with `dnserv_`. Backups made before the rename restore as normal.
 
 [Back to the README](../README.md)
