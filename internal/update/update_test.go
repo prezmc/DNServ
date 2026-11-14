@@ -139,7 +139,7 @@ func TestRecreateBody(t *testing.T) {
 	_ = json.Unmarshal([]byte(inspect), &c.Raw)
 	img := &Image{Config: map[string]json.RawMessage{}}
 	_ = json.Unmarshal([]byte(`{"Env":["DNSERV_CONFIG=/data/dnserv.yaml","PATH=/usr/bin"],"Entrypoint":["/usr/local/bin/dnserv"],"User":"dnserv","Labels":{"org.opencontainers.image.revision":"old"}}`), &img.Config)
-	body, err := recreateBody(&c, img, "ghcr.io/prezmc/dnserv:latest", "sha256:new")
+	body, err := recreateBody(&c, img, "ghcr.io/prezmc/dnserv:latest", "sha256:new", "ghcr.io/prezmc/dnserv:latest")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestRecreateBody(t *testing.T) {
 			t.Errorf("missing %s in %s", want, s)
 		}
 	}
-	for _, gone := range []string{"Hostname", "Entrypoint", `"User"`, "org.opencontainers.image.revision", "172.18.0.2"} {
+	for _, gone := range []string{"Hostname", "Entrypoint", `"User"`, "org.opencontainers.image.revision", "172.18.0.2", labelTrack} {
 		if strings.Contains(s, gone) {
 			t.Errorf("%s should come from the new image: %s", gone, s)
 		}
@@ -237,7 +237,8 @@ func TestRollout(t *testing.T) {
 	m := &Manager{
 		Version: "main-" + oldRev, Registry: &Registry{Scheme: "http", Arch: "amd64"}, Sidecar: NewClient(sock),
 		Ready: func() bool { return true }, Peers: peers, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Audit:     func(by, rev string, servers []string, auto bool) { audited = servers },
+		Audit:     func(by, rev string, servers []string, auto, rollback bool) { audited = servers },
+		Backup:    func() (string, error) { return "dnserv-alpha-before.dnsbak", nil },
 		StateFile: filepath.Join(t.TempDir(), "rollout.json"),
 		Poll:      time.Millisecond, Settle: time.Millisecond, StepWait: time.Second,
 		GitHubAPI: "http://127.0.0.1:1", // not reachable: no change list
@@ -284,9 +285,80 @@ func TestRollout(t *testing.T) {
 	saved.Revision = strings.Repeat("e", 40)
 	b, _ = json.Marshal(saved)
 	_ = os.WriteFile(m.StateFile, b, 0o600)
+	for i := range saved.Steps {
+		saved.Steps[i].To = strings.Repeat("e", 40)
+	}
+	b, _ = json.Marshal(saved)
+	_ = os.WriteFile(m.StateFile, b, 0o600)
 	m2.resume(context.Background())
-	if ro := m2.Rollout(); ro.State != RolloutDone || ro.Steps[3].State != StepDone || ro.Message != "4 of 4 servers updated" {
+	ro = m2.Rollout()
+	if ro.State != RolloutDone || ro.Steps[3].State != StepDone || ro.Message != "4 of 4 servers updated" || ro.Backup != "dnserv-alpha-before.dnsbak" {
 		t.Fatalf("after restart: %+v", ro)
+	}
+}
+
+func TestRollBack(t *testing.T) {
+	oldRev, newRev := "0123456789abcdef0123456789abcdef01234567", "fedcba9876543210fedcba9876543210fedcba98"
+	var selfStarts atomic.Int32
+	sock := fakeSidecar(t, &SidecarStatus{Revision: newRev}, &selfStarts)
+	peers := &fakePeers{self: "a",
+		members: []Member{{ID: "a", Name: "alpha", Leader: true}, {ID: "b", Name: "bravo"}},
+		nodes:   map[string]*NodeInfo{"b": {Revision: newRev, Ready: true, Updater: &SidecarStatus{}}},
+	}
+	var asked []string
+	peers.onStart = func(id string, n *NodeInfo) {
+		n.Revision = oldRev
+		n.Updater.Job.State, n.Updater.Job.Finished = JobDone, time.Now()
+	}
+	skipped := ""
+	m := &Manager{Version: "main-" + newRev, Sidecar: NewClient(sock), Peers: peers, Registry: &Registry{},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Poll: time.Millisecond, Settle: time.Millisecond, StepWait: time.Second,
+		SetSkip: func(by, rev string) { skipped = rev },
+		Backup:  func() (string, error) { return "before-rollback.dnsbak", nil }}
+	if _, err := m.RollBack(context.Background(), "admin"); err != ErrNoRollback {
+		t.Fatalf("nothing to roll back yet: %v", err)
+	}
+	// The last update moved both servers from oldRev to newRev.
+	m.rollout = &Rollout{Revision: newRev, State: RolloutDone, Steps: []Step{
+		{ID: "b", Name: "bravo", From: oldRev, To: newRev, State: StepDone},
+		{ID: "a", Name: "alpha", Self: true, From: oldRev, To: newRev, State: StepDone}}}
+	if !m.CanRollBack() {
+		t.Fatal("should offer a rollback")
+	}
+	r, err := m.RollBack(context.Background(), "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.Rollback || r.Steps[0].Name != "bravo" || r.Steps[0].To != oldRev || !r.Steps[1].Self || skipped != newRev || r.Backup != "before-rollback.dnsbak" {
+		t.Fatalf("%+v skipped=%q", r, skipped)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for selfStarts.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	_ = asked
+	if selfStarts.Load() != 1 || m.Rollout().Steps[0].State != StepDone {
+		t.Fatalf("%+v", m.Rollout())
+	}
+	if m.CanRollBack() {
+		t.Fatal("a rollback isn't rolled back")
+	}
+	// A failing backup stops everything before any server changes.
+	m.rollout.State = RolloutDone
+	m.rollout.Rollback = false
+	m.Backup = func() (string, error) { return "", fmt.Errorf("disk full") }
+	if _, err := m.RollBack(context.Background(), "admin"); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("backup failure: %v", err)
+	}
+}
+
+func TestRevisionRef(t *testing.T) {
+	ref, err := revisionRef("ghcr.io/prezmc/dnserv:latest", "cae8b50aaaa")
+	if err != nil || ref != "ghcr.io/prezmc/dnserv:sha-cae8b50" {
+		t.Fatal(ref, err)
+	}
+	if _, err := revisionRef("ghcr.io/prezmc/dnserv:latest", "latest; rm -rf"); err == nil {
+		t.Fatal("only hex versions")
 	}
 }
 

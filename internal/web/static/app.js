@@ -839,7 +839,7 @@ async function updateNotice() {
   if (!can('cluster.manage')) return;
   if (Date.now() - updateSeen.at > 10 * 60 * 1000) {
     updateSeen.at = Date.now();
-    try { updateSeen.available = !!(await api('GET', '/updates')).available; } catch (_) { /* ignore */ }
+    try { const d = await api('GET', '/updates'); updateSeen.available = !!(d.available && !d.skipped); } catch (_) { /* ignore */ }
   }
   const b = document.getElementById('nav-update');
   if (b) b.hidden = !updateSeen.available;
@@ -4460,6 +4460,7 @@ const STEP_CLASS = { done: 'ok', failed: 'bad', updating: 'accent', restarting: 
 async function updatesPage(main) {
   page(main, 'Updates', h('p', { class: 'muted' }, 'Loading…'));
   let v;
+  const backupNote = (x) => x.backups_on ? 'A backup of your settings and accounts is saved first.' : 'Backups aren\u2019t set up, so no backup is made first (see Backups & history).';
   let lost = 0;
   const load = async () => {
     try { v = await api('GET', '/updates'); lost = 0; } catch (e) {
@@ -4467,9 +4468,9 @@ async function updatesPage(main) {
       if (v && v.rollout && v.rollout.state === 'running') { lost++; return draw(true); }
       return page(main, 'Updates', msg('err', e.message));
     }
-    updateSeen = { at: Date.now(), available: !!v.available };
+    updateSeen = { at: Date.now(), available: !!(v.available && !v.skipped) };
     const b = document.getElementById('nav-update');
-    if (b) b.hidden = !v.available;
+    if (b) b.hidden = !updateSeen.available;
     draw(false);
   };
   const act = async (fn, note) => { try { v = await fn(); if (note) toast(note); draw(false); } catch (e) { toast(e.message, 'err'); load(); } };
@@ -4493,7 +4494,8 @@ async function updatesPage(main) {
     } else {
       head.append(h('p', {}, h('b', {}, rel.version && !/^main/.test(rel.version) ? rel.version : 'Build ' + shortRev(rel.revision)),
         rel.created ? h('span', { class: 'muted' }, ', published ' + fmtTime(rel.created)) : null),
-        v.available ? msg('warn', behind.length === nodes.length ? 'A new version is available.' : behind.length + ' of ' + nodes.length + ' servers can be updated.')
+        v.available && v.skipped ? msg('warn', 'You rolled back from this version, so it isn\u2019t offered or installed automatically. The next newer version will be.')
+          : v.available ? msg('warn', behind.length === nodes.length ? 'A new version is available.' : behind.length + ' of ' + nodes.length + ' servers can be updated.')
           : msg('ok', 'Every server runs the newest version.'));
       if (v.check_error) head.append(msg('err', 'The last check failed: ' + v.check_error));
     }
@@ -4508,16 +4510,26 @@ async function updatesPage(main) {
         const text = n > 1
           ? 'Install the new version on ' + n + ' servers? They update one at a time, and each must answer DNS again before the next starts, so your network keeps DNS throughout. If one fails to start, it goes back to the old version and the rest are left alone.'
           : 'Install the new version? DNS on this server stops for a few seconds while it restarts' + (nodes.filter(x => !x.witness).length > 1 ? ' (your other server keeps answering)' : '') + '. If the new version fails to start, the old one comes back.';
-        if (await ask(text, 'Install', false)) act(() => api('POST', '/updates/install', {}), 'Installing');
-      } }, 'Install update') : null,
+        if (await ask(text + ' ' + backupNote(v), 'Install', false)) act(() => api('POST', '/updates/install', {}), 'Installing');
+      } }, v.skipped ? 'Install anyway' : 'Install update') : null,
       h('button', { onclick: () => act(() => api('POST', '/updates/check'), 'Checked') }, 'Check now')));
     out.push(head);
 
     // A rollout in progress, or the last one.
     if (ro) {
-      out.push(h('div', { class: 'card' }, h('h2', {}, running ? 'Installing' : 'Last update'),
-        h('p', { class: 'muted small' }, 'Build ' + shortRev(ro.revision) + ', started ' + fmtTime(ro.started) + ' by ' + ro.by),
+      out.push(h('div', { class: 'card' }, h('h2', {}, running ? (ro.rollback ? 'Rolling back' : 'Installing') : (ro.rollback ? 'Last rollback' : 'Last update')),
+        h('p', { class: 'muted small' }, (ro.rollback ? 'Back from build ' : 'Build ') + shortRev(ro.revision) + ', started ' + fmtTime(ro.started) + ' by ' + ro.by),
         ro.message ? msg(ro.state === 'failed' ? 'err' : 'ok', ro.message) : null,
+        h('p', { class: 'small' }, ro.backup
+          ? ['Backup made first: ', h('code', {}, ro.backup), ro.backup_on ? ' on ' + ro.backup_on : '', ' (', h('a', { href: '#/backups' }, 'Backups & history'), ').']
+          : h('span', { class: 'muted' }, 'No backup was made first: backups aren\u2019t set up.')),
+        v.can_rollback && !running ? h('div', { class: 'row' }, h('button', { onclick: async () => {
+          const n = ro.steps.filter(x => x.state === 'done').length;
+          const text = 'Put ' + (n > 1 ? 'the ' + n + ' updated servers' : 'this server') + ' back on the version ' + (n > 1 ? 'they' : 'it') + ' ran before (build ' + shortRev((ro.steps.find(x => x.state === 'done') || {}).from) + ')? ' +
+            (n > 1 ? 'They go back one at a time, so DNS keeps working. ' : '') + 'Build ' + shortRev(ro.revision) + ' won\u2019t be offered or installed automatically again; the next newer version will. ' +
+            'Settings, accounts and history stay as they are now.' + (ro.backup ? ' To also put settings back as they were before the update, restore ' + ro.backup + ' under Backups & history afterwards.' : '') + ' ' + backupNote(v);
+          if (await ask(text, 'Roll back')) act(() => api('POST', '/updates/rollback'), 'Rolling back');
+        } }, 'Roll back this update')) : null,
         h('table', {}, h('tbody', {}, ro.steps.map(s => h('tr', {},
           h('td', {}, h('b', {}, s.name), s.self ? ' (this server)' : ''),
           h('td', {}, h('span', { class: 'badge ' + (STEP_CLASS[s.state] || '') }, STEP_TEXT[s.state] || s.state)),

@@ -310,6 +310,7 @@ func run() error {
 	}
 	go adm.Backups.Run(ctx)
 	adm.Updates = newUpdates(cl, st, cfg.DataDir, filterReady.Load, adm.Backups.Loc, log)
+	adm.Updates.Backup = adm.Backups.SaveNow // a safety copy before every update or rollback
 	go adm.Updates.Run(ctx)
 	adm.QueryLog = qlog
 	if hist != nil {

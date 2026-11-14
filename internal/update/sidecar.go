@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -152,8 +153,8 @@ func (s *Sidecar) Status(ctx context.Context) SidecarStatus {
 		st.Error = err.Error()
 		return st
 	}
-	st.Target, st.Image = c.Name, c.Config.Image
-	st.Pinned = strings.Contains(c.Config.Image, "@")
+	st.Target, st.Image = c.Name, tracked(c)
+	st.Pinned = strings.Contains(st.Image, "@")
 	if im, err := s.Docker.InspectImage(ctx, c.Image); err == nil {
 		l := im.Labels()
 		st.Revision = l[labelRevision]
@@ -167,16 +168,50 @@ func (s *Sidecar) Status(ctx context.Context) SidecarStatus {
 // ErrBusy means an update is already running.
 var ErrBusy = errors.New("an update is already running")
 
-// Start begins an update in the background.
-func (s *Sidecar) Start() (*Job, error) {
+// labelTrack is set on a container that was put back on an older version:
+// it is the image reference it normally follows, so the next update goes
+// back to that (":latest") rather than staying on the older version.
+const labelTrack = "dev.dnserv.updater.follows"
+
+// tracked is the image reference a container follows.
+func tracked(c *Container) string {
+	if t := c.Config.Labels[labelTrack]; t != "" {
+		return t
+	}
+	return c.Config.Image
+}
+
+var revPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+// revisionRef is the image for one published revision: the same
+// repository, tagged sha-<7 hex>, as the publish workflow tags every
+// image.
+func revisionRef(follows, rev string) (string, error) {
+	if !revPattern.MatchString(rev) {
+		return "", fmt.Errorf("%q isn't a version", rev)
+	}
+	base := follows
+	if i := strings.LastIndex(base, ":"); i > strings.LastIndex(base, "/") {
+		base = base[:i]
+	}
+	return base + ":sha-" + rev[:7], nil
+}
+
+// Start begins an update in the background: to the newest image of the
+// container's own tag, or, with rev, back to that earlier published
+// version of the same image.
+func (s *Sidecar) Start(rev string) (*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.job.Running() {
 		return nil, ErrBusy
 	}
+	if rev != "" && !revPattern.MatchString(rev) {
+		return nil, fmt.Errorf("%q isn't a version", rev)
+	}
 	s.job = &Job{State: JobPulling, Started: time.Now()}
 	j := *s.job
-	go s.run()
+	go s.run(rev)
 	return &j, nil
 }
 
@@ -198,27 +233,34 @@ func (s *Sidecar) finish(state, msg string) {
 	}
 }
 
-func (s *Sidecar) run() {
+func (s *Sidecar) run(rev string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	state, msg := s.Replace(ctx)
+	state, msg := s.Replace(ctx, rev)
 	s.finish(state, msg)
 }
 
 // Replace pulls the target's image and, if it changed, swaps the
 // container for one made from the new image with the same settings. It
-// returns a job state and a sentence for the dashboard.
-func (s *Sidecar) Replace(ctx context.Context) (string, string) {
+// returns a job state and a sentence for the dashboard. With rev it goes
+// to that published version instead (a rollback).
+func (s *Sidecar) Replace(ctx context.Context, rev string) (string, string) {
 	old, err := s.findTarget(ctx)
 	if err != nil {
 		return JobFailed, err.Error()
 	}
-	ref := old.Config.Image
+	follows := tracked(old)
+	ref := follows
 	if strings.Contains(ref, "@") {
 		return JobFailed, "this container's image is pinned to one digest (" + ref + "), so it isn't updated"
 	}
 	if strings.HasPrefix(ref, "sha256:") || ref == "" {
 		return JobFailed, "this container was started from an image ID, not a name, so there is nothing to update to"
+	}
+	if rev != "" {
+		if ref, err = revisionRef(follows, rev); err != nil {
+			return JobFailed, err.Error()
+		}
 	}
 	oldImg, err := s.Docker.InspectImage(ctx, old.Image)
 	if err != nil {
@@ -242,6 +284,9 @@ func (s *Sidecar) Replace(ctx context.Context) (string, string) {
 	}
 	s.set(func(j *Job) { j.To = newImg.Labels()[labelRevision] })
 	if newImg.ID == old.Image {
+		if rev != "" {
+			return JobUpToDate, "already running that version"
+		}
 		return JobUpToDate, "already running the newest " + ref
 	}
 
@@ -249,7 +294,7 @@ func (s *Sidecar) Replace(ctx context.Context) (string, string) {
 	if base == nil {
 		base = newImg
 	}
-	body, err := recreateBody(old, base, ref, newImg.ID)
+	body, err := recreateBody(old, base, ref, newImg.ID, follows)
 	if err != nil {
 		return JobFailed, err.Error()
 	}
@@ -357,7 +402,9 @@ func (s *Sidecar) waitHealthy(ctx context.Context, id string) error {
 // newImageID. Settings that only came from the old image (its env
 // defaults, labels, command, health check...) are dropped so the new
 // image's own apply; everything set on the container is kept.
-func recreateBody(old *Container, oldImg *Image, ref, newImageID string) (map[string]any, error) {
+// follows is the reference the container keeps following; when it isn't
+// ref (a rollback), it is kept in a label for the next update.
+func recreateBody(old *Container, oldImg *Image, ref, newImageID, follows string) (map[string]any, error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(old.Raw["Config"], &cfg); err != nil {
 		return nil, fmt.Errorf("can't read the container's settings: %w", err)
@@ -412,6 +459,15 @@ func recreateBody(old *Container, oldImg *Image, ref, newImageID string) (map[st
 		}
 		cfg["Labels"] = out
 	}
+	labels, _ := cfg["Labels"].(map[string]any)
+	if labels == nil {
+		labels = map[string]any{}
+	}
+	delete(labels, labelTrack)
+	if follows != "" && follows != ref {
+		labels[labelTrack] = follows
+	}
+	cfg["Labels"] = labels
 	for _, k := range []string{"Cmd", "Entrypoint", "Healthcheck", "WorkingDir", "User", "StopSignal", "Volumes", "ExposedPorts", "Shell", "OnBuild", "ArgsEscaped"} {
 		if v, ok := cfg[k]; ok && reflect.DeepEqual(v, imgCfg[k]) {
 			delete(cfg, k)
@@ -491,12 +547,20 @@ func (s *Sidecar) Serve(ctx context.Context, path string, uid, gid int) error {
 		writeJSON(w, http.StatusOK, s.Status(r.Context()))
 	})
 	mux.HandleFunc("POST /v1/update", func(w http.ResponseWriter, r *http.Request) {
-		j, err := s.Start()
+		var req struct {
+			Revision string `json:"revision"`
+		}
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req)
+		j, err := s.Start(req.Revision)
 		if errors.Is(err, ErrBusy) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
 		}
-		s.Log.Info("update requested")
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		s.Log.Info("update requested", "revision", req.Revision)
 		writeJSON(w, http.StatusAccepted, j)
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}

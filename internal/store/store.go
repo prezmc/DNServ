@@ -88,6 +88,9 @@ type UpdatePrefs struct {
 	// AutoHour (0-23, in the cluster's time zone).
 	Auto     bool `json:"auto,omitempty"`
 	AutoHour int  `json:"auto_hour,omitempty"`
+	// Skip is a version someone rolled back from. It isn't offered or
+	// installed automatically; a newer version is.
+	Skip string `json:"skip,omitempty"`
 }
 
 // Device is a named client on the network, recognized by its addresses.

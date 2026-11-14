@@ -34,8 +34,31 @@ When you press **Install update**:
 
 Each server's DNS is down for a few seconds while it restarts. With two
 servers, devices use the other one meanwhile. In the lab test (two servers
-and a witness, a device asking both for a name every 50 ms) there was never a
-moment when neither server answered.
+and a witness, updated and then rolled back, about 40 seconds each, while a
+device asked both for a name every 50 ms) there was never a moment when
+neither server answered.
+
+**A backup first.** When backups are set up (Backups & history), every
+update and rollback starts by saving a backup of the settings, accounts and
+settings history on the server you started it from (and in the off-box
+folder, if you have one). If that backup fails, nothing is changed. The
+Updates page names the file.
+
+**Rolling back.** After an update, **Roll back this update** puts every
+server it changed back on the version it ran before, the same way: one at a
+time, a backup first, each one checked before the next. The version you
+rolled back from isn't offered or installed automatically again; the next
+newer version is (or press **Install anyway**). Each published image also
+has a `sha-<commit>` tag, which is what a rollback installs; the container
+remembers it normally follows `latest`, so the next update goes back to
+that.
+
+A rollback changes the program, not your data: settings, accounts and
+history stay as they are, since updates only ever add to them and older
+versions ignore what they don't know. To also put the settings back as they
+were before the update, restore the backup named on the Updates page under
+**Backups & history** after rolling back. Changes made since the update are
+then undone too.
 
 **Automatic updates** (off by default): tick **Install new versions
 automatically** and pick an hour. The leader starts the same one-at-a-time

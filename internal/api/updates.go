@@ -17,6 +17,7 @@ func (a *API) updateRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/updates", a.authed(store.PermCluster, a.getUpdates))
 	m.HandleFunc("POST /api/v1/updates/check", a.authed(store.PermCluster, a.checkUpdates))
 	m.HandleFunc("POST /api/v1/updates/install", a.authed(store.PermCluster, a.installUpdate))
+	m.HandleFunc("POST /api/v1/updates/rollback", a.authed(store.PermCluster, a.rollBack))
 	m.HandleFunc("PUT /api/v1/updates/prefs", a.authed(store.PermCluster, a.putUpdatePrefs))
 }
 
@@ -29,13 +30,20 @@ type updatesView struct {
 	// Available: some server runs an older version than Latest.
 	Available bool `json:"available"`
 	// CanInstall: some server that's behind has an updater.
-	CanInstall bool              `json:"can_install"`
-	Rollout    *update.Rollout   `json:"rollout,omitempty"`
-	Prefs      store.UpdatePrefs `json:"prefs"`
+	CanInstall bool `json:"can_install"`
+	// Skipped: the newest version is one someone rolled back from.
+	Skipped bool `json:"skipped,omitempty"`
+	// CanRollBack: the last update can be undone.
+	CanRollBack bool `json:"can_rollback"`
+	// BackupsOn: a backup is made before every update.
+	BackupsOn bool              `json:"backups_on"`
+	Rollout   *update.Rollout   `json:"rollout,omitempty"`
+	Prefs     store.UpdatePrefs `json:"prefs"`
 }
 
 func (a *API) updatesView(r *http.Request) updatesView {
-	v := updatesView{Nodes: []update.NodeInfo{}, Prefs: a.Store.State().Updates}
+	st := a.Store.State()
+	v := updatesView{Nodes: []update.NodeInfo{}, Prefs: st.Updates, BackupsOn: st.Backup.Configured()}
 	if a.Updates == nil {
 		return v
 	}
@@ -56,7 +64,9 @@ func (a *API) updatesView(r *http.Request) updatesView {
 	if v.Available {
 		v.Changes = a.Updates.Changes(r.Context())
 	}
+	v.Skipped = rel != nil && rel.Revision == st.Updates.Skip
 	v.Rollout = a.Updates.Rollout()
+	v.CanRollBack = a.Updates.CanRollBack()
 	return v
 }
 
@@ -93,6 +103,18 @@ func (a *API) installUpdate(w http.ResponseWriter, r *http.Request, p *Principal
 			status = http.StatusBadGateway
 		}
 		writeErr(w, status, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, a.updatesView(r))
+}
+
+func (a *API) rollBack(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if a.Updates == nil {
+		writeErr(w, http.StatusNotImplemented, "updates aren't available on this server")
+		return
+	}
+	if _, err := a.Updates.RollBack(r.Context(), p.Actor()); err != nil {
+		writeErr(w, http.StatusConflict, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusAccepted, a.updatesView(r))

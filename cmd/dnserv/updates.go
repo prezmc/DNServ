@@ -50,11 +50,16 @@ func newUpdates(cl *cluster.Cluster, st *store.Store, dataDir string, ready func
 		Peers:    clusterPeers{cl: cl, st: st},
 		Prefs: func() update.Prefs {
 			p := st.State().Updates
-			return update.Prefs{Check: !p.NoCheck, Auto: p.Auto, AutoHour: p.AutoHour}
+			return update.Prefs{Check: !p.NoCheck, Auto: p.Auto, AutoHour: p.AutoHour, Skip: p.Skip}
 		},
-		Audit: func(by, revision string, servers []string, auto bool) {
-			if _, err := cl.Propose(store.NewCommand(store.OpUpdateStart, by, store.UpdateStart{Revision: revision, Servers: servers, Auto: auto})); err != nil {
+		Audit: func(by, revision string, servers []string, auto, rollback bool) {
+			if _, err := cl.Propose(store.NewCommand(store.OpUpdateStart, by, store.UpdateStart{Revision: revision, Servers: servers, Auto: auto, Rollback: rollback})); err != nil {
 				log.Warn("couldn't record the update in the audit log", "err", err)
+			}
+		},
+		SetSkip: func(by, revision string) {
+			if _, err := cl.Propose(store.NewCommand(store.OpUpdateSkip, by, store.UpdateSkip{Revision: revision})); err != nil {
+				log.Warn("couldn't record the skipped version", "err", err)
 			}
 		},
 		StateFile: filepath.Join(dataDir, "update-rollout.json"),

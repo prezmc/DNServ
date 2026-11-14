@@ -19,6 +19,9 @@ type Prefs struct {
 	Check    bool
 	Auto     bool
 	AutoHour int
+	// Skip is a version that was rolled back; it isn't offered or
+	// installed automatically until a newer one is out.
+	Skip string
 }
 
 // Member is one cluster node, for the rollout.
@@ -80,8 +83,15 @@ type Manager struct {
 	Location func() *time.Location
 	// Peers is nil for a node on its own.
 	Peers Peers
-	// Audit records that an update started (nil: not recorded).
-	Audit func(by, revision string, servers []string, auto bool)
+	// Audit records that an update or rollback started (nil: not
+	// recorded).
+	Audit func(by, revision string, servers []string, auto, rollback bool)
+	// Backup saves a backup of the settings and accounts before anything
+	// changes, and returns its file name ("" when backups aren't set up).
+	Backup func() (string, error)
+	// SetSkip records the version a rollback went back from ("" clears
+	// it).
+	SetSkip func(by, revision string)
 	// StateFile keeps the last rollout across this node's own restart.
 	StateFile string
 	Log       *slog.Logger
@@ -254,9 +264,16 @@ func (m *Manager) HandleInfo(ctx context.Context, _ json.RawMessage) (any, error
 	return m.LocalInfo(ctx), nil
 }
 
-// HandleStart answers RPCStart: update this node now.
-func (m *Manager) HandleStart(ctx context.Context, _ json.RawMessage) (any, error) {
-	return m.Sidecar.Start(ctx)
+// HandleStart answers RPCStart: update this node now, to the newest
+// version or to {"revision": ...}.
+func (m *Manager) HandleStart(ctx context.Context, body json.RawMessage) (any, error) {
+	var req struct {
+		Revision string `json:"revision"`
+	}
+	if len(body) > 0 {
+		_ = json.Unmarshal(body, &req)
+	}
+	return m.Sidecar.Start(ctx, req.Revision)
 }
 
 // Changes lists what's new for this node (nil: unknown).

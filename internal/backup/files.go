@@ -150,6 +150,33 @@ func (m *Manager) Make() (name string, file []byte, err error) {
 	return FileName(h.Node, t), file, err
 }
 
+// SaveNow makes a backup outside the schedule (before an update, say) and
+// keeps it with this node's backups, and in the off-box folder when one
+// is set. It returns "" when backups aren't set up.
+func (m *Manager) SaveNow() (string, error) {
+	cfg := m.Store.State().Backup
+	if !cfg.Configured() {
+		return "", nil
+	}
+	if err := os.MkdirAll(m.Dir, 0o700); err != nil {
+		return "", err
+	}
+	name, file, err := m.Make()
+	if err != nil {
+		return "", err
+	}
+	if err := writeFile(m.Dir, name, file); err != nil {
+		return "", err
+	}
+	if cfg.Offsite != "" {
+		if err := writeFile(cfg.Offsite, name, file); err != nil {
+			m.Log.Warn("couldn't copy the backup off the box", "err", err)
+		}
+	}
+	m.Log.Info("backup saved", "file", filepath.Join(m.Dir, name))
+	return name, nil
+}
+
 // Due reports the scheduled time that a backup is due for: the latest
 // slot at or before now, when that is after last. ok is false when
 // nothing is due.
