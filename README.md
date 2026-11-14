@@ -30,7 +30,7 @@
 
 ```bash
 docker run -d --name dnserv --restart unless-stopped \
-  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 -p 8081:8081 \
+  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
   -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
 
 docker logs dnserv 2>&1 | grep setup_code

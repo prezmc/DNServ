@@ -99,3 +99,29 @@ func TestFirefoxCanary(t *testing.T) {
 		t.Fatal("canary must not reach upstream")
 	}
 }
+
+func TestDoHPortServesDashboard(t *testing.T) {
+	s, _ := startEncrypted(t, &fakeResolver{})
+	client := &http.Client{Timeout: 3 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
+	base := "https://" + s.DoHAddrs()[0]
+	get := func() int {
+		resp, err := client.Get(base + "/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := get(); code != http.StatusNotFound {
+		t.Fatalf("before the dashboard is set: %d", code)
+	}
+	s.SetWebHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil {
+			t.Error("dashboard request should arrive over TLS")
+		}
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	if code := get(); code != http.StatusTeapot {
+		t.Fatalf("dashboard on the DoH port: %d", code)
+	}
+}

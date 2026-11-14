@@ -2,11 +2,30 @@
 
 ```bash
 docker run -d --name dnserv --restart unless-stopped \
-  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 -p 8081:8081 \
+  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
   -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
 ```
 
 or `docker compose up -d` with the included `docker-compose.yml`.
+
+### Ports
+
+| Port | What for |
+|---|---|
+| 53 (UDP and TCP) | DNS for your devices |
+| 853 | DNS over TLS (Android Private DNS and similar) |
+| 443 | The dashboard over HTTPS at `https://<name>/`, and DNS over HTTPS |
+| 8080 | The dashboard and setup wizard (HTTP, and HTTPS once it's on) |
+| 8081 | Other DNServ servers in the same cluster |
+
+If something on the server already uses one of these, such as a web server
+or reverse proxy on 443, Docker refuses to start the container with
+"port is already allocated". With compose, copy
+[`.env.example`](../.env.example) to `.env` next to `docker-compose.yml` and
+pick another host port there, for example `DNSERV_HTTPS_PORT=8443`. With
+`docker run`, change the left-hand number, for example `-p 8443:443`.
+Keeping your changes in `.env` means you can download a new
+`docker-compose.yml` whenever it changes without editing it again.
 
 No config file is needed. On first start the node prints a one-time setup
 code in its log:

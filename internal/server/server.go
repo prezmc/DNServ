@@ -80,6 +80,7 @@ type Server struct {
 	servers  []*dns.Server
 	https    []*http.Server
 	dohAddrs []string
+	web      atomic.Pointer[http.Handler] // the dashboard, for the DoH listener
 	// refreshCtx bounds background prefetch/revalidation work.
 	refreshCtx    context.Context
 	refreshCancel context.CancelFunc

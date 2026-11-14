@@ -3516,7 +3516,8 @@ function httpsCard(hs) {
 
   const card = h('div', { class: 'card' },
     h('h2', {}, 'Dashboard HTTPS'),
-    h('p', { class: 'muted' }, 'Encrypts the dashboard and its sign-in on your network. HTTPS uses the same port as now (8080): open ', h('code', {}, 'https://'), ' instead of ', h('code', {}, 'http://'), '. Plain HTTP keeps working unless you turn on the redirect.'),
+    h('p', { class: 'muted' }, 'Encrypts the dashboard and its sign-in on your network. Plain HTTP keeps working unless you turn on the redirect.'),
+    s.mode ? h('p', { class: 'muted small' }, 'Open ', h('code', {}, 'https://<name>/'), ' (port 443) or ', h('code', {}, 'https://<name>:8080'), '. Port 443 only answers if the container publishes it: the current docker-compose.yml does (', h('code', {}, '443:443'), '). If it won’t connect, add that line, or if something else on the server uses 443, set ', h('code', {}, 'DNSERV_HTTPS_PORT=8443'), ' in .env and use that port.') : null,
     form({ 'data-track': true }, [
       h('label', { for: 'hmode' }, 'Certificate'), mode, note,
       Object.values(panels), redirect,
