@@ -119,7 +119,23 @@ const (
 	OpPasskeyRename  = "user.passkey_rename" // PasskeyRef
 	OpPasskeyDelete  = "user.passkey_delete" // PasskeyRef
 	OpPasskeyUsed    = "user.passkey_used"   // PasskeyUsed
+	OpUpdatePrefs    = "updates.prefs"       // UpdatePrefs
+	OpUpdateStart    = "updates.start"       // UpdateStart (audit record only)
+	OpUpdateSkip     = "updates.skip"        // UpdateSkip
 )
+
+// UpdateSkip sets the version that was rolled back from ("" clears it).
+type UpdateSkip struct {
+	Revision string `json:"revision"`
+}
+
+// UpdateStart records that someone started installing a new version.
+type UpdateStart struct {
+	Revision string   `json:"revision"`
+	Servers  []string `json:"servers"`
+	Auto     bool     `json:"auto,omitempty"`
+	Rollback bool     `json:"rollback,omitempty"`
+}
 
 // VirusTotalKey sets (or, empty, removes) the VirusTotal API key. It is
 // kept apart from Settings so it never shows in settings, their history
@@ -706,6 +722,45 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 			return nil, audit("removed the VirusTotal key", nil, nil), nil
 		}
 		return nil, audit("set the VirusTotal key", nil, nil), nil
+
+	case OpUpdatePrefs:
+		var d UpdatePrefs
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		if d.AutoHour < 0 || d.AutoHour > 23 {
+			return nil, nil, errors.New("auto_hour must be 0-23")
+		}
+		before := st.Updates
+		d.Skip = before.Skip // set by rollbacks only
+		st.Updates = d
+		return nil, audit("changed how updates are checked and installed", before, d), nil
+
+	case OpUpdateStart:
+		var d UpdateStart
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		short := d.Revision
+		if len(short) > 7 {
+			short = short[:7]
+		}
+		how := "started installing version " + short
+		switch {
+		case d.Rollback:
+			how = "started rolling back from version " + short
+		case d.Auto:
+			how = "automatically started installing version " + short
+		}
+		return nil, audit(how+" on "+strings.Join(d.Servers, ", "), nil, d), nil
+
+	case OpUpdateSkip:
+		var d UpdateSkip
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		st.Updates.Skip = d.Revision
+		return nil, nil, nil
 
 	case OpAbuseCHKey:
 		var d AbuseCHKey

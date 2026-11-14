@@ -110,3 +110,12 @@ func (c *Cluster) askPeer(ctx context.Context, id, name string, body []byte) (js
 	}
 	return data, nil
 }
+
+// AskPeer sends in to the named RPC on one node (a witness too).
+func (c *Cluster) AskPeer(ctx context.Context, id, name string, in any) (json.RawMessage, error) {
+	b, err := json.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	return c.askPeer(ctx, id, name, b)
+}

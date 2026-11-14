@@ -796,6 +796,7 @@ const ROUTES = [
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
   { path: 'cluster', title: 'Cluster', page: clusterPage, show: () => can('cluster.manage') },
   { path: 'backups', title: 'Backups & history', page: backupsPage, show: () => can('backups.manage') },
+  { path: 'updates', title: 'Updates', page: updatesPage, show: () => can('cluster.manage') },
   { path: 'import', title: 'Import from AdGuard Home', page: importPage, show: isAdmin, hidden: true },
   { path: 'audit', title: 'Audit log', page: audit, show: () => can('audit.view') },
   { path: 'account', title: 'Your account', page: account, show: () => true },
@@ -817,7 +818,8 @@ function route() {
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, h('a', { href: '#/', class: 'logo' }, h('img', { src: 'logo.svg', alt: '', width: 26, height: 26 }), h('span', {}, 'DN', h('b', {}, 'Serv'))), menu),
     h('div', { id: 'navlinks', class: 'links' },
-      ROUTES.filter(x => x.show() && !x.hidden).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, navIcon(x.path), x.title))),
+      ROUTES.filter(x => x.show() && !x.hidden).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, navIcon(x.path), x.title,
+        x.path === 'updates' ? h('span', { class: 'nav-new', id: 'nav-update', hidden: true, title: 'A new version is available' }, 'new') : null))),
     h('div', { class: 'spacer' }),
     h('div', { class: 'who' }, h('span', { class: 'avatar', 'aria-hidden': 'true' }, (ME.user.username || '?').slice(0, 1).toUpperCase()), h('span', {}, ME.user.username, h('span', { class: 'role' }, ME.user.role))),
     h('button', { class: 'link', onclick: async () => { try { await api('POST', '/auth/logout'); } catch (_) { /* ignore */ } csrf = ''; ME = null; boot(); } }, 'Sign out'));
@@ -826,6 +828,21 @@ function route() {
   render(h('div', { class: 'shell' }, nav, main));
   document.title = r.title + ' · DNServ';
   r.page(main);
+  updateNotice();
+}
+
+// updateNotice marks the Updates menu entry when a newer version is out.
+// It asks at most every 10 minutes (the servers check the registry every
+// few hours themselves).
+let updateSeen = { at: 0, available: false };
+async function updateNotice() {
+  if (!can('cluster.manage')) return;
+  if (Date.now() - updateSeen.at > 10 * 60 * 1000) {
+    updateSeen.at = Date.now();
+    try { const d = await api('GET', '/updates'); updateSeen.available = !!(d.available && !d.skipped); } catch (_) { /* ignore */ }
+  }
+  const b = document.getElementById('nav-update');
+  if (b) b.hidden = !updateSeen.available;
 }
 
 // navIcon is a small line icon for a menu entry (24px grid, drawn in
@@ -843,6 +860,7 @@ const NAV_ICONS = {
   cluster: 'M10 5a2 2 0 1 0 4 0 2 2 0 1 0-4 0M3 19a2 2 0 1 0 4 0 2 2 0 1 0-4 0M17 19a2 2 0 1 0 4 0 2 2 0 1 0-4 0M12 7v4M12 11l-6 6M12 11l6 6',
   backups: 'M4 7c0-2 16-2 16 0v10c0 2-16 2-16 0zM4 7c0 2 16 2 16 0M4 12c0 2 16 2 16 0',
   audit: 'M9 4h6v3H9zM6 6H5v15h14V6h-1M9 12h6M9 16h4',
+  updates: 'M12 4v11M7 10l5 5 5-5M5 20h14',
   account: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 4-6 8-6s8 2 8 6',
 };
 function navIcon(path) {
@@ -4431,6 +4449,135 @@ function passphraseFields(label) {
     h('label', { for: 'bpw' }, 'Your DNServ password'),
     h('input', { id: 'bpw', name: 'password', type: 'password', autocomplete: 'current-password', required: true }),
   ];
+}
+
+// ---------- updates ----------
+
+const shortRev = (r) => (r ? r.slice(0, 7) : '?');
+const STEP_TEXT = { waiting: 'Waiting', updating: 'Updating', restarting: 'Restarting', done: 'Updated', skipped: 'Skipped', failed: 'Didn’t update' };
+const STEP_CLASS = { done: 'ok', failed: 'bad', updating: 'accent', restarting: 'accent' };
+
+async function updatesPage(main) {
+  page(main, 'Updates', h('p', { class: 'muted' }, 'Loading…'));
+  let v;
+  const backupNote = (x) => x.backups_on ? 'A backup of your settings and accounts is saved first.' : 'Backups aren\u2019t set up, so no backup is made first (see Backups & history).';
+  let lost = 0;
+  const load = async () => {
+    try { v = await api('GET', '/updates'); lost = 0; } catch (e) {
+      // While this server restarts itself the page can't reach it.
+      if (v && v.rollout && v.rollout.state === 'running') { lost++; return draw(true); }
+      return page(main, 'Updates', msg('err', e.message));
+    }
+    updateSeen = { at: Date.now(), available: !!(v.available && !v.skipped) };
+    const b = document.getElementById('nav-update');
+    if (b) b.hidden = !updateSeen.available;
+    draw(false);
+  };
+  const act = async (fn, note) => { try { v = await fn(); if (note) toast(note); draw(false); } catch (e) { toast(e.message, 'err'); load(); } };
+
+  const draw = (restarting) => {
+    const nodes = v.nodes || [];
+    const rel = v.latest;
+    const ro = v.rollout;
+    const running = ro && ro.state === 'running';
+    const behind = nodes.filter(n => n.behind);
+    const noUpdater = behind.filter(n => !n.updater);
+    const out = [];
+
+    if (restarting) {
+      out.push(msg('warn', 'This server is restarting on the new version. This page reconnects by itself' + (lost > 20 ? '; it is taking longer than usual, so check the server if it doesn’t come back.' : '.')));
+    }
+    // What's out.
+    const head = h('div', { class: 'card' }, h('h2', {}, 'Newest version'));
+    if (!rel) {
+      head.append(v.check_error ? msg('err', 'Couldn’t check for a new version: ' + v.check_error) : h('p', { class: 'muted' }, v.prefs.no_check ? 'Checking for new versions is turned off.' : 'Not checked yet.'));
+    } else {
+      head.append(h('p', {}, h('b', {}, rel.version && !/^main/.test(rel.version) ? rel.version : 'Build ' + shortRev(rel.revision)),
+        rel.created ? h('span', { class: 'muted' }, ', published ' + fmtTime(rel.created)) : null),
+        v.available && v.skipped ? msg('warn', 'You rolled back from this version, so it isn\u2019t offered or installed automatically. The next newer version will be.')
+          : v.available ? msg('warn', behind.length === nodes.length ? 'A new version is available.' : behind.length + ' of ' + nodes.length + ' servers can be updated.')
+          : msg('ok', 'Every server runs the newest version.'));
+      if (v.check_error) head.append(msg('err', 'The last check failed: ' + v.check_error));
+    }
+    if (v.changes && v.changes.items && v.changes.items.length) {
+      head.append(h('h3', {}, 'What’s new'),
+        h('ul', { class: 'changes' }, v.changes.items.map(t => h('li', {}, t))),
+        v.changes.url ? h('p', { class: 'small' }, h('a', { href: v.changes.url, target: '_blank', rel: 'noopener' }, 'All ' + v.changes.total + ' changes on GitHub')) : null);
+    }
+    head.append(h('div', { class: 'row' },
+      v.can_install && !running ? h('button', { class: 'primary', onclick: async () => {
+        const n = behind.filter(x => x.updater).length;
+        const text = n > 1
+          ? 'Install the new version on ' + n + ' servers? They update one at a time, and each must answer DNS again before the next starts, so your network keeps DNS throughout. If one fails to start, it goes back to the old version and the rest are left alone.'
+          : 'Install the new version? DNS on this server stops for a few seconds while it restarts' + (nodes.filter(x => !x.witness).length > 1 ? ' (your other server keeps answering)' : '') + '. If the new version fails to start, the old one comes back.';
+        if (await ask(text + ' ' + backupNote(v), 'Install', false)) act(() => api('POST', '/updates/install', {}), 'Installing');
+      } }, v.skipped ? 'Install anyway' : 'Install update') : null,
+      h('button', { onclick: () => act(() => api('POST', '/updates/check'), 'Checked') }, 'Check now')));
+    out.push(head);
+
+    // A rollout in progress, or the last one.
+    if (ro) {
+      out.push(h('div', { class: 'card' }, h('h2', {}, running ? (ro.rollback ? 'Rolling back' : 'Installing') : (ro.rollback ? 'Last rollback' : 'Last update')),
+        h('p', { class: 'muted small' }, (ro.rollback ? 'Back from build ' : 'Build ') + shortRev(ro.revision) + ', started ' + fmtTime(ro.started) + ' by ' + ro.by),
+        ro.message ? msg(ro.state === 'failed' ? 'err' : 'ok', ro.message) : null,
+        h('p', { class: 'small' }, ro.backup
+          ? ['Backup made first: ', h('code', {}, ro.backup), ro.backup_on ? ' on ' + ro.backup_on : '', ' (', h('a', { href: '#/backups' }, 'Backups & history'), ').']
+          : h('span', { class: 'muted' }, 'No backup was made first: backups aren\u2019t set up.')),
+        v.can_rollback && !running ? h('div', { class: 'row' }, h('button', { onclick: async () => {
+          const n = ro.steps.filter(x => x.state === 'done').length;
+          const text = 'Put ' + (n > 1 ? 'the ' + n + ' updated servers' : 'this server') + ' back on the version ' + (n > 1 ? 'they' : 'it') + ' ran before (build ' + shortRev((ro.steps.find(x => x.state === 'done') || {}).from) + ')? ' +
+            (n > 1 ? 'They go back one at a time, so DNS keeps working. ' : '') + 'Build ' + shortRev(ro.revision) + ' won\u2019t be offered or installed automatically again; the next newer version will. ' +
+            'Settings, accounts and history stay as they are now.' + (ro.backup ? ' To also put settings back as they were before the update, restore ' + ro.backup + ' under Backups & history afterwards.' : '') + ' ' + backupNote(v);
+          if (await ask(text, 'Roll back')) act(() => api('POST', '/updates/rollback'), 'Rolling back');
+        } }, 'Roll back this update')) : null,
+        h('table', {}, h('tbody', {}, ro.steps.map(s => h('tr', {},
+          h('td', {}, h('b', {}, s.name), s.self ? ' (this server)' : ''),
+          h('td', {}, h('span', { class: 'badge ' + (STEP_CLASS[s.state] || '') }, STEP_TEXT[s.state] || s.state)),
+          h('td', { class: 'small muted' }, s.message || '')))))));
+    }
+
+    // Each server.
+    const rows = nodes.map(n => h('tr', {},
+      h('td', {}, h('b', {}, n.name), n.self ? ' (this server)' : '', n.witness ? h('span', { class: 'badge' }, 'witness') : null),
+      h('td', {}, !n.reachable ? h('span', { class: 'muted' }, 'Unreachable') : h('span', {}, h('code', {}, shortRev(n.revision)),
+        n.created ? h('span', { class: 'muted small' }, ' ' + new Date(n.created).toLocaleDateString()) : null)),
+      h('td', {}, !n.reachable ? '' : n.behind ? h('span', { class: 'badge warn' }, 'Update available') : rel ? h('span', { class: 'badge ok' }, 'Up to date') : ''),
+      h('td', { class: 'small' }, !n.reachable ? (n.error || '') : n.updater
+        ? (n.updater.error ? h('span', { class: 'warn-text' }, n.updater.error) : n.updater.pinned ? h('span', { class: 'muted' }, 'Pinned to one version') : h('span', {}, h('span', { class: 'dot ok' }), ' One-click updates on'))
+        : n.updater_error ? h('span', { class: 'warn-text' }, n.updater_error) : h('span', { class: 'muted' }, 'Updated by hand'))));
+    out.push(h('div', { class: 'card' }, h('h2', {}, nodes.length > 1 ? 'Servers' : 'This server'),
+      h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Server'), h('th', {}, 'Version'), h('th', {}, ''), h('th', {}, 'Updates'))), h('tbody', {}, rows)))));
+
+    if (noUpdater.length || nodes.some(n => n.reachable && !n.updater)) {
+      out.push(h('div', { class: 'card' }, h('h2', {}, 'Turn on one-click updates'),
+        h('p', {}, 'One-click updates need DNServ’s small updater container next to it. It is in the standard ', h('code', {}, 'docker-compose.yml'), '. To add it to a server set up with an older file, download the new file into the same folder and run, once:'),
+        h('pre', { class: 'pre' }, h('code', {}, 'docker compose pull && docker compose up -d')),
+        h('p', { class: 'muted small' }, 'Until then, that same command is how to update a server by hand. The updater has no network port and can only update the DNServ container next to it, but it holds the Docker socket, which gives full control of that server’s Docker. If you’d rather not run it, leave it out: you still see here when a new version is out.')));
+    }
+
+    // Preferences.
+    const p = v.prefs || {};
+    const hours = Array.from({ length: 24 }, (_, i) => h('option', { value: i, selected: i === (p.auto_hour || 0) }, String(i).padStart(2, '0') + ':00'));
+    out.push(h('div', { class: 'card' }, h('h2', {}, 'Settings'),
+      form({}, [
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'check', checked: !p.no_check }), ' Check for new versions every 6 hours'),
+        h('p', { class: 'muted small' }, 'Each server asks the image registry (', h('code', {}, 'ghcr.io'), ') which image is newest. Nothing about your network is sent.'),
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'auto', checked: !!p.auto }), ' Install new versions automatically, at'),
+        h('select', { name: 'hour', 'aria-label': 'Hour' }, hours),
+        h('p', { class: 'muted small' }, 'Servers that have the updater update one at a time, the same as the button above, in your time zone (Settings). Pick an hour when the network is quiet.'),
+        h('button', { class: 'primary', type: 'submit' }, 'Save'),
+      ], async (f) => {
+        await api('PUT', '/updates/prefs', { no_check: !f.elements.check.checked, auto: f.elements.auto.checked, auto_hour: Number(f.elements.hour.value) });
+        v.prefs = { no_check: !f.elements.check.checked, auto: f.elements.auto.checked, auto_hour: Number(f.elements.hour.value) };
+        return 'Saved';
+      })));
+    page(main, 'Updates', out);
+  };
+  await load();
+  timer = setInterval(() => {
+    if (document.hidden || document.querySelector('dialog[open]') || document.activeElement && document.activeElement.closest('form')) return;
+    if (v && v.rollout && v.rollout.state === 'running') load();
+  }, 3000);
 }
 
 async function backupsPage(main) {

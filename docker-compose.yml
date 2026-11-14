@@ -19,11 +19,33 @@ services:
       - "${DNSERV_CLUSTER_PORT:-8081}:8081/tcp"    # node-to-node (clustering); only other DNServ servers use it
     volumes:
       - dnserv-data:/data
+      - dnserv-updater:/run/dnserv-updater         # where it reaches the updater below
     environment:
       - TZ=${TZ:-UTC}                                         # your time zone, used by schedules
       - DNSERV_CLUSTER_ADVERTISE=${DNSERV_CLUSTER_ADVERTISE:-} # only when other servers must reach this one at a different address or port
       - DNSERV_HTTPS=${DNSERV_HTTPS:-}                         # set to off in .env to get back in after a bad certificate
 
+  # One-click updates from the dashboard (Updates page). This small
+  # container installs new versions of the dnserv container above, and
+  # undoes an update that doesn't come up healthy. It has no network at
+  # all; DNServ reaches it only through the dnserv-updater volume. It
+  # holds the Docker socket, which is full control of this server's
+  # Docker: if you'd rather not allow that, delete this service and
+  # update with `docker compose pull && docker compose up -d` instead.
+  dnserv-updater:
+    image: ghcr.io/prezmc/dnserv:latest
+    container_name: dnserv-updater
+    restart: unless-stopped
+    command: ["-updater"]
+    user: "0:0"            # to use the Docker socket
+    network_mode: none     # Docker itself downloads images; the updater needs no network
+    healthcheck:
+      disable: true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - dnserv-updater:/run/dnserv-updater
+
 volumes:
   dnserv-data:
     name: ${DNSERV_VOLUME:-}   # empty: the usual name; set in .env to keep using an existing volume
+  dnserv-updater:
