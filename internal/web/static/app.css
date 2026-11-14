@@ -453,6 +453,8 @@ td a:hover { text-decoration: underline; }
 .flow-tip .mono { font-size: .78rem; }
 .flow-detail:not(:empty) { border-top: 1px solid var(--line); margin-top: .6rem; padding-top: .5rem; }
 .flow-acts { gap: .35rem .8rem; flex-wrap: wrap; }
+.flow-kinds > .combo.flow-pick { flex: 0 1 18rem; min-width: 200px; }
+a.link-act { padding: .2rem .3rem; font-weight: 500; }
 .d-flow:fullscreen { overflow: auto; padding: 1.5rem; background: var(--panel); }
 
 /* Security overview */

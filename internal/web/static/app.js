@@ -726,6 +726,7 @@ const ROUTES = [
   { path: 'devices', title: 'Devices', page: devices, show: () => true },
   { path: 'analytics', title: 'Analytics', page: analyticsPage, show: () => can('dashboard.view') },
   { path: 'performance', title: 'Performance', page: performancePage, show: () => can('dashboard.view') },
+  { path: 'traffic', title: 'Traffic map', page: trafficPage, show: () => can('dashboard.view') },
   { path: 'queries', title: 'Query log', page: queries, show: () => can('querylog.view') },
   { path: 'names', title: 'Local names', page: localNames, show: () => can('network.manage') },
   { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
@@ -771,6 +772,7 @@ const NAV_ICONS = {
   devices: 'M3 5h18v11H3zM8 20h8M12 16v4',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   performance: 'M13 3 4 14h7l-1 7 9-11h-7z',
+  traffic: 'M3 6h3M3 18h3M6 6c6 0 6 6 12 6M6 18c6 0 6-6 12-6M18 12h3',
   queries: 'M4 6h16M4 12h16M4 18h10',
   names: 'M4 4h10l6 6v10H4zM14 4v6h6M8 14h8M8 17h5',
   settings: 'M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6',
@@ -1392,6 +1394,7 @@ function deviceTable(list, opts) {
       h('td', {}, fmtNum(d.queries)),
       h('td', {}, d.queries ? fmtNum(d.blocked) + ' (' + (100 * d.blocked / d.queries).toFixed(0) + '%)' : '—'),
       opts.compact ? null : h('td', { class: 'nowrap' },
+        can('dashboard.view') && can('querylog.view') ? h('a', { href: '#/traffic?device=' + encodeURIComponent(d.id || d.addrs[0]), class: 'link-act' }, 'Traffic map') : null,
         manage ? h('button', { class: 'link', onclick: () => editDevice(d, opts.groupList || []) }, d.id ? 'Rename' : 'Name it') : null,
         manage && d.id ? h('button', { class: 'link danger', onclick: async () => {
           if (!(await ask('Forget the name "' + d.name + '"?', 'Forget name'))) return;
@@ -2296,16 +2299,41 @@ function flowColor(kind) {
 // dashboardFlow draws the traffic map: devices → DNS servers → how each
 // lookup was answered → the services it was for, as bands sized by the
 // number of lookups. Kinds of lookup can be hidden; clicking a box
-// highlights its bands and offers the matching Query log.
-async function dashboardFlow(box, range) {
+// highlights its bands and offers the matching Query log. Any device can
+// be picked from the search box, not just the busiest ones on the map.
+// opts.page: the map is the Traffic map page, whose address follows the
+// picked device so it can be bookmarked or shared.
+async function dashboardFlow(box, range, opts) {
   range = range || '24h';
+  opts = opts || {};
   const st = box.flowState || (box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: null });
-  let data;
+  // A refresh while someone is typing in the device search would throw
+  // away what they typed, so it waits for the next one.
+  const act = document.activeElement;
+  if (act && box.contains(act) && act.closest('.combo')) return;
+  let data, devs = [];
   // With a device picked, the whole map is just that device's lookups.
   const only = st.device ? '&client=' + encodeURIComponent(st.device.key) : '';
-  try { data = await api('GET', '/analytics/flow?range=' + range + '&group=' + st.group + only); } catch (_) { return; } // keep the map shown until the next try
-  const focus = (dev) => { st.device = dev; st.sel = ''; dashboardFlow(box, range); };
-  if (!data.total && !st.device) { box.replaceChildren(); return; }
+  try {
+    [data, devs] = await Promise.all([api('GET', '/analytics/flow?range=' + range + '&group=' + st.group + only),
+      can('querylog.view') ? flowDevices(box) : []]);
+  } catch (_) { return; } // keep the map shown until the next try
+  const options = deviceOptions(devs, 'All devices');
+  if (st.device && st.device.label === st.device.key) {
+    // Opened from a link, which carries only the device's id or address.
+    const o = options.find(o => o.value === st.device.key);
+    if (o) st.device.label = o.label;
+  }
+  const pageHash = (dev) => {
+    const q = new URLSearchParams({ ...(dev ? { device: dev.key } : {}), ...(range === '24h' ? {} : { range }) }).toString();
+    return '#/traffic' + (q ? '?' + q : '');
+  };
+  const focus = (dev) => {
+    st.device = dev; st.sel = '';
+    if (opts.page) { history.replaceState(null, '', pageHash(dev)); shownHash = location.hash; }
+    dashboardFlow(box, range, opts);
+  };
+  if (!data.total && !st.device && !opts.page) { box.replaceChildren(); return; }
   const rq = range === '24h' ? '' : 'range=' + range;
   const area = h('div', { class: 'flow-area' });
   const tip = h('div', { class: 'flow-tip', hidden: true });
@@ -2325,7 +2353,14 @@ async function dashboardFlow(box, range) {
     h('input', { type: 'checkbox', checked: st.kinds[k], onchange: (e) => { st.kinds[k] = e.target.checked; draw(); } }),
     h('span', { class: 'dot flow-k-' + k }), label));
   const groupSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Group services by' }, [['company', 'By company'], ['type', 'By type']].map(([k, label]) =>
-    h('button', { type: 'button', 'aria-pressed': String(st.group === k), onclick: () => { if (st.group !== k) { st.group = k; st.sel = ''; dashboardFlow(box, range); } } }, label)));
+    h('button', { type: 'button', 'aria-pressed': String(st.group === k), onclick: () => { if (st.group !== k) { st.group = k; st.sel = ''; dashboardFlow(box, range, opts); } } }, label)));
+  // The device search: type part of a name or address (letters in order,
+  // like the Query log's device filter) to map just that device.
+  const picker = data.devices && options.length > 1 ? combo({ options, value: st.device ? st.device.key : '', label: 'Show one device', placeholder: 'Find a device…', class: 'dev flow-pick',
+    onchange: (v) => {
+      // Out of the search box first, or the redraw would wait for typing to end.
+      if (document.activeElement) document.activeElement.blur();
+      const o = options.find(o => o.value === v); focus(v ? { key: v, label: o ? o.label : v } : null); } }) : null;
   const card = h('div', { class: 'card d-flow' },
     h('div', { class: 'row spread' }, h('h2', {}, 'Traffic map'),
       h('div', { class: 'row' }, groupSeg, h('button', { type: 'button', class: 'small', title: 'Full screen', onclick: () => {
@@ -2333,15 +2368,16 @@ async function dashboardFlow(box, range) {
       } }, 'Full screen'))),
     st.device
       ? h('div', { class: 'msg info row flow-focus' }, h('span', {}, 'Showing only ', h('b', {}, st.device.label), '\u2019s lookups: the servers that answered them, how, and what they were for.'),
-        h('span', { class: 'grow' }), h('button', { type: 'button', class: 'secondary small', onclick: () => focus(null) }, 'All devices'))
-      : h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device to see only its traffic, or an answer or a service to follow it.' : 'Click an answer or a service to follow it.'),
-    h('div', { class: 'row flow-kinds' }, kindBoxes),
+        h('span', { class: 'grow' }), opts.page ? null : h('a', { href: pageHash(st.device), class: 'small nowrap' }, 'Open as a page'),
+        h('button', { type: 'button', class: 'secondary small', onclick: () => focus(null) }, 'All devices'))
+      : h('p', { class: 'muted small' }, 'Where lookups come from, which server answers them, and where they go. ', data.devices ? 'Click a device, or find any device in the search box, to see only its traffic. Click an answer or a service to follow it.' : 'Click an answer or a service to follow it.'),
+    h('div', { class: 'row flow-kinds' }, kindBoxes, picker ? h('span', { class: 'grow' }) : null, picker),
     wrap, detail);
   steady(() => box.replaceChildren(card));
 
   const byId = Object.fromEntries(data.nodes.map(n => [n.id, n]));
   function draw() {
-    if (!data.total) { fill(area, h('p', { class: 'muted' }, 'No lookups from this device in this period.')); fill(detail); return; }
+    if (!data.total) { fill(area, h('p', { class: 'muted' }, st.device ? 'No lookups from this device in this period.' : 'No lookups in this period yet.')); fill(detail); return; }
     const links = data.links.filter(l => st.kinds[l.kind]);
     const val = {};
     for (const l of links) {
@@ -2468,6 +2504,38 @@ async function dashboardFlow(box, range) {
     document.addEventListener('fullscreenchange', redraw);
   }
   box.flowRedraw = () => { if (box.isConnected) draw(); };
+}
+
+// flowDevices is the device list for the map's search box, fetched at
+// most once a minute however often the map refreshes.
+function flowDevices(box) {
+  const c = box.flowDevs;
+  if (c && Date.now() - c.at < 60000) return c.p;
+  const p = api('GET', '/devices').catch(() => (c ? c.p : []));
+  box.flowDevs = { at: Date.now(), p };
+  return p;
+}
+
+// trafficPage is the traffic map on a page of its own, for any device
+// (#/traffic?device=<id or address>&range=7d): linked from the Devices
+// page and from the map on the dashboard.
+async function trafficPage(main) {
+  const p = hashParams();
+  const range = DASH_RANGES.includes(p.get('range')) ? p.get('range') : '24h';
+  const box = h('div', { class: 'traffic-page' }, h('p', { class: 'muted' }, 'Loading…'));
+  const dev = p.get('device');
+  box.flowState = { group: 'company', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: dev ? { key: dev, label: dev } : null };
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, DASH_RANGES.map(k =>
+    h('button', { type: 'button', 'aria-pressed': String(k === range), onclick: () => {
+      const d = box.flowState.device;
+      const q = new URLSearchParams({ ...(d ? { device: d.key } : {}), ...(k === '24h' ? {} : { range: k }) }).toString();
+      history.replaceState(null, '', '#/traffic' + (q ? '?' + q : ''));
+      shownHash = location.hash;
+      route();
+    } }, k)));
+  fill(main, h('div', { class: 'page-head' }, h('h1', {}, 'Traffic map'), h('span', { class: 'grow' }), seg), box);
+  await dashboardFlow(box, range, { page: true });
+  timer = setInterval(() => { if (!document.hidden && box.isConnected) dashboardFlow(box, range, { page: true }); }, 60000);
 }
 
 // deviceProfile shows how one device uses the internet: when it is busy,

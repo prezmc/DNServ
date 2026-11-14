@@ -156,7 +156,12 @@ Everything DNServ does today, in more detail than the README.
   how, and what they were for) and opens its profile: when it is busy,
   the kinds of service and companies it uses, its busiest and most
   blocked sites, risky lookups and anything it looks up on a steady beat.
-  **All devices** goes back. Each server works out its part
+  **All devices** goes back. The map shows only the busiest ten devices,
+  so a search box above it finds any device by name or address (letters
+  in order, so "lvrm" finds "Living room TV"). The map also has its own
+  page, **Traffic map** in the menu, whose address follows the picked
+  device (`#/traffic?device=…`) so it can be bookmarked; each row on the
+  Devices page has a **Traffic map** link to it. Each server works out its part
   from its own history when the card is opened, so DNS answers never wait
   for it. History records which upstream server answered each lookup
   (older history shows as "Upstream").
