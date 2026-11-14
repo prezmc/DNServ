@@ -88,3 +88,17 @@ func TestChannelTags(t *testing.T) {
 		}
 	}
 }
+
+func TestNodesShowReleaseForSameCode(t *testing.T) {
+	rev := strings.Repeat("d", 40)
+	m := &Manager{Version: "main-" + rev, Sidecar: NewClient("/nonexistent/updater.sock")}
+	m.latest = &Release{Revision: rev, Version: "1.0.1"}
+	n := m.Nodes(context.Background())
+	if len(n) != 1 || n[0].Release != "1.0.1" || n[0].Behind {
+		t.Fatalf("got %+v", n)
+	}
+	m.latest = &Release{Revision: strings.Repeat("e", 40), Version: "1.0.2"}
+	if n := m.Nodes(context.Background()); n[0].Release != "" || !n[0].Behind {
+		t.Fatalf("different code: %+v", n)
+	}
+}

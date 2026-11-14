@@ -246,6 +246,14 @@ func (m *Manager) Nodes(ctx context.Context) []NodeInfo {
 	rel, _, _ := m.Latest()
 	for i := range out {
 		out[i].Behind = rel != nil && out[i].Reachable && out[i].Revision != rel.Revision
+		// A build of main that is the same code as the newest release
+		// (installed from "latest", or before releases existed) is that
+		// release.
+		if rel != nil && out[i].Release == "" && out[i].Revision == rel.Revision {
+			if _, ok := semver(rel.Version); ok {
+				out[i].Release = strings.TrimPrefix(rel.Version, "v")
+			}
+		}
 	}
 	slices.SortStableFunc(out, func(a, b NodeInfo) int {
 		if a.Witness != b.Witness {
