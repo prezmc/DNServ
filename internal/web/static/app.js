@@ -2733,6 +2733,11 @@ function fmtMs(ms) {
   return ms.toFixed(2) + ' ms';
 }
 
+// fmtQ formats a percentile. The finest histogram bucket is 0 to 0.1 ms,
+// where most cached answers land, so a percentile inside it is only known
+// to be under 0.1 ms: say that rather than an interpolated guess.
+function fmtQ(ms) { return ms > 0 && ms <= 0.1 ? 'under 0.1 ms' : fmtMs(ms); }
+
 function fmtPct(f) { return f > 0 && f < 0.001 ? '<0.1%' : (100 * (f || 0)).toFixed(1) + '%'; }
 
 // usualNote compares a value with what is usual: "usually 12 ms".
@@ -2836,7 +2841,7 @@ function latencyChart(view, step, from, to, anomalies) {
     const hit = svg('rect', { x: padL + i * bw, y: 0, width: bw, height: H - axisH, class: 'hit' });
     const show = () => {
       fill(tip, h('b', {}, bucketLabel(p.t, step, true)),
-        p.queries ? [h('div', {}, fmtNum(p.queries), ' queries, median ', fmtMs(p.p50_ms), ', 95% under ', fmtMs(p.p95_ms)),
+        p.queries ? [h('div', {}, fmtNum(p.queries), ' queries, median ', fmtQ(p.p50_ms), ', 95% under ', fmtQ(p.p95_ms)),
           p.lookups ? h('div', {}, fmtNum(p.lookups), ' lookups: ', fmtMs(p.lookup_avg_ms), ' average, 95% under ', fmtMs(p.lookup_p95_ms)) : null,
           h('div', { class: 'muted' }, fmtPct(p.cache_hit), ' from cache', p.failed ? ', ' + fmtNum(p.failed) + ' failed' : '')]
           : h('div', { class: 'muted' }, 'No queries'));
@@ -2850,17 +2855,17 @@ function latencyChart(view, step, from, to, anomalies) {
   const chart = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Response times over time: lookups and all answers, each on its own scale' }, g);
   const table = h('details', { class: 'small' }, h('summary', { class: 'muted' }, 'Show as a table'),
     h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Queries'), h('th', {}, 'Median'), h('th', {}, '95%'), h('th', {}, '99%'), h('th', {}, 'Lookups'), h('th', {}, 'Lookup avg'), h('th', {}, 'Lookup 95%'), h('th', {}, 'From cache'), h('th', {}, 'Failed'))),
-      h('tbody', {}, pts.filter(p => p.queries).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.queries)), h('td', {}, fmtMs(p.p50_ms)), h('td', {}, fmtMs(p.p95_ms)), h('td', {}, fmtMs(p.p99_ms)),
+      h('tbody', {}, pts.filter(p => p.queries).map(p => h('tr', {}, h('td', {}, bucketLabel(p.t, step, true)), h('td', {}, fmtNum(p.queries)), h('td', {}, fmtQ(p.p50_ms)), h('td', {}, fmtQ(p.p95_ms)), h('td', {}, fmtQ(p.p99_ms)),
         h('td', {}, fmtNum(p.lookups)), h('td', {}, p.lookups ? fmtMs(p.lookup_avg_ms) : '—'), h('td', {}, p.lookups ? fmtMs(p.lookup_p95_ms) : '—'), h('td', {}, fmtPct(p.cache_hit)), h('td', {}, fmtNum(p.failed))))))));
   // One plain sentence on the gap the two scales hide: how much longer a
   // lookup takes than a typical answer.
   const s = view.summary;
   const ratio = s.lookups && s.p50_ms > 0 ? s.lookup_avg_ms / s.p50_ms : 0;
   const story = s.lookups ? h('p', { class: 'small story' },
-    h('b', {}, fmtPct(s.cache_hit)), ' answered from cache, typically in ', h('b', {}, fmtMs(s.p50_ms)), '. ',
+    h('b', {}, fmtPct(s.cache_hit)), ' answered from cache, typically in ', h('b', {}, fmtQ(s.p50_ms)), '. ',
     'The rest were looked up upstream, averaging ', h('b', {}, fmtMs(s.lookup_avg_ms)),
     ratio >= 2 ? [' (about ', h('b', {}, ratio >= 10 ? fmtNum(Math.round(ratio / 10) * 10) : Math.round(ratio), '×'), ' longer)'] : null,
-    ', and 95% of them took under ', h('b', {}, fmtMs(s.lookup_p95_ms)), '.') : null;
+    ', and 95% of them took under ', h('b', {}, fmtQ(s.lookup_p95_ms)), '.') : null;
   return h('div', {}, story,
     h('div', { class: 'legend small' }, panels.flatMap(pn => pn.series).map(s => h('span', {}, h('span', { class: 'key ' + s.cls }), s.label === 'Median' ? 'Median, all answers' : 'Lookups, ' + s.label.toLowerCase())),
       (anomalies || []).length ? h('span', {}, h('span', { class: 'key anom' }), 'Unusual') : null),
@@ -3020,10 +3025,10 @@ async function performancePage(main) {
         v.anomalies.length > 20 ? h('p', { class: 'muted small' }, 'And ', v.anomalies.length - 20, ' more.') : null)
         : s.queries ? msg('ok', 'Nothing unusual in this period. ' + usualWhat) : null,
       h('div', { class: 'grid' },
-        tile('Median response', fmtMs(s.p50_ms), u ? usualNote(s.p50_ms, u.p50_ms, fmtMs, true) : null, 'Half of all queries were answered faster than this.'),
-        tile('95% answered within', fmtMs(s.p95_ms), u ? usualNote(s.p95_ms, u.p95_ms, fmtMs, true) : null, '1 in 20 queries took longer than this.'),
+        tile('Median response', fmtQ(s.p50_ms), u ? usualNote(s.p50_ms, u.p50_ms, fmtMs, true) : null, 'Half of all queries were answered faster than this.'),
+        tile('95% answered within', fmtQ(s.p95_ms), u ? usualNote(s.p95_ms, u.p95_ms, fmtMs, true) : null, '1 in 20 queries took longer than this.'),
         tile('Average response', fmtMs(s.avg_ms), [fmtNum(s.queries), ' queries'], 'Includes cached and blocked answers.'),
-        tile('Lookups (not cached)', s.lookups ? fmtMs(s.lookup_avg_ms) : '—', s.lookups ? ['95% within ', fmtMs(s.lookup_p95_ms), u && u.lookups ? [' · ', usualNote(s.lookup_p95_ms, u.lookup_p95_ms, fmtMs, true)] : null] : 'none', 'Queries DNServ had to ask an upstream server about.'),
+        tile('Lookups (not cached), median', s.lookups ? fmtQ(s.lookup_p50_ms) : '—', s.lookups ? ['95% within ', fmtQ(s.lookup_p95_ms), ' · average ', fmtMs(s.lookup_avg_ms), u && u.lookups ? [' · ', usualNote(s.lookup_p95_ms, u.lookup_p95_ms, fmtMs, true)] : null] : 'none', 'Queries DNServ had to ask an upstream server about.'),
         tile('Answered from cache', fmtPct(s.cache_hit), u ? usualNote(s.cache_hit, u.cache_hit, fmtPct, false) : null, 'Of the queries that weren’t blocked or local names.'),
         tile('Failed (SERVFAIL)', fmtNum(s.failed), [fmtPct(s.fail_rate), u ? [' · ', usualNote(s.fail_rate, u.fail_rate, fmtPct, true)] : null])),
       h('div', { class: 'card' }, h('h2', {}, 'Response times'), s.queries ? latencyChart(v, r.step, from, to, v.anomalies.filter(a => !a.server)) : h('p', { class: 'muted' }, 'No queries in this period.'),
@@ -3037,7 +3042,7 @@ async function performancePage(main) {
             h('td', { title: x.server }, upstreamLabel(x.server), x.servfail ? h('div', { class: 'muted small' }, fmtNum(x.servfail), ' SERVFAIL answers') : null),
             h('td', { class: 'num' }, fmtNum(x.tries)),
             h('td', { class: 'num' }, x.answered ? fmtMs(x.avg_ms) : '—', x.usual_avg_ms ? h('div', { class: 'small' }, usualNote(x.avg_ms, x.usual_avg_ms, fmtMs, true)) : null),
-            h('td', { class: 'num' }, x.answered ? fmtMs(x.p50_ms) : '—'),
+            h('td', { class: 'num' }, x.answered ? fmtQ(x.p50_ms) : '—'),
             h('td', { class: 'num' }, x.answered ? fmtMs(x.p95_ms) : '—'),
             h('td', { class: 'num' }, x.answered ? fmtMs(x.max_ms) : '—'),
             h('td', { class: 'num' + (x.timeouts ? ' worse' : '') }, fmtNum(x.timeouts)),
@@ -3110,7 +3115,11 @@ async function dashboardExtras(box, range) {
     const stat = (label, value) => h('div', {}, h('div', { class: 'muted small' }, label), h('div', { class: 'big' }, value));
     cards.push(h('div', { class: 'card d-perf' },
       h('div', { class: 'row spread' }, h('h2', {}, 'Response times, last hour'), h('a', { href: '#/performance', class: 'small' }, 'Performance')),
-      h('div', { class: 'stats' }, stat('Median', fmtMs(s.p50_ms)), stat('95% within', fmtMs(s.p95_ms)), stat('Lookups, average', s.lookups ? fmtMs(s.lookup_avg_ms) : '—'), stat('From cache', fmtPct(s.cache_hit))),
+      h('div', { class: 'stats' }, stat('Median', fmtQ(s.p50_ms)), stat('95% within', fmtQ(s.p95_ms)), stat('Lookups, median', s.lookups ? fmtQ(s.lookup_p50_ms) : '—'), stat('From cache', fmtPct(s.cache_hit))),
+      // Median and 95% are of every answer, mostly cached ones; lookups
+      // are the few the cache couldn't answer, whose average a handful of
+      // slow ones pull well above the median.
+      s.lookups ? h('p', { class: 'muted small' }, fmtNum(s.lookups), ' lookups the cache couldn’t answer: half within ', fmtQ(s.lookup_p50_ms), ', 95% within ', fmtQ(s.lookup_p95_ms), ', average ', fmtMs(s.lookup_avg_ms), '.') : null,
       an.length ? h('div', { class: 'msg ' + (an.some(a => a.severity === 'bad') ? 'err' : 'warn') }, h('b', {}, an[0].title), ' ', an[0].detail, an.length > 1 ? [' ', h('a', { href: '#/performance?range=1h' }, '+', an.length - 1, ' more')] : null)
         : h('p', { class: 'muted small' }, 'Nothing unusual.')));
   } else if (!perf && old('d-perf')) {

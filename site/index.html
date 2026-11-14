@@ -25,7 +25,10 @@
     --line: #e3ded3; --amber: #a35f00; --amber-2: #c27a12; --red: #c8402f; --sage: #3f8f6f; --code: #efebe2; color-scheme: light; }
 }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+/* Smooth only once the page has loaded (see the script): a browser
+   restoring the last scroll position, or jumping to a #link on load,
+   would otherwise glide down the page on its own. */
+html.smooth { scroll-behavior: smooth; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
 a { color: var(--amber); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -146,8 +149,8 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
     <div class="ctl"><button class="arrow prev" type="button" aria-label="Previous">&#8249;</button><div class="dots"></div><button class="arrow next" type="button" aria-label="Next">&#8250;</button></div>
   </div>
   <div class="stats">
-    <div><b>51,000</b><span>queries a second on 4 cores</span></div>
-    <div><b>0.14 ms</b><span>median answer</span></div>
+    <div><b>115,000</b><span>cached answers a second on 4 cores</span></div>
+    <div><b>0.07 ms</b><span>median answer</span></div>
     <div><b>~2 s</b><span>to fail over to the other server</span></div>
     <div><b>0</b><span>config files to write</span></div>
   </div>
@@ -235,6 +238,11 @@ document.querySelectorAll('.copy').forEach(b => b.addEventListener('click', asyn
   try { await navigator.clipboard.writeText(text.trim()); b.textContent = 'Copied'; } catch (_) { b.textContent = 'Select and copy'; }
   setTimeout(() => (b.textContent = 'Copy'), 1500);
 }));
+
+// Open at the top, not wherever the last visit left off, unless the
+// address names a section; smooth scrolling starts after that.
+if (!location.hash && 'scrollRestoration' in history) { history.scrollRestoration = 'manual'; scrollTo(0, 0); }
+addEventListener('load', () => setTimeout(() => document.documentElement.classList.add('smooth'), 0));
 
 // Slideshows: cross-fade, load each image just before it shows, pause on
 // hover or focus, swipe on phones, and no autoplay for reduced motion.

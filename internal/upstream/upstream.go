@@ -154,23 +154,105 @@ func (g *Group) ExchangeFrom(ctx context.Context, q *dns.Msg) (*dns.Msg, string,
 	if g.strategy == Parallel && len(order) > 1 {
 		return g.parallel(ctx, order, q)
 	}
-	if g.strategy == Fastest && len(order) > 1 {
+	if len(order) == 1 {
+		resp, err := g.try(ctx, order[0], q)
+		if err != nil {
+			return nil, "", fmt.Errorf("%s: %w", order[0].ex, err)
+		}
+		return resp, g.name(order[0]), nil
+	}
+	if g.strategy == Fastest {
 		g.probe(order[1:], q)
 	}
-	var errs []error
-	for _, m := range order {
-		if ctx.Err() != nil {
-			break
-		}
-		resp, err := g.try(ctx, m, q)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", m.ex, err))
-			continue
-		}
-		return resp, g.name(m), nil
+	return g.hedged(ctx, order, q)
+}
+
+var (
+	// hedgeMin and hedgeMax bound how long the group waits on one server
+	// before also asking the next in line; within them the wait is four
+	// times the server's usual answer time. hedgeUnknown is the wait for
+	// a server not measured yet.
+	hedgeMin     = 60 * time.Millisecond
+	hedgeMax     = 750 * time.Millisecond
+	hedgeUnknown = 300 * time.Millisecond
+)
+
+// hedgeAfter is how long to wait on m before also asking the next server.
+func (m *member) hedgeAfter() time.Duration {
+	us := m.ewma.Load()
+	if us == 0 {
+		return hedgeUnknown
 	}
-	if ctx.Err() != nil {
-		errs = append(errs, ctx.Err())
+	return min(max(4*time.Duration(us)*time.Microsecond, hedgeMin), hedgeMax)
+}
+
+// hedged asks the members in order, one at a time, and takes the first
+// answer. A member that fails hands over to the next at once; one that is
+// much slower than usual (a lost packet, a connection the network dropped
+// without saying, a slow lookup at that server) gets company: the next
+// member is asked too, without giving up on the first. A slow answer then
+// costs a fraction of a second rather than the whole timeout, and the
+// extra queries are only sent for the few lookups that need them.
+func (g *Group) hedged(parent context.Context, order []*member, q *dns.Msg) (*dns.Msg, string, error) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	type result struct {
+		i    int
+		resp *dns.Msg
+		err  error
+	}
+	results := make(chan result, len(order))
+	started := make([]time.Time, 0, len(order))
+	done := make([]bool, len(order))
+	start := func() {
+		i := len(started)
+		started = append(started, time.Now())
+		go func(m *member, q *dns.Msg) {
+			resp, err := g.try(ctx, m, q)
+			results <- result{i, resp, err}
+		}(order[i], q.Copy())
+	}
+	start()
+	running := 1
+	timer := time.NewTimer(order[0].hedgeAfter())
+	defer timer.Stop()
+	var errs []error
+	for running > 0 {
+		select {
+		case r := <-results:
+			running--
+			done[r.i] = true
+			if r.err == nil {
+				// The ones still waiting took at least this long so far:
+				// that becomes their measured time, so the next query
+				// goes to the one that answered. Probes bring a server
+				// back to the front once it is quick again.
+				for i, t := range started {
+					if !done[i] {
+						us := time.Since(t).Microseconds()
+						if old := order[i].ewma.Load(); us > old {
+							order[i].ewma.CompareAndSwap(old, us)
+						}
+					}
+				}
+				return r.resp, g.name(order[r.i]), nil
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", order[r.i].ex, r.err))
+			if len(started) < len(order) && parent.Err() == nil {
+				start()
+				running++
+				timer.Reset(order[len(started)-1].hedgeAfter())
+			}
+		case <-timer.C:
+			if len(started) < len(order) {
+				start()
+				running++
+				timer.Reset(order[len(started)-1].hedgeAfter())
+			}
+		}
+	}
+	if parent.Err() != nil {
+		errs = append(errs, parent.Err())
 	}
 	return nil, "", errors.Join(errs...)
 }
