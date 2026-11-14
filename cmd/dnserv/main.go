@@ -64,6 +64,8 @@ func run() error {
 	resetMFA := flag.String("reset-mfa", "", "recovery: clear USERNAME's two-factor setup when the node next starts, and exit (stop the node first)")
 	resetPassword := flag.Bool("reset-password", false, "with -reset-mfa: also set and print a new temporary password")
 	updater := flag.Bool("updater", false, "run as the updater container, which installs new versions of its DNServ container (needs the Docker socket)")
+	installUpdater := flag.Bool("install-updater", false, "one-time setup: add the updater next to this server's DNServ container (needs the Docker socket; see docs/updates.md)")
+	installTarget := flag.String("target", "", "with -install-updater: the DNServ container's name, when there is more than one")
 	flag.Parse()
 
 	if *healthcheck != "" {
@@ -82,6 +84,9 @@ func run() error {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 	if *updater {
 		return runUpdater(log)
+	}
+	if *installUpdater {
+		return update.InstallUpdater(context.Background(), update.NewDocker(envOr("DOCKER_SOCKET", "/var/run/docker.sock")), *installTarget, os.Stdout, log.With("component", "install-updater"))
 	}
 
 	// Base config: built-in defaults, then the optional file, then

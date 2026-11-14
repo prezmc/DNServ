@@ -93,6 +93,12 @@ type Sidecar struct {
 	// Poll is how often health is checked (default 2s).
 	Poll time.Duration
 
+	// addVolume, set only by the installer (dnserv -install-updater), is
+	// a named volume to mount at SocketDir in the replacement, so the
+	// container can reach its new updater. The container is replaced even
+	// when its image is current.
+	addVolume string
+
 	mu  sync.Mutex
 	job *Job
 }
@@ -183,6 +189,33 @@ func tracked(c *Container) string {
 
 var revPattern = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
+// Channels are the tags an updater may move a container between:
+// numbered releases, or every change merged to main.
+const (
+	ChannelStable = "stable"
+	ChannelLatest = "latest"
+)
+
+// ValidChannel reports whether c names a channel ("" is the default,
+// stable).
+func ValidChannel(c string) bool { return c == "" || c == ChannelStable || c == ChannelLatest }
+
+// Request is what DNServ may ask the updater: update to the newest image
+// of a channel, or go back to one earlier published version.
+type Request struct {
+	Revision string `json:"revision,omitempty"`
+	Channel  string `json:"channel,omitempty"`
+}
+
+// withTag is ref with its tag replaced.
+func withTag(ref, tag string) string {
+	base := ref
+	if i := strings.LastIndex(base, ":"); i > strings.LastIndex(base, "/") {
+		base = base[:i]
+	}
+	return base + ":" + tag
+}
+
 // revisionRef is the image for one published revision: the same
 // repository, tagged sha-<7 hex>, as the publish workflow tags every
 // image.
@@ -190,17 +223,14 @@ func revisionRef(follows, rev string) (string, error) {
 	if !revPattern.MatchString(rev) {
 		return "", fmt.Errorf("%q isn't a version", rev)
 	}
-	base := follows
-	if i := strings.LastIndex(base, ":"); i > strings.LastIndex(base, "/") {
-		base = base[:i]
-	}
-	return base + ":sha-" + rev[:7], nil
+	return withTag(follows, "sha-"+rev[:7]), nil
 }
 
 // Start begins an update in the background: to the newest image of the
 // container's own tag, or, with rev, back to that earlier published
 // version of the same image.
-func (s *Sidecar) Start(rev string) (*Job, error) {
+func (s *Sidecar) Start(req Request) (*Job, error) {
+	rev, ch := req.Revision, req.Channel
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.job.Running() {
@@ -209,9 +239,12 @@ func (s *Sidecar) Start(rev string) (*Job, error) {
 	if rev != "" && !revPattern.MatchString(rev) {
 		return nil, fmt.Errorf("%q isn't a version", rev)
 	}
+	if !ValidChannel(ch) {
+		return nil, fmt.Errorf("%q isn't an update channel", ch)
+	}
 	s.job = &Job{State: JobPulling, Started: time.Now()}
 	j := *s.job
-	go s.run(rev)
+	go s.run(rev, ch)
 	return &j, nil
 }
 
@@ -233,10 +266,10 @@ func (s *Sidecar) finish(state, msg string) {
 	}
 }
 
-func (s *Sidecar) run(rev string) {
+func (s *Sidecar) run(rev, ch string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
-	state, msg := s.Replace(ctx, rev)
+	state, msg := s.Replace(ctx, Request{Revision: rev, Channel: ch})
 	s.finish(state, msg)
 }
 
@@ -244,7 +277,8 @@ func (s *Sidecar) run(rev string) {
 // container for one made from the new image with the same settings. It
 // returns a job state and a sentence for the dashboard. With rev it goes
 // to that published version instead (a rollback).
-func (s *Sidecar) Replace(ctx context.Context, rev string) (string, string) {
+func (s *Sidecar) Replace(ctx context.Context, req Request) (string, string) {
+	rev := req.Revision
 	old, err := s.findTarget(ctx)
 	if err != nil {
 		return JobFailed, err.Error()
@@ -256,6 +290,11 @@ func (s *Sidecar) Replace(ctx context.Context, rev string) (string, string) {
 	}
 	if strings.HasPrefix(ref, "sha256:") || ref == "" {
 		return JobFailed, "this container was started from an image ID, not a name, so there is nothing to update to"
+	}
+	if req.Channel != "" && !strings.Contains(follows, "@") {
+		// The channel the owner picked: this and later updates follow it.
+		follows = withTag(follows, req.Channel)
+		ref = follows
 	}
 	if rev != "" {
 		if ref, err = revisionRef(follows, rev); err != nil {
@@ -283,7 +322,7 @@ func (s *Sidecar) Replace(ctx context.Context, rev string) (string, string) {
 		return JobFailed, "can't read the new image: " + err.Error()
 	}
 	s.set(func(j *Job) { j.To = newImg.Labels()[labelRevision] })
-	if newImg.ID == old.Image {
+	if newImg.ID == old.Image && s.addVolume == "" {
 		if rev != "" {
 			return JobUpToDate, "already running that version"
 		}
@@ -294,7 +333,7 @@ func (s *Sidecar) Replace(ctx context.Context, rev string) (string, string) {
 	if base == nil {
 		base = newImg
 	}
-	body, err := recreateBody(old, base, ref, newImg.ID, follows)
+	body, err := recreateBody(old, base, ref, newImg.ID, follows, s.addVolume)
 	if err != nil {
 		return JobFailed, err.Error()
 	}
@@ -404,7 +443,7 @@ func (s *Sidecar) waitHealthy(ctx context.Context, id string) error {
 // image's own apply; everything set on the container is kept.
 // follows is the reference the container keeps following; when it isn't
 // ref (a rollback), it is kept in a label for the next update.
-func recreateBody(old *Container, oldImg *Image, ref, newImageID, follows string) (map[string]any, error) {
+func recreateBody(old *Container, oldImg *Image, ref, newImageID, follows, addVolume string) (map[string]any, error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(old.Raw["Config"], &cfg); err != nil {
 		return nil, fmt.Errorf("can't read the container's settings: %w", err)
@@ -481,6 +520,10 @@ func recreateBody(old *Container, oldImg *Image, ref, newImageID, follows string
 	}
 	body := cfg
 	body["HostConfig"] = host
+	if addVolume != "" {
+		mounts, _ := host["Mounts"].([]any)
+		host["Mounts"] = append(mounts, map[string]any{"Type": "volume", "Source": addVolume, "Target": SocketDir})
+	}
 
 	var ns struct {
 		Networks map[string]struct {
@@ -547,11 +590,9 @@ func (s *Sidecar) Serve(ctx context.Context, path string, uid, gid int) error {
 		writeJSON(w, http.StatusOK, s.Status(r.Context()))
 	})
 	mux.HandleFunc("POST /v1/update", func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			Revision string `json:"revision"`
-		}
+		var req Request
 		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req)
-		j, err := s.Start(req.Revision)
+		j, err := s.Start(req)
 		if errors.Is(err, ErrBusy) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
 			return
@@ -560,7 +601,7 @@ func (s *Sidecar) Serve(ctx context.Context, path string, uid, gid int) error {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		s.Log.Info("update requested", "revision", req.Revision)
+		s.Log.Info("update requested", "revision", req.Revision, "channel", req.Channel)
 		writeJSON(w, http.StatusAccepted, j)
 	})
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}

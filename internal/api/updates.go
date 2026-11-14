@@ -22,11 +22,14 @@ func (a *API) updateRoutes(m *http.ServeMux) {
 }
 
 type updatesView struct {
-	Latest     *update.Release   `json:"latest,omitempty"`
-	CheckedAt  *time.Time        `json:"checked_at,omitempty"`
-	CheckError string            `json:"check_error,omitempty"`
-	Changes    *update.Changes   `json:"changes,omitempty"`
-	Nodes      []update.NodeInfo `json:"nodes"`
+	Latest     *update.Release `json:"latest,omitempty"`
+	CheckedAt  *time.Time      `json:"checked_at,omitempty"`
+	CheckError string          `json:"check_error,omitempty"`
+	Changes    *update.Changes `json:"changes,omitempty"`
+	// Releases are the release notes since this server's version, on
+	// the releases channel.
+	Releases []update.ReleaseNote `json:"releases,omitempty"`
+	Nodes    []update.NodeInfo    `json:"nodes"`
 	// Available: some server runs an older version than Latest.
 	Available bool `json:"available"`
 	// CanInstall: some server that's behind has an updater.
@@ -62,7 +65,9 @@ func (a *API) updatesView(r *http.Request) updatesView {
 		}
 	}
 	if v.Available {
-		v.Changes = a.Updates.Changes(r.Context())
+		if v.Releases = a.Updates.Releases(r.Context()); len(v.Releases) == 0 {
+			v.Changes = a.Updates.Changes(r.Context())
+		}
 	}
 	v.Skipped = rel != nil && rel.Revision == st.Updates.Skip
 	v.Rollout = a.Updates.Rollout()

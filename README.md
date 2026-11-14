@@ -47,7 +47,7 @@ Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 
 Is port 53 already in use? See [Installing](docs/install.md) for systemd-resolved and other notes.
 
-**Updating:** open **Updates** in the dashboard and press **Install update** ([how it works](docs/updates.md)), or run `docker compose pull && docker compose up -d`. Settings and history are kept. Set up with an older compose file or the old DNServe name? See [Moving an existing server to the standard compose file](docs/install.md#moving-an-existing-server-to-the-standard-compose-file).
+**Updating:** open **Updates** in the dashboard and press **Install update** ([how it works](docs/updates.md)). Server set up before the updater existed? Paste the [one-line setup](docs/updates.md#adding-the-updater-to-an-existing-server) once. By hand: `docker compose pull && docker compose up -d`. Settings and history are kept. Set up with an older compose file or the old DNServe name? See [Moving an existing server to the standard compose file](docs/install.md#moving-an-existing-server-to-the-standard-compose-file).
 
 ## A second server
 
@@ -74,7 +74,8 @@ Then add the second server as your router's second DNS server. For a trusted cer
 | [Features](docs/features.md) | Everything DNServ does, in detail |
 | [Installing and configuring](docs/install.md) | Install, update, the `.env` file, ports and environment variables |
 | [Signing in](docs/sign-in.md) | Two-factor, passkeys on one or more servers, getting back in |
-| [Updates](docs/updates.md) | Update from the dashboard, one server at a time; the updater container |
+| [Updates](docs/updates.md) | Update from the dashboard, one server at a time; releases and the updater container |
+| [Making a release](docs/releasing.md) | For the maintainer: cut a numbered release with one button |
 | [Clustering](docs/clustering.md) | Nodes, witnesses, leader controls and recovery |
 | [Two-server guide](docs/deploy-two-servers.md) | Step-by-step deploy with names, HTTPS and passkeys, and failure scenarios |
 | [Two floating DNS addresses](docs/floating-dns-addresses.md) | More than two nodes behind keepalived |

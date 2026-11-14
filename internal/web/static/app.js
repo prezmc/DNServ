@@ -4515,6 +4515,8 @@ const shortRev = (r) => (r ? r.slice(0, 7) : '?');
 const STEP_TEXT = { waiting: 'Waiting', updating: 'Updating', restarting: 'Restarting', done: 'Updated', skipped: 'Skipped', failed: 'Didn’t update' };
 const STEP_CLASS = { done: 'ok', failed: 'bad', updating: 'accent', restarting: 'accent' };
 
+const SETUP_CMD = 'sudo docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater';
+
 async function updatesPage(main) {
   page(main, 'Updates', h('p', { class: 'muted' }, 'Loading…'));
   let v;
@@ -4539,7 +4541,6 @@ async function updatesPage(main) {
     const ro = v.rollout;
     const running = ro && ro.state === 'running';
     const behind = nodes.filter(n => n.behind);
-    const noUpdater = behind.filter(n => !n.updater);
     const out = [];
 
     if (restarting) {
@@ -4550,14 +4551,19 @@ async function updatesPage(main) {
     if (!rel) {
       head.append(v.check_error ? msg('err', 'Couldn’t check for a new version: ' + v.check_error) : h('p', { class: 'muted' }, v.prefs.no_check ? 'Checking for new versions is turned off.' : 'Not checked yet.'));
     } else {
-      head.append(h('p', {}, h('b', {}, rel.version && !/^main/.test(rel.version) ? rel.version : 'Build ' + shortRev(rel.revision)),
+      head.append(h('p', {}, h('b', {}, rel.version && /^\d/.test(rel.version) ? 'Version ' + rel.version : 'Build ' + shortRev(rel.revision)),
         rel.created ? h('span', { class: 'muted' }, ', published ' + fmtTime(rel.created)) : null),
         v.available && v.skipped ? msg('warn', 'You rolled back from this version, so it isn\u2019t offered or installed automatically. The next newer version will be.')
           : v.available ? msg('warn', behind.length === nodes.length ? 'A new version is available.' : behind.length + ' of ' + nodes.length + ' servers can be updated.')
           : msg('ok', 'Every server runs the newest version.'));
       if (v.check_error) head.append(msg('err', 'The last check failed: ' + v.check_error));
     }
-    if (v.changes && v.changes.items && v.changes.items.length) {
+    if (v.releases && v.releases.length) {
+      head.append(h('h3', {}, 'What’s new'), ...v.releases.map(r => h('div', { class: 'release' },
+        h('p', {}, h('b', {}, r.name || 'DNServ ' + r.version), r.published ? h('span', { class: 'muted small' }, ' ' + new Date(r.published).toLocaleDateString()) : null,
+          r.url ? [' ', h('a', { class: 'small', href: r.url, target: '_blank', rel: 'noopener' }, 'Release notes')] : null),
+        r.items && r.items.length ? h('ul', { class: 'changes' }, r.items.slice(0, 12).map(t => h('li', {}, t)), r.items.length > 12 ? h('li', { class: 'muted' }, 'and ' + (r.items.length - 12) + ' more in the release notes') : null) : r.text ? h('p', { class: 'small' }, r.text) : null)));
+    } else if (v.changes && v.changes.items && v.changes.items.length) {
       head.append(h('h3', {}, 'What’s new'),
         h('ul', { class: 'changes' }, v.changes.items.map(t => h('li', {}, t))),
         v.changes.url ? h('p', { class: 'small' }, h('a', { href: v.changes.url, target: '_blank', rel: 'noopener' }, 'All ' + v.changes.total + ' changes on GitHub')) : null);
@@ -4597,20 +4603,25 @@ async function updatesPage(main) {
     // Each server.
     const rows = nodes.map(n => h('tr', {},
       h('td', {}, h('b', {}, n.name), n.self ? ' (this server)' : '', n.witness ? h('span', { class: 'badge' }, 'witness') : null),
-      h('td', {}, !n.reachable ? h('span', { class: 'muted' }, 'Unreachable') : h('span', {}, h('code', {}, shortRev(n.revision)),
+      h('td', {}, !n.reachable ? h('span', { class: 'muted' }, 'Unreachable') : h('span', {}, n.release ? h('b', {}, n.release + ' ') : null, h('code', {}, shortRev(n.revision)),
         n.created ? h('span', { class: 'muted small' }, ' ' + new Date(n.created).toLocaleDateString()) : null)),
       h('td', {}, !n.reachable ? '' : n.behind ? h('span', { class: 'badge warn' }, 'Update available') : rel ? h('span', { class: 'badge ok' }, 'Up to date') : ''),
       h('td', { class: 'small' }, !n.reachable ? (n.error || '') : n.updater
         ? (n.updater.error ? h('span', { class: 'warn-text' }, n.updater.error) : n.updater.pinned ? h('span', { class: 'muted' }, 'Pinned to one version') : h('span', {}, h('span', { class: 'dot ok' }), ' One-click updates on'))
-        : n.updater_error ? h('span', { class: 'warn-text' }, n.updater_error) : h('span', { class: 'muted' }, 'Updated by hand'))));
+        : h('span', { class: 'warn-text' }, 'Needs one-time setup (below)'))));
     out.push(h('div', { class: 'card' }, h('h2', {}, nodes.length > 1 ? 'Servers' : 'This server'),
       h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Server'), h('th', {}, 'Version'), h('th', {}, ''), h('th', {}, 'Updates'))), h('tbody', {}, rows)))));
 
-    if (noUpdater.length || nodes.some(n => n.reachable && !n.updater)) {
-      out.push(h('div', { class: 'card' }, h('h2', {}, 'Turn on one-click updates'),
-        h('p', {}, 'One-click updates need DNServ’s small updater container next to it. It is in the standard ', h('code', {}, 'docker-compose.yml'), '. To add it to a server set up with an older file, download the new file into the same folder and run, once:'),
-        h('pre', { class: 'pre' }, h('code', {}, 'docker compose pull && docker compose up -d')),
-        h('p', { class: 'muted small' }, 'Until then, that same command is how to update a server by hand. The updater has no network port and can only update the DNServ container next to it, but it holds the Docker socket, which gives full control of that server’s Docker. If you’d rather not run it, leave it out: you still see here when a new version is out.')));
+    const setup = nodes.filter(n => n.reachable && !n.updater);
+    if (setup.length) {
+      const names = setup.map(n => n.name);
+      out.push(h('div', { class: 'card' }, h('h2', {}, 'One-time setup for one-click updates'),
+        h('p', {}, 'DNServ can’t install updates by itself on ', h('b', {}, names.join(' and ')), ': on purpose it has no access to Docker, so it can’t replace its own container. A small helper (the updater) does that, and it has to be started once from the server itself. Sign in to ',
+          names.length > 1 ? 'each of those servers' : 'that server', ' and paste this one line:'),
+        h('pre', { class: 'pre' }, h('code', {}, SETUP_CMD)),
+        h('div', { class: 'row' }, h('button', { type: 'button', onclick: (ev) => navigator.clipboard.writeText(SETUP_CMD).then(() => { ev.target.textContent = 'Copied'; }) }, 'Copy command')),
+        h('p', { class: 'muted small' }, 'It starts the updater and restarts DNServ connected to it, keeping all settings (DNS on that server stops for a few seconds; do one server at a time). Your compose file isn’t changed. After that, updates happen here. The updater has no network port and can only update the DNServ container next to it, but it holds the Docker socket, which gives full control of that server’s Docker.',
+          ' Rather not? Skip it: this page still tells you when a new version is out. ', h('a', { href: 'https://github.com/prezmc/DNServ/blob/main/docs/updates.md', target: '_blank', rel: 'noopener' }, 'More about updates'))));
     }
 
     // Preferences.
@@ -4620,13 +4631,19 @@ async function updatesPage(main) {
       form({}, [
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'check', checked: !p.no_check }), ' Check for new versions every 6 hours'),
         h('p', { class: 'muted small' }, 'Each server asks the image registry (', h('code', {}, 'ghcr.io'), ') which image is newest. Nothing about your network is sent.'),
+        h('label', {}, 'Follow', h('select', { name: 'channel' },
+          h('option', { value: 'stable', selected: p.channel !== 'latest' }, 'Releases (recommended)'),
+          h('option', { value: 'latest', selected: p.channel === 'latest' }, 'Every change, as soon as it is merged'))),
+        h('p', { class: 'muted small' }, 'Releases are versions marked ready, with release notes. Every change gets fixes sooner but has had less time in use.'),
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'auto', checked: !!p.auto }), ' Install new versions automatically, at'),
         h('select', { name: 'hour', 'aria-label': 'Hour' }, hours),
         h('p', { class: 'muted small' }, 'Servers that have the updater update one at a time, the same as the button above, in your time zone (Settings). Pick an hour when the network is quiet.'),
         h('button', { class: 'primary', type: 'submit' }, 'Save'),
       ], async (f) => {
-        await api('PUT', '/updates/prefs', { no_check: !f.elements.check.checked, auto: f.elements.auto.checked, auto_hour: Number(f.elements.hour.value) });
-        v.prefs = { no_check: !f.elements.check.checked, auto: f.elements.auto.checked, auto_hour: Number(f.elements.hour.value) };
+        const np = { no_check: !f.elements.check.checked, auto: f.elements.auto.checked, auto_hour: Number(f.elements.hour.value), channel: f.elements.channel.value === 'latest' ? 'latest' : '' };
+        await api('PUT', '/updates/prefs', np);
+        v.prefs = Object.assign({}, p, np);
+        if (np.channel !== (p.channel || '')) { await api('POST', '/updates/check').then(x => { v = x; draw(false); }).catch(() => {}); }
         return 'Saved';
       })));
     page(main, 'Updates', out);

@@ -83,9 +83,9 @@ func (c *Client) Status(ctx context.Context) (*SidecarStatus, error) {
 // Start asks the updater to update this container (to rev, an earlier
 // published version, when set). When it works, this process is stopped
 // shortly after.
-func (c *Client) Start(ctx context.Context, rev string) (*Job, error) {
+func (c *Client) Start(ctx context.Context, req Request) (*Job, error) {
 	var j Job
-	if err := c.call(ctx, http.MethodPost, "/v1/update", map[string]string{"revision": rev}, &j); err != nil {
+	if err := c.call(ctx, http.MethodPost, "/v1/update", req, &j); err != nil {
 		return nil, err
 	}
 	return &j, nil

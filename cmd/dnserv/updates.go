@@ -50,7 +50,7 @@ func newUpdates(cl *cluster.Cluster, st *store.Store, dataDir string, ready func
 		Peers:    clusterPeers{cl: cl, st: st},
 		Prefs: func() update.Prefs {
 			p := st.State().Updates
-			return update.Prefs{Check: !p.NoCheck, Auto: p.Auto, AutoHour: p.AutoHour, Skip: p.Skip}
+			return update.Prefs{Check: !p.NoCheck, Auto: p.Auto, AutoHour: p.AutoHour, Skip: p.Skip, Channel: p.Channel}
 		},
 		Audit: func(by, revision string, servers []string, auto, rollback bool) {
 			if _, err := cl.Propose(store.NewCommand(store.OpUpdateStart, by, store.UpdateStart{Revision: revision, Servers: servers, Auto: auto, Rollback: rollback})); err != nil {
