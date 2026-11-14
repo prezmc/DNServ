@@ -2,10 +2,16 @@ package certs
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -264,5 +270,26 @@ func TestObtainWithPebble(t *testing.T) {
 		}
 	case <-time.After(45 * time.Second):
 		t.Fatal("manager didn't get a certificate")
+	}
+}
+
+func TestWrongService(t *testing.T) {
+	mk := func(issuer string) string {
+		k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "dns1.example.com"},
+			Issuer: pkix.Name{CommonName: issuer}, NotBefore: time.Now(), NotAfter: time.Now().Add(time.Hour)}
+		parent := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: issuer}}
+		der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &k.PublicKey, k)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+	}
+	staging, real := mk("(STAGING) Ersatz Edamame E1"), mk("E7")
+	if !wrongService(staging, store.LetsEncrypt) {
+		t.Fatal("staging certificate kept for the real service")
+	}
+	if wrongService(staging, store.LetsEncryptStaging) || wrongService(real, store.LetsEncrypt) {
+		t.Fatal("good certificate treated as wrong")
 	}
 }
