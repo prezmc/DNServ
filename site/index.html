@@ -164,13 +164,13 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
   <h2>Up and running in five minutes</h2>
   <p class="sub">Any Linux machine with Docker: a mini PC, a NAS, a Raspberry Pi 4 or a VM.</p>
   <div class="steps">
-    <pre id="qs"><button class="copy" type="button" data-copy="qs">Copy</button>docker run -d --name dnserv --restart unless-stopped \
-  -p 53:53/udp -p 53:53/tcp -p 853:853 \
-  -p 443:443 -p 8080:8080 -p 8081:8081 \
-  -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
+    <pre id="qs"><button class="copy" type="button" data-copy="qs">Copy</button>mkdir -p ~/dnserv &amp;&amp; cd ~/dnserv
+curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml
+echo "TZ=America/Chicago" &gt; .env
+docker compose up -d
 
 <span class="c"># the setup code is in the log</span>
-docker logs dnserv 2>&amp;1 | grep setup_code</pre>
+docker compose logs | grep setup_code</pre>
     <ol class="how">
       <li><b>Open http://&lt;server&gt;:8080</b><span>Enter the setup code from the log.</span></li>
       <li><b>Create your account</b><span>Scan the QR code with any authenticator app.</span></li>

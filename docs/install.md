@@ -1,12 +1,71 @@
 # Installing and configuring
 
+There's one standard way to run DNServ: the `docker-compose.yml` from this
+repository, plus an optional `.env` file for anything that's different on
+your server. You never edit `docker-compose.yml`, so updating is always the
+same two commands.
+
+## Install
+
+On a Linux server with Docker and Docker Compose:
+
 ```bash
-docker run -d --name dnserv --restart unless-stopped \
-  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
-  -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
+mkdir -p ~/dnserv && cd ~/dnserv
+curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml
+echo "TZ=America/Chicago" > .env      # your time zone, used by schedules
+docker compose up -d
+docker compose logs | grep setup_code
 ```
 
-or `docker compose up -d` with the included `docker-compose.yml`.
+Open `http://<server address>:8080`, enter the setup code, and the wizard
+walks you through it:
+
+1. Create the admin account.
+2. Scan the QR code with an authenticator app and enter a code.
+3. Save your ten recovery codes.
+4. Pick how lookups leave your network and which blocklists to use.
+
+Then set your router's DHCP DNS server to the server's address. Only someone
+who can read the container's logs can claim a new server.
+
+Next steps:
+
+- **A second server:** follow the [two-server guide](deploy-two-servers.md).
+- **HTTPS and a name for the dashboard:** see [Dashboard HTTPS](https.md).
+- **Passkeys:** see [Signing in](sign-in.md#passkeys).
+
+## Update
+
+In the server's folder:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+Settings, history and statistics are kept. With two or more servers, update
+one at a time (see [Upgrading](deploy-two-servers.md#upgrading)). Updates
+are published a few minutes after each change to `main`.
+
+Once in a while `docker-compose.yml` itself changes (a new port, say). To
+get the new one, download it again with the `curl` line above. Your `.env`
+is left alone.
+
+## The `.env` file
+
+Put anything specific to this server in `.env`, next to
+`docker-compose.yml`. Every setting is optional; see
+[`.env.example`](../.env.example) for the full list with explanations.
+
+| Setting | When you need it |
+|---|---|
+| `TZ=America/Chicago` | Always a good idea: group schedules use it |
+| `DNSERV_HTTPS_PORT=8443` | Something else on the server already uses port 443 |
+| `DNSERV_WEB_PORT=8090` | Something else already uses port 8080 |
+| `DNSERV_CLUSTER_PORT=8091` and `DNSERV_CLUSTER_ADVERTISE=192.168.1.10:8091` | Something else already uses port 8081. The second line tells the other servers the new port |
+| `DNSERV_HTTPS=off` | A bad dashboard certificate keeps you out (see [Locked out](https.md#locked-out)). Remove it again afterwards |
+| `DNSERV_VOLUME=dnserve_dnserve-data` | You're moving a server set up another way and want to keep its data (see [below](#moving-an-existing-server-to-the-standard-compose-file)) |
+
+After changing `.env`, run `docker compose up -d`.
 
 ### Ports
 
@@ -18,32 +77,23 @@ or `docker compose up -d` with the included `docker-compose.yml`.
 | 8080 | The dashboard and setup wizard (HTTP, and HTTPS once it's on) |
 | 8081 | Other DNServ servers in the same cluster |
 
-If something on the server already uses one of these, such as a web server
-or reverse proxy on 443, Docker refuses to start the container with
-"port is already allocated". With compose, copy
-[`.env.example`](../.env.example) to `.env` next to `docker-compose.yml` and
-pick another host port there, for example `DNSERV_HTTPS_PORT=8443`. With
-`docker run`, change the left-hand number, for example `-p 8443:443`.
-Keeping your changes in `.env` means you can download a new
-`docker-compose.yml` whenever it changes without editing it again.
+If something already uses one of these, Docker refuses to start with
+"port is already allocated". Pick another host port in `.env` as above.
 
-No config file is needed. On first start the node prints a one-time setup
-code in its log:
+### Without compose
+
+If you'd rather use `docker run`, this is the same as the compose file:
 
 ```bash
-docker logs dnserv 2>&1 | grep setup_code
+docker run -d --name dnserv --restart unless-stopped \
+  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
+  -e TZ=America/Chicago -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
 ```
 
-Open `http://<server>:8080` and the setup wizard walks you through it:
+To update, `docker pull ghcr.io/prezmc/dnserv:latest`, then remove the
+container and run the same command again. The data volume keeps everything.
 
-1. Enter the setup code and create the admin account.
-2. Scan the QR code with an authenticator app (1Password, Bitwarden,
-   Google or Microsoft Authenticator, Authy…) and enter a code.
-3. Save your ten recovery codes.
-4. Pick how lookups leave your network and which blocklists to use.
-
-Then set your router's DHCP DNS server to the machine's address. Only
-someone who can read the container's logs can claim a new node.
+## The dashboard
 
 The dashboard has pages for status, checking and blocking domains,
 devices, recent queries, settings,
@@ -62,20 +112,29 @@ with `dnserv -check-config -config FILE`.
 
 Notes:
 
-- **Port 53 already in use?** On many Linux hosts `systemd-resolved` listens
-  on port 53. Either publish DNServ on the host's LAN address
-  (`-p 192.168.1.10:53:53/udp …`) or set `DNSStubListener=no` in
-  `/etc/systemd/resolved.conf`.
+- **Port 53 already in use?** On Ubuntu and many other Linux hosts
+  `systemd-resolved` listens on port 53 (`address already in use`). Turn off
+  its listener and point the server itself at a public resolver:
+
+  ```sh
+  sudo mkdir -p /etc/systemd/resolved.conf.d
+  printf '[Resolve]\nDNSStubListener=no\nDNS=1.1.1.1\n' | sudo tee /etc/systemd/resolved.conf.d/dnserv.conf
+  sudo ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+  sudo systemctl restart systemd-resolved
+  ```
 - **Non-root.** The container runs as an unprivileged user, and so does the
   bundled Unbound. Docker 20.10+ lets containers on bridge networks bind ports
   53, 443 and 853 without extra privileges. With
   `network_mode: host` that doesn't apply, so run that container with
   `user: root`.
-- Point your router's DHCP DNS setting (or individual devices) at the host.
 - The image's health check probes `127.0.0.1:8080`; keep `http.listen` on
   port 8080 or override the health check.
 
 ## Configuring without files
+
+Everything below can also be set in the dashboard, which is the usual way.
+These variables give a server its starting values, for people who use
+`docker run -e …` or keep their own compose file.
 
 | Variable | Example | Sets |
 |---|---|---|

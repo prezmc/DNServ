@@ -39,18 +39,8 @@ Permissions: `dashboard.view`, `querylog.view`, `data.export`,
 user), and the admin-only `users.manage`, `cluster.manage`,
 `backups.manage`, `audit.view`.
 
-Lost your phone? Sign in with a recovery code, or have another admin reset
-your MFA. If the only admin is locked out, stop the node and run:
-
-```bash
-docker stop dnserv
-docker run --rm -v dnserv-data:/data ghcr.io/prezmc/dnserv -reset-mfa USERNAME
-docker start dnserv
-```
-
-That clears the account's second factor when the node starts (you set it up
-again at the next sign-in) and is recorded in the audit log. In a cluster
-the node must reach the leader for it to apply. Add `-reset-password` to also
-print a new temporary password.
+Lost your phone, or the only admin is locked out? See
+[Locked out](sign-in.md#locked-out) for recovery codes, admin resets and the
+`-reset-mfa` recovery command.
 
 [Back to the README](../README.md)
