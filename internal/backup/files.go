@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/prezmc/dnserv/internal/store"
@@ -35,7 +37,71 @@ type Manager struct {
 	Loc func() *time.Location
 	Log *slog.Logger
 	Now func() time.Time
+	// Client is used for S3 uploads (nil: a default one).
+	Client *http.Client
+
+	mu      sync.Mutex
+	uploads map[string]S3Status // by where: "s3", "smb"
 }
+
+// Remote is somewhere off the box that backups are copied to.
+type Remote interface {
+	Put(ctx context.Context, name string, b []byte) error
+	Get(ctx context.Context, name string) ([]byte, error)
+	Delete(ctx context.Context, name string) error
+	List(ctx context.Context) ([]S3Object, error)
+	Test(ctx context.Context) error
+}
+
+// S3Status is how the last upload to one remote went.
+type S3Status struct {
+	At    time.Time `json:"at,omitzero"`
+	File  string    `json:"file,omitempty"`
+	Error string    `json:"error,omitempty"`
+}
+
+// LastUpload returns how the last upload from this node to where went.
+func (m *Manager) LastUpload(where string) S3Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.uploads[where]
+}
+
+// S3 returns a client for the configured bucket, or nil.
+func (m *Manager) S3() *S3 {
+	t := m.Store.State().BackupS3
+	if t == nil {
+		return nil
+	}
+	return &S3{T: *t, Client: m.Client}
+}
+
+// SMB returns a client for the configured share, or nil.
+func (m *Manager) SMB() *SMB {
+	t := m.Store.State().BackupSMB
+	if t == nil {
+		return nil
+	}
+	return &SMB{T: *t}
+}
+
+// Remote returns the remote called where ("s3" or "smb"), or nil.
+func (m *Manager) Remote(where string) Remote {
+	switch where {
+	case "s3":
+		if c := m.S3(); c != nil {
+			return c
+		}
+	case "smb":
+		if c := m.SMB(); c != nil {
+			return c
+		}
+	}
+	return nil
+}
+
+// remoteNames are the remotes, in the order they're used.
+var remoteNames = []string{"smb", "s3"}
 
 // File is a stored backup.
 type File struct {
@@ -43,7 +109,7 @@ type File struct {
 	Size    int64     `json:"size"`
 	Created time.Time `json:"created"`
 	Node    string    `json:"node"`
-	Where   string    `json:"where"` // "local" or "offsite"
+	Where   string    `json:"where"` // "local", "offsite", "s3" or "smb"
 }
 
 func (m *Manager) now() time.Time {
@@ -176,7 +242,125 @@ func (m *Manager) RunDue() error {
 			prune(cfg.Offsite, keep, m.Log)
 		}
 	}
+	if m.IsLeader == nil || m.IsLeader() {
+		for _, where := range remoteNames {
+			if c := m.Remote(where); c != nil {
+				if err := m.upload(where, c, name, file, keep, 3); err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", remoteLabel[where], err))
+				}
+			}
+		}
+	}
 	return errors.Join(errs...)
+}
+
+var remoteLabel = map[string]string{"s3": "S3", "smb": "network share"}
+
+// UploadNow makes a backup and copies it to where, keeping the same
+// number of backups there as the schedule does.
+func (m *Manager) UploadNow(where string) error {
+	c := m.Remote(where)
+	if c == nil {
+		return errors.New("set it up first")
+	}
+	if !m.Store.State().Backup.Configured() {
+		return errors.New("set a backup passphrase first")
+	}
+	name, file, err := m.Make()
+	if err != nil {
+		return err
+	}
+	keep := m.Store.State().Backup.Keep
+	if keep == 0 {
+		keep = DefaultKeep
+	}
+	return m.upload(where, c, name, file, keep, 1)
+}
+
+// upload copies one backup to a remote and removes the oldest ones
+// beyond keep.
+func (m *Manager) upload(where string, c Remote, name string, file []byte, keep, tries int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	var err error
+	for try := range tries {
+		if err = c.Put(ctx, name, file); err == nil || try == tries-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+		case <-time.After(time.Duration(try+1) * 10 * time.Second):
+		}
+	}
+	st := S3Status{At: time.Now().UTC(), File: name}
+	if err != nil {
+		st.Error = err.Error()
+	}
+	m.mu.Lock()
+	if m.uploads == nil {
+		m.uploads = map[string]S3Status{}
+	}
+	m.uploads[where] = st
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	m.Log.Info("backup copied off the box", "to", where, "file", name)
+	files, err := listRemote(ctx, where, c)
+	if err != nil {
+		m.Log.Warn("couldn't list backups to remove old ones", "to", where, "err", err)
+		return nil
+	}
+	for _, f := range files[min(keep, len(files)):] {
+		if err := c.Delete(ctx, f.Name); err != nil {
+			m.Log.Warn("couldn't remove an old backup", "to", where, "file", f.Name, "err", err)
+		}
+	}
+	return nil
+}
+
+// listRemote lists the backups in a remote, newest first.
+func listRemote(ctx context.Context, where string, c Remote) ([]File, error) {
+	objs, err := c.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []File
+	for _, o := range objs {
+		if !isBackupName(o.Key) || strings.Contains(o.Key, "/") {
+			continue
+		}
+		out = append(out, File{Name: o.Key, Size: o.Size, Created: nameTime(o.Key, o.Modified), Node: nameNode(o.Key), Where: where})
+	}
+	slices.SortFunc(out, func(a, b File) int { return b.Created.Compare(a.Created) })
+	return out, nil
+}
+
+// nameTime reads the time from a backup's name (fallback: def).
+func nameTime(name string, def time.Time) time.Time {
+	base := strings.TrimSuffix(name, Ext)
+	if len(base) < 15 {
+		return def
+	}
+	if t, err := time.Parse("20060102-150405", base[len(base)-15:]); err == nil {
+		return t
+	}
+	return def
+}
+
+// nameNode reads the node name from a backup's name.
+func nameNode(name string) string {
+	base := strings.TrimSuffix(name, Ext)
+	if len(base) < 16 {
+		return ""
+	}
+	base = base[:len(base)-16]
+	for _, p := range []string{"dnserv-", "dnserve-"} {
+		if strings.HasPrefix(base, p) {
+			return base[len(p):]
+		}
+	}
+	return ""
 }
 
 func writeFile(dir, name string, b []byte) error {
@@ -238,19 +422,45 @@ func prune(dir string, keep int, log *slog.Logger) {
 }
 
 // List returns the stored backups, newest first: this node's, then the
-// off-box folder's.
-func (m *Manager) List() []File {
-	out := listDir(m.Dir, "local")
+// off-box folder's, then each remote's. errs says, by remote, why one
+// couldn't be listed.
+func (m *Manager) List(ctx context.Context) (out []File, errs map[string]string) {
+	out = listDir(m.Dir, "local")
 	if off := m.Store.State().Backup.Offsite; off != "" {
 		out = append(out, listDir(off, "offsite")...)
 	}
-	return out
+	for _, where := range remoteNames {
+		c := m.Remote(where)
+		if c == nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		f, err := listRemote(ctx, where, c)
+		cancel()
+		out = append(out, f...)
+		if err != nil {
+			if errs == nil {
+				errs = map[string]string{}
+			}
+			errs[where] = err.Error()
+		}
+	}
+	return out, errs
 }
 
 // Read returns a stored backup by name.
 func (m *Manager) Read(where, name string) ([]byte, error) {
 	if name != filepath.Base(name) || !isBackupName(name) {
 		return nil, errors.New("no such backup")
+	}
+	if where == "s3" || where == "smb" {
+		c := m.Remote(where)
+		if c == nil {
+			return nil, errors.New("no such backup")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		return c.Get(ctx, name)
 	}
 	dir := m.Dir
 	if where == "offsite" {

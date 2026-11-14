@@ -90,6 +90,9 @@ type API struct {
 	// Backups makes and stores this node's backups (nil: downloads and
 	// stored backups are unavailable, as in tests).
 	Backups *backup.Manager
+	// smbDial is used to reach network shares (nil: a plain dialer; tests
+	// set it).
+	smbDial func(ctx context.Context, network, addr string) (net.Conn, error)
 
 	names      namesCache
 	passkeyCer ceremonies
