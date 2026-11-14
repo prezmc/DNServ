@@ -119,7 +119,7 @@ purpose it has no access to Docker, so something that does has to start the
 updater once. Sign in to the server and paste this one line:
 
 ```bash
-sudo docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater
+sudo docker run --rm --pull always -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater
 ```
 
 It finds the DNServ container on that server, starts the updater container
