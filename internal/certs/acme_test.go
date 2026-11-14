@@ -31,6 +31,18 @@ func TestDNSHostsList(t *testing.T) {
 	if !ok || len(cf.Credentials) == 0 {
 		t.Fatalf("cloudflare: %+v", cf)
 	}
+	// Every simple field must be a setting the host really takes.
+	for code := range simpleHosts {
+		h, ok := DNSHost(code)
+		if !ok || len(h.Main) == 0 || h.Help == "" {
+			t.Fatalf("simple host %s: %+v", code, h)
+		}
+		for _, f := range h.Main {
+			if _, err := CleanDNSSettings(code, map[string]string{f.Var: "x"}); err != nil {
+				t.Fatalf("%s: %v", code, err)
+			}
+		}
+	}
 	if _, ok := DNSHost("exec"); ok {
 		t.Fatal("exec runs programs and must not be offered")
 	}
