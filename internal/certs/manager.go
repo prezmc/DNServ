@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -391,7 +393,7 @@ func (m *Manager) checkACME(ctx context.Context, cfg store.HTTPSConfig) bool {
 	if a == nil {
 		return true
 	}
-	if !NeedsCertificate(cfg.CertPEM, cfg.KeyPEM, a.Names, time.Now()) {
+	if !NeedsCertificate(cfg.CertPEM, cfg.KeyPEM, a.Names, time.Now()) && !wrongService(cfg.CertPEM, a.Directory) {
 		if cfg.FetchError != "" {
 			m.propose(store.HTTPSCert{Mode: cfg.Mode, CertPEM: cfg.CertPEM, KeyPEM: cfg.KeyPEM})
 		}
@@ -429,6 +431,20 @@ func (m *Manager) checkACME(ctx context.Context, cfg store.HTTPSConfig) bool {
 	m.logger().Info("got a certificate", "names", strings.Join(a.Names, ","))
 	m.propose(store.HTTPSCert{Mode: cfg.Mode, CertPEM: string(c), KeyPEM: string(k)})
 	return true
+}
+
+// wrongService reports a Let's Encrypt test-run (staging) certificate
+// kept after Test run was turned off, which browsers don't trust.
+func wrongService(certPEM, directory string) bool {
+	if directory == store.LetsEncryptStaging {
+		return false
+	}
+	b, _ := pem.Decode([]byte(certPEM))
+	if b == nil {
+		return false
+	}
+	leaf, err := x509.ParseCertificate(b.Bytes)
+	return err == nil && strings.Contains(strings.ToUpper(leaf.Issuer.String()), "STAGING")
 }
 
 func (m *Manager) setRequesting(on bool) {

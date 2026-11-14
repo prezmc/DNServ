@@ -227,8 +227,11 @@ func (a *API) httpsPut(w http.ResponseWriter, r *http.Request, p *Principal) {
 			return
 		}
 		cfg.ACME = ac
-		if cur.Mode == store.HTTPSACME && !certs.NeedsCertificate(cur.CertPEM, cur.KeyPEM, ac.Names, now) {
-			cfg.CertPEM, cfg.KeyPEM = cur.CertPEM, cur.KeyPEM // still good for these names
+		if cur.Mode == store.HTTPSACME && cur.ACME != nil && cur.ACME.Directory == ac.Directory &&
+			!certs.NeedsCertificate(cur.CertPEM, cur.KeyPEM, ac.Names, now) {
+			// Still good for these names, from the same service (a test-run
+			// certificate is never kept once Test run is off).
+			cfg.CertPEM, cfg.KeyPEM = cur.CertPEM, cur.KeyPEM
 		}
 	}
 	if err := cfg.Validate(); err != nil {
