@@ -141,8 +141,15 @@ func newDoH(u *url.URL, boot *Bootstrap, timeout time.Duration) *doh {
 		ForceAttemptHTTP2:   true,
 		MaxIdleConns:        16,
 		MaxIdleConnsPerHost: 16,
-		IdleConnTimeout:     90 * time.Second,
+		// Keep the connection through the quiet spells of a home network,
+		// so a lookup rarely pays for a new TLS handshake (one or two
+		// extra round trips to the resolver).
+		IdleConnTimeout:     5 * time.Minute,
 		TLSHandshakeTimeout: timeout,
+		// An HTTP/2 ping on a connection that has been quiet for a while
+		// finds one the network dropped without saying, before a lookup
+		// is sent down it and waits for the timeout.
+		HTTP2: &http.HTTP2Config{SendPingTimeout: 20 * time.Second, PingTimeout: 5 * time.Second},
 	}
 	return &doh{url: u.String(), client: &http.Client{Transport: tr, Timeout: timeout}}
 }

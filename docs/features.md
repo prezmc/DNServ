@@ -28,7 +28,11 @@ Everything DNServ does today, in more detail than the README.
   Settings → Privacy: fastest first (the default; the others are timed in
   the background now and then so a server that was slow once can win
   again), in order, round robin, or all at once with the first answer
-  used. A server that fails is skipped for 30 seconds.
+  used. A server that fails is skipped for 30 seconds. Except in "all at
+  once", a server that is much slower than usual to answer (four times its
+  usual time, between 60 and 750 ms) gets company: the next one is asked
+  too and the first answer wins, so a lost packet costs a fraction of a
+  second rather than the whole timeout.
 - **Fast cache.** Sharded in-memory cache with prefetch of popular entries
   before they expire, serve-stale when upstream is down (RFC 8767), and
   persistence: the cache is saved to disk every 10 minutes and first thing

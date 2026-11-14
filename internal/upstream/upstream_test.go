@@ -282,3 +282,47 @@ func TestStrategies(t *testing.T) {
 		t.Errorf("unknown strategy should mean fastest, got %q", g.strategy)
 	}
 }
+
+func TestHedgesSlowServer(t *testing.T) {
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	var slowHits, fastHits atomic.Int64
+	var stall atomic.Bool
+	slow := startUDP(t, func(w dns.ResponseWriter, q *dns.Msg) {
+		slowHits.Add(1)
+		if stall.Load() {
+			time.Sleep(500 * time.Millisecond)
+		}
+		answerA(w, q)
+	})
+	fast := startUDP(t, func(w dns.ResponseWriter, q *dns.Msg) {
+		fastHits.Add(1)
+		answerA(w, q)
+	})
+	g, err := NewGroup([]string{"udp://" + slow, "udp://" + fast}, nil, 2*time.Second, quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.SetStrategy(InOrder)
+	q := new(dns.Msg)
+	q.SetQuestion("example.com.", dns.TypeA)
+	// Healthy: only the first server is asked.
+	for i := 0; i < 3; i++ {
+		if _, err := g.Exchange(context.Background(), q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if fastHits.Load() != 0 {
+		t.Fatalf("second server asked %d times while the first was quick", fastHits.Load())
+	}
+	// The first stalls: the second is asked after the hedge delay, and its
+	// answer comes back long before the first's (or the timeout).
+	stall.Store(true)
+	start := time.Now()
+	_, from, err := g.ExchangeFrom(context.Background(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(start); took > 300*time.Millisecond || from != "udp://"+fast {
+		t.Fatalf("took %v, answered by %s", took, from)
+	}
+}

@@ -16,7 +16,7 @@
 
 ## Why DNServ
 
-- **Fast.** About 51,000 queries a second on a 4-core machine, with a median answer of 0.14 ms. Popular names are prefetched before they expire, and old answers are served if the internet is down.
+- **Fast.** About 115,000 cached answers a second on a 4-core machine, with a median answer of 0.07 ms. Popular names are prefetched before they expire, a slow upstream gets backup from the next one, and old answers are served if the internet is down.
 - **Blocks ads, trackers and malware.** Use any hosts file, domain list or AdGuard-style list (wildcards and regex included), plus your own allow and block rules.
 - **Rules per device.** Put devices in groups like Kids, with their own blocked services, safe search, and schedules such as bedtime or homework time.
 - **Shows what's going on.** Query log, analytics, response times and a traffic map from each device, through your servers, out to the services it reaches. History is kept for 30 days.
