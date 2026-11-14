@@ -22,6 +22,9 @@ type Pause struct {
 	Until time.Time `json:"until,omitempty"`
 	Since time.Time `json:"since"`
 	By    string    `json:"by"`
+	// Schedules: group schedules are paused too. Without it, schedules
+	// running now (bedtime, blocked services) keep blocking.
+	Schedules bool `json:"schedules,omitempty"`
 }
 
 // FilterPause is the data for OpFilterPause.
@@ -30,6 +33,8 @@ type FilterPause struct {
 	Seconds int64 `json:"seconds"`
 	// Node is the node to pause; "" or AllNodes pauses every node.
 	Node string `json:"node,omitempty"`
+	// Schedules pauses group schedules as well.
+	Schedules bool `json:"schedules,omitempty"`
 }
 
 // FilterResume is the data for OpFilterResume.
@@ -46,7 +51,7 @@ func (p *Pause) Active(now time.Time) bool {
 
 // PauseFor returns the pause in force on node at now: its own or the
 // cluster-wide one, whichever lasts longer. ok is false when filtering
-// is on.
+// is on. Schedules is set when either pause also pauses schedules.
 func (st *State) PauseFor(node string, now time.Time) (p Pause, ok bool) {
 	for _, k := range []string{AllNodes, node} {
 		q := st.Pauses[k]
@@ -54,7 +59,11 @@ func (st *State) PauseFor(node string, now time.Time) (p Pause, ok bool) {
 			continue
 		}
 		if !ok || q.Until.IsZero() || (!p.Until.IsZero() && q.Until.After(p.Until)) {
+			sched := p.Schedules
 			p = *q
+			p.Schedules = p.Schedules || sched
+		} else if q.Schedules {
+			p.Schedules = true
 		}
 		ok = true
 	}
@@ -96,8 +105,11 @@ func applyPause(st *State, c Command, d FilterPause) (any, *AuditEntry, error) {
 		return nil, nil, err
 	}
 	st.pruneExpired(c.Time)
-	p := &Pause{Since: c.Time, By: c.Actor}
+	p := &Pause{Since: c.Time, By: c.Actor, Schedules: d.Schedules}
 	what := "paused filtering"
+	if d.Schedules {
+		what += " and schedules"
+	}
 	if name != "" {
 		what += " on " + name
 	} else if len(st.Cluster.Nodes) > 1 {

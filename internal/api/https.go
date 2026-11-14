@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -23,6 +26,7 @@ func (a *API) routesHTTPS(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/https", a.authed(store.PermUsers, a.httpsGet))
 	m.HandleFunc("PUT /api/v1/https", a.authed(store.PermUsers, a.httpsPut))
 	m.HandleFunc("POST /api/v1/https/npm/certificates", a.authed(store.PermUsers, a.httpsNPMList))
+	m.HandleFunc("GET /api/v1/https/dns-hosts", a.authed(store.PermUsers, a.httpsDNSHosts))
 }
 
 // httpsView is the HTTPS settings without the key or password.
@@ -34,6 +38,7 @@ type httpsView struct {
 	KeyFile    string    `json:"key_file,omitempty"`
 	HasCert    bool      `json:"has_cert"`
 	NPM        *npmView  `json:"npm,omitempty"`
+	ACME       *acmeView `json:"acme,omitempty"`
 	Fetched    time.Time `json:"fetched,omitzero"`
 	FetchError string    `json:"fetch_error,omitempty"`
 }
@@ -46,6 +51,22 @@ type npmView struct {
 	CertName    string `json:"cert_name,omitempty"`
 }
 
+// acmeView leaves out the DNS host's setting values (they hold its
+// login) and the account key.
+type acmeView struct {
+	Method    string   `json:"method"`
+	Email     string   `json:"email"`
+	Names     []string `json:"names"`
+	Directory string   `json:"directory"`
+	Staging   bool     `json:"staging"`
+	DNSHost   string   `json:"dns_host"`
+	Saved     []string `json:"saved_settings"` // names of settings with a saved value
+	Helper    string   `json:"helper,omitempty"`
+	// Records are the records the owner adds: the helper's one-time
+	// CNAMEs, or the TXT records a by-hand request is waiting for.
+	Records []store.DNSRecord `json:"records"`
+}
+
 func (a *API) httpsGet(w http.ResponseWriter, r *http.Request, p *Principal) {
 	h := a.Store.State().HTTPS
 	v := httpsView{Mode: h.Mode, Redirect: h.Redirect, Names: h.Names, CertFile: h.CertFile, KeyFile: h.KeyFile,
@@ -55,6 +76,21 @@ func (a *API) httpsGet(w http.ResponseWriter, r *http.Request, p *Principal) {
 	}
 	if n := h.NPM; n != nil {
 		v.NPM = &npmView{URL: n.URL, Email: n.Email, HasPassword: n.Password != "", CertID: n.CertID, CertName: n.CertName}
+	}
+	if ac := h.ACME; ac != nil {
+		av := &acmeView{Method: ac.Method, Helper: ac.Helper, Records: h.Waiting, Email: ac.Email, Names: ac.Names, Directory: ac.Directory, Staging: ac.Directory == store.LetsEncryptStaging,
+			DNSHost: ac.DNSHost, Saved: []string{}}
+		for k := range ac.DNSSettings {
+			av.Saved = append(av.Saved, k)
+		}
+		slices.Sort(av.Saved)
+		if ac.Method == store.ACMEDNSHelper {
+			av.Records = certs.HelperCNAMEs(ac)
+		}
+		if av.Records == nil {
+			av.Records = []store.DNSRecord{}
+		}
+		v.ACME = av
 	}
 	var nodes []NodeHTTPS
 	if a.HTTPSStatus != nil {
@@ -79,6 +115,17 @@ type httpsIn struct {
 		Password string `json:"password"` // "": keep the saved one
 		CertID   int    `json:"cert_id"`
 	} `json:"npm"`
+	ACME *struct {
+		Method    string   `json:"method"`
+		Helper    string   `json:"helper"`
+		Email     string   `json:"email"`
+		Names     []string `json:"names"`
+		Staging   bool     `json:"staging"`
+		Directory string   `json:"directory"` // "": Let's Encrypt (or its staging service)
+		DNSHost   string   `json:"dns_host"`
+		// DNSSettings: an empty value keeps the saved one for the same host.
+		DNSSettings map[string]string `json:"dns_settings"`
+	} `json:"acme"`
 }
 
 // npmFrom builds the NPM login from the request, keeping the saved
@@ -173,6 +220,16 @@ func (a *API) httpsPut(w http.ResponseWriter, r *http.Request, p *Principal) {
 		}
 		cfg.CertPEM, cfg.KeyPEM = string(c), string(k)
 		cfg.NPM = &store.NPMSource{URL: n.URL, Email: n.Email, Password: n.Password, CertID: in.NPM.CertID, CertName: name}
+	case store.HTTPSACME:
+		ac, err := a.acmeFrom(r.Context(), in, cur, now)
+		if err != nil {
+			fail(err)
+			return
+		}
+		cfg.ACME = ac
+		if cur.Mode == store.HTTPSACME && !certs.NeedsCertificate(cur.CertPEM, cur.KeyPEM, ac.Names, now) {
+			cfg.CertPEM, cfg.KeyPEM = cur.CertPEM, cur.KeyPEM // still good for these names
+		}
 	}
 	if err := cfg.Validate(); err != nil {
 		fail(err)
@@ -182,6 +239,111 @@ func (a *API) httpsPut(w http.ResponseWriter, r *http.Request, p *Principal) {
 		return
 	}
 	a.httpsGet(w, r, p)
+}
+
+// acmeFrom checks the Let's Encrypt settings from the request and tries
+// the DNS host login by adding and removing a TXT record for each name.
+func (a *API) acmeFrom(ctx context.Context, in httpsIn, cur store.HTTPSConfig, now time.Time) (*store.ACMESource, error) {
+	if in.ACME == nil {
+		return nil, errors.New("fill in the Let's Encrypt settings")
+	}
+	src := &store.ACMESource{Method: in.ACME.Method, Email: strings.TrimSpace(in.ACME.Email), Saved: now}
+	if src.Email != "" && (!strings.Contains(src.Email, "@") || strings.ContainsAny(src.Email, " <>")) {
+		return nil, errors.New(src.Email + " isn't an email address")
+	}
+	for _, n := range in.ACME.Names {
+		n = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(n), "."))
+		if n == "" || slices.Contains(src.Names, n) {
+			continue
+		}
+		if strings.HasPrefix(n, "*") {
+			return nil, errors.New("list each name, such as dns1.example.com, rather than a wildcard")
+		}
+		if net.ParseIP(n) != nil || !validHostOrIP(n) || !strings.Contains(n, ".") {
+			return nil, errors.New(n + " isn't a full host name such as dns1.example.com")
+		}
+		src.Names = append(src.Names, n)
+	}
+	if len(src.Names) == 0 {
+		return nil, errors.New("add at least one name, such as dns1.example.com")
+	}
+	switch d := strings.TrimSpace(in.ACME.Directory); {
+	case d != "":
+		src.Directory = d
+	case in.ACME.Staging:
+		src.Directory = store.LetsEncryptStaging
+	default:
+		src.Directory = store.LetsEncrypt
+	}
+	var saved *store.ACMESource
+	if cur.Mode == store.HTTPSACME && cur.ACME != nil {
+		saved = cur.ACME
+	}
+	var err error
+	if saved != nil && saved.AccountKey != "" && saved.Directory == src.Directory {
+		src.AccountKey = saved.AccountKey
+	} else if src.AccountKey, err = certs.NewAccountKey(); err != nil {
+		return nil, err
+	}
+	tctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	switch src.Method {
+	case store.ACMEDNSAPI:
+		src.DNSHost = in.ACME.DNSHost
+		settings := map[string]string{}
+		if saved != nil && saved.Method == store.ACMEDNSAPI && saved.DNSHost == src.DNSHost {
+			maps.Copy(settings, saved.DNSSettings)
+		}
+		for k, v := range in.ACME.DNSSettings {
+			if strings.TrimSpace(v) != "" {
+				settings[k] = v
+			}
+		}
+		if src.DNSSettings, err = certs.CleanDNSSettings(src.DNSHost, settings); err != nil {
+			return nil, err
+		}
+		if err := testDNSHost(tctx, src.DNSHost, src.DNSSettings, src.Names); err != nil {
+			return nil, errors.New("Couldn't use your DNS host: " + err.Error())
+		}
+	case store.ACMEDNSHelper:
+		src.Helper = strings.TrimRight(strings.TrimSpace(in.ACME.Helper), "/")
+		if src.Helper == "" {
+			src.Helper = certs.DefaultHelper
+		}
+		if u, err := url.Parse(src.Helper); err != nil || u.Scheme != "https" || u.Host == "" {
+			return nil, errors.New("the acme-dns server should be an https:// address")
+		}
+		// Keep accounts already made there, so CNAMEs added earlier
+		// still work; make one for each new name.
+		src.HelperAccounts = map[string]store.HelperAccount{}
+		for _, n := range src.Names {
+			if saved != nil && saved.Helper == src.Helper {
+				if acc, ok := saved.HelperAccounts[n]; ok {
+					src.HelperAccounts[n] = acc
+					continue
+				}
+			}
+			acc, err := registerHelper(tctx, src.Helper)
+			if err != nil {
+				return nil, err
+			}
+			src.HelperAccounts[n] = acc
+		}
+	case store.ACMEManual:
+	default:
+		return nil, errors.New("choose how DNServ proves you own the names")
+	}
+	return src, nil
+}
+
+// Replaced in tests.
+var (
+	testDNSHost    = certs.TestDNSHost
+	registerHelper = certs.RegisterHelper
+)
+
+func (a *API) httpsDNSHosts(w http.ResponseWriter, r *http.Request, p *Principal) {
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": certs.DNSHosts()})
 }
 
 func (a *API) httpsNPMList(w http.ResponseWriter, r *http.Request, p *Principal) {

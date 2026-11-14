@@ -31,6 +31,8 @@ type pauseEntry struct {
 	Remaining  float64    `json:"remaining_seconds,omitempty"`
 	Since      time.Time  `json:"since"`
 	By         string     `json:"by"`
+	// Schedules: group schedules are paused too.
+	Schedules bool `json:"schedules,omitempty"`
 }
 
 type pauseNode struct {
@@ -49,9 +51,14 @@ type pauseView struct {
 	Nodes []pauseNode `json:"nodes"`
 	// FilteringEnabled is the Settings switch; when it's off there is
 	// nothing to pause.
-	FilteringEnabled bool  `json:"filtering_enabled"`
-	CanPause         bool  `json:"can_pause"`
-	Options          []int `json:"options"`
+	FilteringEnabled bool `json:"filtering_enabled"`
+	CanPause         bool `json:"can_pause"`
+	// HasSchedules: some group has a schedule, so the pause menu offers
+	// to pause schedules too; CanPauseSchedules is whether this user may
+	// (whoever can edit groups and their schedules).
+	HasSchedules      bool  `json:"has_schedules"`
+	CanPauseSchedules bool  `json:"can_pause_schedules"`
+	Options           []int `json:"options"`
 }
 
 func (a *API) pauseState(p *Principal) pauseView {
@@ -60,6 +67,13 @@ func (a *API) pauseState(p *Principal) pauseView {
 	v := pauseView{
 		Pauses: []pauseEntry{}, Nodes: []pauseNode{},
 		FilteringEnabled: a.Effective().Filtering.Enabled, CanPause: p.Can(store.PermPause), Options: pauseOptions,
+		CanPauseSchedules: p.Can(store.PermPause) && p.Can(store.PermDevices),
+	}
+	for _, g := range st.Groups {
+		if len(g.Schedules) > 0 {
+			v.HasSchedules = true
+			break
+		}
 	}
 	self := ""
 	if a.Cluster != nil {
@@ -75,7 +89,7 @@ func (a *API) pauseState(p *Principal) pauseView {
 		if !pz.Active(now) {
 			continue
 		}
-		e := pauseEntry{Node: key, Since: pz.Since, By: pz.By}
+		e := pauseEntry{Node: key, Since: pz.Since, By: pz.By, Schedules: pz.Schedules}
 		if n := st.Cluster.Nodes[key]; n != nil {
 			e.NodeName = n.Name
 		} else if key != store.AllNodes {
@@ -109,10 +123,13 @@ func (a *API) getPause(w http.ResponseWriter, r *http.Request, p *Principal) {
 
 // setPause pauses filtering: {"minutes": 5}, or {"minutes": 0} until
 // turned back on; "node" names one server (default: every server).
+// Group schedules keep blocking during a pause unless "schedules" is
+// true, which needs permission to manage devices and groups too.
 func (a *API) setPause(w http.ResponseWriter, r *http.Request, p *Principal) {
 	var req struct {
-		Minutes *float64 `json:"minutes"`
-		Node    string   `json:"node"`
+		Minutes   *float64 `json:"minutes"`
+		Node      string   `json:"node"`
+		Schedules bool     `json:"schedules"`
 	}
 	if !readJSON(w, r, &req) {
 		return
@@ -121,12 +138,16 @@ func (a *API) setPause(w http.ResponseWriter, r *http.Request, p *Principal) {
 		writeErr(w, http.StatusBadRequest, "say how many minutes to pause for (0: until turned back on)")
 		return
 	}
+	if req.Schedules && !p.Can(store.PermDevices) {
+		writeErr(w, http.StatusForbidden, "pausing schedules needs permission to manage devices and groups")
+		return
+	}
 	secs := int64(*req.Minutes * 60)
 	if *req.Minutes < 0 || (*req.Minutes > 0 && secs < 1) {
 		writeErr(w, http.StatusBadRequest, "minutes must be positive, or 0 to pause until turned back on")
 		return
 	}
-	if _, ok := a.apply(w, a.stamp(store.NewCommand(store.OpFilterPause, p.Actor(), store.FilterPause{Seconds: secs, Node: req.Node}))); !ok {
+	if _, ok := a.apply(w, a.stamp(store.NewCommand(store.OpFilterPause, p.Actor(), store.FilterPause{Seconds: secs, Node: req.Node, Schedules: req.Schedules}))); !ok {
 		return
 	}
 	writeJSON(w, http.StatusOK, a.pauseState(p))

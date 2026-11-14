@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +23,12 @@ var (
 	filesEvery    = time.Minute
 	npmEvery      = 12 * time.Hour
 	npmRetryEvery = 15 * time.Minute
+	acmeEvery     = 12 * time.Hour
+	// After a failed Let's Encrypt request; kept well under its limit of
+	// five failed checks per name per hour.
+	acmeRetry = []time.Duration{30 * time.Minute, 2 * time.Hour, 6 * time.Hour, 12 * time.Hour}
+	// acmeObtain is replaced in tests.
+	acmeObtain = Obtain
 )
 
 // Manager keeps the dashboard certificate in line with the replicated
@@ -33,7 +41,9 @@ type Manager struct {
 	IsLeader func() bool
 	// Propose sends a renewed certificate (or a fetch error) to the cluster.
 	Propose func(store.HTTPSCert) error
-	Log     *slog.Logger
+	// ProposeWait shares the records a by-hand request waits for.
+	ProposeWait func(store.HTTPSWait) error
+	Log         *slog.Logger
 	// Off forces HTTPS off whatever the settings say (DNSERV_HTTPS=off),
 	// for getting back in after a bad certificate.
 	Off bool
@@ -54,6 +64,9 @@ type Status struct {
 	Cert   *Info  `json:"cert,omitempty"`
 	Error  string `json:"error,omitempty"`  // why the configured certificate isn't in use
 	Forced bool   `json:"forced,omitempty"` // turned off by DNSERV_HTTPS=off
+	// Requesting is set while this server asks Let's Encrypt for a
+	// certificate.
+	Requesting bool `json:"requesting,omitempty"`
 }
 
 // Attach gives the manager the dashboard's listener to switch.
@@ -127,6 +140,7 @@ func (m *Manager) Apply(cfg store.HTTPSConfig) {
 	st.On = on
 	m.redirect.Store(on && cfg.Redirect)
 	m.mu.Lock()
+	st.Requesting = m.status.Requesting
 	m.status = st
 	l := m.listener
 	m.mu.Unlock()
@@ -151,7 +165,10 @@ func sameSource(a, b store.HTTPSConfig) bool {
 	if a.Mode != b.Mode || a.CertFile != b.CertFile || a.KeyFile != b.KeyFile {
 		return false
 	}
-	if (a.NPM == nil) != (b.NPM == nil) {
+	if (a.NPM == nil) != (b.NPM == nil) || (a.ACME == nil) != (b.ACME == nil) {
+		return false
+	}
+	if a.ACME != nil && !reflect.DeepEqual(*a.ACME, *b.ACME) {
 		return false
 	}
 	return a.NPM == nil || *a.NPM == *b.NPM
@@ -235,15 +252,39 @@ func (m *Manager) Run(ctx context.Context) {
 	m.kick = make(chan struct{}, 1)
 	kick := m.kick
 	m.mu.Unlock()
+	kick <- struct{}{} // check once straight away
 	t := time.NewTicker(filesEvery)
 	defer t.Stop()
-	var nextNPM time.Time
+	var nextNPM, nextACME time.Time
+	acmeFails := 0
+	var stopACME context.CancelFunc // a request in progress
+	acmeDone := make(chan bool, 1)
+	defer func() {
+		if stopACME != nil {
+			stopACME()
+		}
+	}()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-kick:
-			nextNPM = time.Time{}
+			nextNPM, nextACME, acmeFails = time.Time{}, time.Time{}, 0
+			if stopACME != nil {
+				stopACME() // the settings changed: start again with the new ones
+				<-acmeDone
+				stopACME = nil
+			}
+		case ok := <-acmeDone:
+			stopACME()
+			stopACME = nil
+			if ok {
+				acmeFails = 0
+				nextACME = time.Now().Add(acmeEvery)
+			} else {
+				nextACME = time.Now().Add(acmeRetry[min(acmeFails, len(acmeRetry)-1)])
+				acmeFails++
+			}
 		case <-t.C:
 		}
 		cfg := m.current()
@@ -257,6 +298,10 @@ func (m *Manager) Run(ctx context.Context) {
 				} else {
 					nextNPM = time.Now().Add(npmRetryEvery)
 				}
+			}
+		case store.HTTPSACME:
+			if stopACME == nil && time.Now().After(nextACME) && m.IsLeader != nil && m.IsLeader() {
+				stopACME = m.startACME(ctx, cfg, acmeDone)
 			}
 		}
 	}
@@ -329,6 +374,67 @@ func (m *Manager) checkNPM(ctx context.Context, cfg store.HTTPSConfig) bool {
 		m.propose(store.HTTPSCert{Mode: cfg.Mode, CertPEM: string(c), KeyPEM: string(k)})
 	}
 	return true
+}
+
+// startACME runs checkACME in the background; done gets its result.
+func (m *Manager) startACME(ctx context.Context, cfg store.HTTPSConfig, done chan<- bool) context.CancelFunc {
+	actx, cancel := context.WithCancel(ctx)
+	go func() { done <- m.checkACME(actx, cfg) }()
+	return cancel
+}
+
+// checkACME asks Let's Encrypt for a certificate when there is none yet,
+// it is within 30 days of expiry, or the names changed. It reports
+// whether the cluster has a good certificate afterwards.
+func (m *Manager) checkACME(ctx context.Context, cfg store.HTTPSConfig) bool {
+	a := cfg.ACME
+	if a == nil {
+		return true
+	}
+	if !NeedsCertificate(cfg.CertPEM, cfg.KeyPEM, a.Names, time.Now()) {
+		if cfg.FetchError != "" {
+			m.propose(store.HTTPSCert{Mode: cfg.Mode, CertPEM: cfg.CertPEM, KeyPEM: cfg.KeyPEM})
+		}
+		return true
+	}
+	m.setRequesting(true)
+	defer m.setRequesting(false)
+	m.logger().Info("asking for a certificate", "names", strings.Join(a.Names, ","), "directory", a.Directory)
+	limit := 10 * time.Minute
+	if a.Method != store.ACMEDNSAPI {
+		limit = waitForRecords + 10*time.Minute // waits for the owner's records
+	}
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	req := ACMERequest{ACMESource: *a, Log: m.logger()}
+	req.Publish = func(recs []store.DNSRecord) {
+		if m.ProposeWait != nil {
+			if err := m.ProposeWait(store.HTTPSWait{Mode: cfg.Mode, Records: recs}); err != nil {
+				m.logger().Warn("sharing the records to add", "err", err)
+			}
+		}
+	}
+	c, k, err := acmeObtain(ctx, req)
+	if ctx.Err() != nil && errors.Is(context.Cause(ctx), context.Canceled) {
+		return false // called off: the settings changed
+	}
+	if err == nil {
+		_, err = Parse(c, k, time.Now())
+	}
+	if err != nil {
+		m.logger().Warn("let's encrypt certificate", "err", err)
+		m.propose(store.HTTPSCert{Mode: cfg.Mode, Error: "Let's Encrypt: " + err.Error()})
+		return false
+	}
+	m.logger().Info("got a certificate", "names", strings.Join(a.Names, ","))
+	m.propose(store.HTTPSCert{Mode: cfg.Mode, CertPEM: string(c), KeyPEM: string(k)})
+	return true
+}
+
+func (m *Manager) setRequesting(on bool) {
+	m.mu.Lock()
+	m.status.Requesting = on
+	m.mu.Unlock()
 }
 
 func (m *Manager) propose(c store.HTTPSCert) {

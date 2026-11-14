@@ -654,6 +654,7 @@ async function setupBasics() {
   };
   providerBox.hidden = eff.Upstream.Mode !== 'forward';
   const level = levelOf(eff.Filtering.Lists);
+  const wizBundles = can('lists.manage') ? bundlePicker(null) : null;
 
   render(h('div', { class: 'center' }, h('div', { class: 'card wide' },
     wizardSteps(4),
@@ -666,6 +667,8 @@ async function setupBasics() {
         h('span', {}, h('b', {}, l.name), h('span', { class: 'muted small' }, ' ' + l.note))))),
       ADDONS.map(a => h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'addon', value: a.url, checked: onURLs.has(a.url) }),
         h('span', {}, h('b', {}, a.title), ' ', h('span', { class: 'muted small' }, a.note)))),
+
+      can('lists.manage') ? h('details', { class: 'mt-s' }, h('summary', {}, 'Also block categories (adult sites, gambling, smart TV tracking…)'), wizBundles) : null,
 
       h('h2', { class: 'mt' }, 'Privacy'),
       h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
@@ -682,6 +685,8 @@ async function setupBasics() {
       if (can('lists.manage')) {
         const addons = new Set([...f.querySelectorAll('input[name=addon]:checked')].map(i => i.value));
         patch.lists = applyLevel(eff.Filtering.Lists, f.querySelector('input[name=level]:checked').value, addons);
+        const have = new Set(patch.lists.map(l => l.url));
+        wizBundles.read().forEach(l => { if (!have.has(l.url)) { have.add(l.url); patch.lists.push({ name: l.name, url: l.url, enabled: true }); } });
         patch.block_bypass = f.elements.bypass.checked;
       }
       await api('PATCH', '/settings', patch);
@@ -1228,15 +1233,19 @@ function pauseControl(btnSlot, box, reload) {
         where = n.id;
         whereSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.currentTarget)));
       } }, n.name, n.self ? h('span', { class: 'muted small' }, ' (this one)') : null))) : null;
+    const schedBox = h('input', { type: 'checkbox' });
     const d = dialog('Pause filtering', [
-      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'),
+      h('p', { class: 'muted' }, 'Devices get real answers for everything, ads and trackers included, until the pause ends. Local names keep working.'
+        + (state.has_schedules ? ' Group schedules running now, like bedtime, keep blocking.' : '')),
+      state.has_schedules && state.can_pause_schedules ? h('label', { class: 'inline' }, schedBox, 'Pause group schedules too') : null,
       whereSeg ? [h('p', { class: 'small b' }, 'Where'), whereSeg,
         h('p', { class: 'muted small' }, 'Pausing one server only helps devices that use it. Most devices switch between your two DNS servers on their own.')] : null,
       h('p', { class: 'small b' }, 'For how long'),
       h('div', { class: 'pause-opts' }, (state.options || [1, 5, 15, 30, 60, 0]).map(m => h('button', { type: 'button', class: m === 0 ? 'wide' : null, onclick: async () => {
         d.close();
         const name = where === '*' ? '' : nodes.find(n => n.id === where).name;
-        await change('POST', '/pause', { minutes: m, node: where }, 'Filtering paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
+        const sched = schedBox.checked;
+        await change('POST', '/pause', { minutes: m, node: where, schedules: sched }, 'Filtering' + (sched ? ' and schedules' : '') + ' paused' + (name ? ' on ' + name : nodes.length > 1 ? ' on all servers' : '') + (m ? ' for ' + PAUSE_LABELS[m] : ' until you turn it back on') + '.');
       } }, PAUSE_LABELS[m] || m + ' minutes'))),
       h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
     ]);
@@ -1270,7 +1279,8 @@ function pauseControl(btnSlot, box, reload) {
       return h('div', { class: 'pause-row' },
         h('span', { class: 'pause-ico big', 'aria-hidden': 'true' }),
         h('div', { class: 'grow' },
-          h('div', { class: 'b' }, 'Filtering is paused' + where),
+          h('div', { class: 'b' }, (p.schedules ? 'Filtering and schedules are paused' : 'Filtering is paused') + where),
+          !p.schedules && v.has_schedules ? h('div', { class: 'muted small' }, 'Group schedules still apply.') : null,
           h('div', { class: 'muted small' }, p.indefinite ? 'Until someone turns it back on' : ['Back on in ', left, ' at ', new Date(Date.now() + p.remaining_seconds * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })],
             ' · paused by ', p.by, ' ', ago(p.since))),
         v.can_pause ? h('button', { type: 'button', class: 'primary', onclick: () => change('DELETE', '/pause' + (p.node === '*' ? '' : '?node=' + encodeURIComponent(p.node)), undefined, 'Filtering is back on' + (p.node === '*' ? '' : ' on ' + p.node_name) + '.') },
@@ -1474,6 +1484,44 @@ function groupsCard(groups, devs, gs) {
 
 let servicesCache = null;
 const loadServices = () => (servicesCache = servicesCache || api('GET', '/services').then(r => r.services).catch((e) => { servicesCache = null; throw e; }));
+
+let bundlesCache = null;
+const loadBundles = () => (bundlesCache = bundlesCache || api('GET', '/lists/bundles').then(r => r.bundles).catch((e) => { bundlesCache = null; throw e; }));
+
+// bundlePicker shows the category bundles as ticks. With an editor (the
+// blocklist table) ticking adds or removes the bundle's rows there; a
+// bundle is ticked while all its lists are present and on. Without one,
+// read() returns the ticked bundles' lists (used by the setup wizard).
+function bundlePicker(editor, on) {
+  const box = h('div', { class: 'choices bundles' }, h('p', { class: 'muted small' }, 'Loading categories…'));
+  let all = [];
+  const has = (b) => editor ? b.lists.every(l => editor.enabled(l.url)) : (on || new Set()).has(b.id);
+  const sync = () => box.querySelectorAll('[data-bundle]').forEach(c => { c.checked = has(all.find(b => b.id === c.dataset.bundle)); });
+  const toggle = (b, tick) => {
+    if (!editor) return;
+    if (tick) b.lists.forEach(l => editor.add(l));
+    else {
+      // Keep lists another ticked bundle also needs.
+      const keep = new Set(all.filter(o => o !== b && has(o)).flatMap(o => o.lists.map(l => l.url)));
+      b.lists.forEach(l => { if (!keep.has(l.url)) editor.drop(l.url); });
+    }
+    sync();
+  };
+  loadBundles().then((bs) => {
+    all = bs;
+    box.replaceChildren(...bs.map(b => h('label', { class: 'choice', title: b.lists.map(l => l.name).join(', ') },
+      h('input', { type: 'checkbox', 'data-bundle': b.id, onchange: (ev) => toggle(b, ev.target.checked) }),
+      h('span', {}, h('b', {}, b.name), h('span', { class: 'muted small' }, b.about + ' ' + (b.lists.length === 1 ? '1 list.' : b.lists.length + ' lists.')),
+        b.warning ? h('span', { class: 'small warn-text' }, ' ' + b.warning) : null))));
+    sync();
+  }).catch(e => fill(box, h('p', { class: 'muted small' }, "Couldn't load the categories: " + e.message)));
+  if (editor) {
+    editor.addEventListener('change', sync);
+    editor.addEventListener('click', () => setTimeout(sync));
+  }
+  box.read = () => all.filter(b => box.querySelector(`[data-bundle="${b.id}"]`)?.checked).flatMap(b => b.lists);
+  return box;
+}
 
 // servicePicker shows the service catalog as ticks grouped by category.
 // read() returns the ticked ids (or the starting ones until it has loaded).
@@ -3034,6 +3082,10 @@ async function settings(main) {
         h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'On'), h('th', {}, 'Name'), h('th', {}, 'URL or file path'), h('th', {}))), body)),
         h('div', { class: 'row mt-s' },
           h('button', { type: 'button', onclick: () => addRow({ name: '', url: '', enabled: true }) }, 'Add list'), presets));
+      const rowOf = (url) => [...body.rows].find(r => r.querySelector('[data-f=url]').value.trim() === url);
+      el.enabled = (url) => { const r = rowOf(url); return !!r && r.querySelector('[data-f=enabled]').checked; };
+      el.add = (l) => { const r = rowOf(l.url); if (r) r.querySelector('[data-f=enabled]').checked = true; else addRow({ name: l.name, url: l.url, enabled: true }); };
+      el.drop = (url) => { let r; while ((r = rowOf(url))) r.remove(); };
       el.read = () => [...body.rows].map(r => ({
         name: r.querySelector('[data-f=name]').value.trim(), url: r.querySelector('[data-f=url]').value.trim(), enabled: r.querySelector('[data-f=enabled]').checked,
       })).filter(l => l.url);
@@ -3050,6 +3102,9 @@ async function settings(main) {
           h('option', { value: 'null_ip', selected: fl.BlockMode === 'null_ip' }, '0.0.0.0 / :: (fastest for apps)'),
           h('option', { value: 'nxdomain', selected: fl.BlockMode === 'nxdomain' }, 'Domain does not exist (NXDOMAIN)'),
           h('option', { value: 'refused', selected: fl.BlockMode === 'refused' }, 'Refused')),
+        h('h3', { class: 'mt' }, 'Categories'),
+        h('p', { class: 'muted small' }, 'Tick a category to add its lists to the blocklists below, then Save. Categories stack on top of your protection level, and each list can still be switched off on its own.'),
+        bundlePicker(block),
         h('div', { class: 'row spread mt' }, h('h3', {}, 'Blocklists'), updateListsButton()), block,
         h('h3', {}, 'Allowlists'), h('p', { class: 'muted small' }, 'Domains on these lists are never blocked by a blocklist.'), allow,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
@@ -3228,7 +3283,91 @@ const HTTPS_MODES = [
   ['upload', 'Upload a certificate', 'Paste a certificate and its private key, for example one from your own certificate authority. You’ll need to paste a new one before it expires.'],
   ['files', 'Certificate files in a folder', 'Read the certificate from a folder mounted into the container, such as Nginx Proxy Manager’s, Traefik’s, Caddy’s or certbot’s. Renewals are picked up within a minute.'],
   ['npm', 'From Nginx Proxy Manager', 'Sign in to Nginx Proxy Manager and pick one of its certificates. DNServ downloads it again twice a day, so renewals arrive on their own.'],
+  ['acme', 'Let’s Encrypt (built in)', 'DNServ gets a free trusted certificate from Let’s Encrypt for the names you list, shares it with your other servers, and renews it 30 days before it expires. Your servers don’t need to be reachable from the internet: you prove you own the names with a DNS record.'],
 ];
+
+const ACME_METHODS = [
+  ['dns_api', 'Automatic, through my DNS host', 'DNServ adds and removes the records through your DNS host’s API. Nothing to do at renewal.'],
+  ['helper', 'Set once, with a CNAME record', 'Add one CNAME record per name, one time only. It points the check at an acme-dns server, which DNServ updates at each renewal. Works with any DNS host, even ones without an API.'],
+  ['manual', 'By hand', 'DNServ shows you a TXT record to add for each name and carries on once it sees them. The values change at every renewal (every 60 days or so), so you’ll do this again each time.'],
+];
+
+const stripMd = (t) => String(t || '').replace(/`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/\s*\(since v[\d.]+\)/g, '');
+
+// acmePanel is the Let's Encrypt part of the HTTPS card.
+function acmePanel(s) {
+  const a = s.acme || {};
+  const saved = new Set(a.saved_settings || []);
+  let hosts = null, hostCode = a.dns_host || '';
+  const method = h('select', { id: 'hamethod', name: 'acme_method' }, ACME_METHODS.map(([v, label]) => h('option', { value: v, selected: (a.method || 'dns_api') === v }, label)));
+  const methodNote = h('p', { class: 'muted small' });
+  const fields = h('div');
+  const hostInfo = h('div');
+  const hostPick = combo({ label: 'DNS host', placeholder: 'Type to search, such as Cloudflare', options: [], value: hostCode, onchange: (v) => { hostCode = v; drawFields(); } });
+  hostPick.addEventListener('focusin', loadHosts, { once: true });
+  async function loadHosts() {
+    if (hosts) return;
+    try {
+      hosts = (await api('GET', '/https/dns-hosts')).hosts || [];
+      hostPick.setOptions(hosts.map(x => ({ value: x.code, label: x.name, detail: x.code })));
+      drawFields();
+    } catch (e) { fill(hostInfo, msg('err', e.message)); }
+  }
+  const field = ([k, d], secret) => h('div', {},
+    h('label', { for: 'hds-' + k }, k),
+    h('input', { id: 'hds-' + k, 'data-setting': k, type: secret ? 'password' : 'text', spellcheck: 'false', autocomplete: 'new-password',
+      placeholder: saved.has(k) && a.dns_host === hostCode ? 'saved' : '' }),
+    h('p', { class: 'muted small' }, stripMd(d)));
+  function drawFields() {
+    const x = hosts && hosts.find(o => o.code === hostCode);
+    if (!x) { fill(fields); fill(hostInfo, hostCode && !hosts ? null : h('p', { class: 'muted small' }, 'About 190 DNS hosts are supported.')); return; }
+    const creds = x.credentials.filter(([, d]) => !/^alias to/i.test(d));
+    fill(hostInfo, h('p', { class: 'muted small' }, 'Fill in what your ', x.name, ' login needs; some hosts list alternatives, so you won’t need every box. Leave a saved value empty to keep it. ',
+      h('a', { href: 'https://go-acme.github.io/lego/dns/' + x.code + '/', target: '_blank', rel: 'noopener' }, 'How to get these for ' + x.name)));
+    fill(fields, creds.map(c => field(c, true)),
+      x.additional.length ? h('details', {}, h('summary', {}, 'More settings'), x.additional.map(c => field(c, false))) : null);
+  }
+  if (hostCode) loadHosts();
+  const records = (a.records || []);
+  const recordTable = records.length ? h('div', { class: 'scroll' }, h('table', {},
+    h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Type'), h('th', {}, 'Value'))),
+    h('tbody', {}, records.map(r => h('tr', {}, h('td', { class: 'mono small' }, r.name), h('td', {}, r.type), h('td', { class: 'mono small' }, r.value)))))) : null;
+  const helperBox = h('div', {},
+    h('label', { for: 'hahelper' }, 'acme-dns server'),
+    h('input', { id: 'hahelper', name: 'acme_helper', type: 'text', spellcheck: 'false', value: a.helper || '', placeholder: 'https://auth.acme-dns.io' }),
+    h('p', { class: 'muted small' }, 'Leave empty for the public one, or run your own (github.com/joohoi/acme-dns). Save, then add the CNAME records shown below at your DNS host.'),
+    a.method === 'helper' && records.length ? [msg('ok', 'Add these CNAME records at your DNS host, once. DNServ asks for the certificate as soon as they work.'), recordTable] : null);
+  const manualBox = h('div', {},
+    a.method === 'manual' && records.length ? [msg('warn', 'Add these TXT records at your DNS host now. DNServ checks every minute and carries on once it sees them.'), recordTable]
+      : a.method === 'manual' ? h('p', { class: 'muted small' }, 'After you save, the records to add appear here within a minute or two. Refresh this page to see them.') : null);
+  const apiBox = h('div', {}, h('label', {}, 'DNS host (where your domain’s DNS records are kept)'), hostPick, hostInfo, fields);
+  const showMethod = () => {
+    const m = method.value;
+    methodNote.textContent = (ACME_METHODS.find(x => x[0] === m) || [])[2] || '';
+    apiBox.hidden = m !== 'dns_api'; helperBox.hidden = m !== 'helper'; manualBox.hidden = m !== 'manual';
+  };
+  method.addEventListener('change', showMethod);
+  showMethod();
+  const panel = h('div', {},
+    h('label', { for: 'hanames' }, 'Names for the certificate (one per line)'),
+    h('textarea', { id: 'hanames', name: 'acme_names', class: 'short', spellcheck: 'false', placeholder: 'dns1.example.com\ndns2.example.com' }, (a.names || []).join('\n')),
+    h('p', { class: 'muted small' }, 'Names in a domain you own, one for each server. They only need to work on your network: point each at its server in Local names. One certificate lists them all and every server uses it, so no wildcard is needed.'),
+    h('label', { for: 'haemail' }, 'Email (optional)'),
+    h('input', { id: 'haemail', name: 'acme_email', type: 'text', inputmode: 'email', autocomplete: 'email', value: a.email || '', placeholder: 'you@example.com' }),
+    h('p', { class: 'muted small' }, 'Let’s Encrypt may use it to tell you about problems with your account.'),
+    h('label', { for: 'hamethod' }, 'How to prove you own the names'), method, methodNote,
+    apiBox, helperBox, manualBox,
+    h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'acme_staging', checked: !!a.staging }),
+      h('span', {}, 'Test run: use Let’s Encrypt’s staging service (browsers won’t trust the certificate)')));
+  panel.body = () => {
+    const settings = {};
+    fields.querySelectorAll('[data-setting]').forEach(i => { if (i.value.trim()) settings[i.dataset.setting] = i.value; });
+    const f = panel.closest('form');
+    return { method: method.value, names: lines(val(f, 'acme_names')), email: val(f, 'acme_email').trim(), staging: f.elements.acme_staging.checked,
+      helper: val(f, 'acme_helper').trim(), dns_host: hostPick.value, dns_settings: settings };
+  };
+  return panel;
+}
 
 function httpsCard(hs) {
   const s = hs.settings, servers = hs.servers || [];
@@ -3289,6 +3428,7 @@ function httpsCard(hs) {
     h('div', { class: 'actions left' }, listBtn), npmMsg,
     h('label', { for: 'hnpmcert' }, 'Certificate'), certSel,
     h('p', { class: 'muted small' }, 'Pick a certificate for the name you’ll open the dashboard with, such as dns1.example.com, and point that name at this server in Local names. A wildcard certificate (*.example.com) covers every server.'));
+  panels.acme = acmePanel(s);
 
   const redirect = h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'redirect', checked: s.redirect }),
     h('span', {}, 'Send browsers that open http:// to https://'));
@@ -3299,11 +3439,12 @@ function httpsCard(hs) {
       h('td', {}, n.server),
       h('td', {}, n.unreachable ? h('span', { class: 'badge warn', title: n.unreachable }, 'unreachable')
         : n.forced ? h('span', { class: 'badge warn', title: 'DNSERV_HTTPS=off is set on this server' }, 'forced off')
-        : n.on ? h('span', { class: 'badge ' + (n.error ? 'warn' : 'ok'), title: n.error || '' }, n.error ? 'on, with a problem' : 'on') : h('span', { class: 'badge' }, 'off')),
+        : n.on ? h('span', { class: 'badge ' + (n.error ? 'warn' : 'ok'), title: n.error || '' }, n.error ? 'on, with a problem' : 'on') : h('span', { class: 'badge' }, 'off'),
+        n.requesting ? h('span', { class: 'badge', title: 'This server is asking Let’s Encrypt for the certificate' }, 'requesting…') : null),
       h('td', { class: 'small' }, n.cert ? [n.cert.self_signed ? 'self-signed' : (n.cert.issuer || ''), ' · ', (n.cert.names || []).slice(0, 3).join(', ')] : '—'),
       h('td', { class: 'small' }, n.cert ? new Date(n.cert.not_after).toLocaleDateString() : '—'))))))
     : null;
-  const problems = servers.filter(n => n.error).map(n => msg('warn', n.server + ': ' + n.error + (n.cert && n.cert.self_signed && s.mode !== 'self_signed' ? ' Using a self-signed certificate until this is fixed.' : '')));
+  const problems = servers.filter(n => n.error && n.error !== s.fetch_error).map(n => msg('warn', n.server + ': ' + n.error + (n.cert && n.cert.self_signed && s.mode !== 'self_signed' ? ' Using a self-signed certificate until this is fixed.' : '')));
 
   const card = h('div', { class: 'card' },
     h('h2', {}, 'Dashboard HTTPS'),
@@ -3317,6 +3458,7 @@ function httpsCard(hs) {
       if (m === 'self_signed') body.names = lines(val(f, 'names'));
       if (m === 'upload') { body.cert_pem = val(f, 'cert'); body.key_pem = val(f, 'key'); }
       if (m === 'files') { body.cert_file = val(f, 'cert_file').trim(); body.key_file = val(f, 'key_file').trim(); }
+      if (m === 'acme') body.acme = panels.acme.body();
       if (m === 'npm') body.npm = { url: val(f, 'npm_url').trim(), email: val(f, 'npm_email').trim(), password: val(f, 'npm_password'), cert_id: Number(certSel.value) || 0 };
       const r = await api('PUT', '/https', body);
       fill(box, httpsCard(r));

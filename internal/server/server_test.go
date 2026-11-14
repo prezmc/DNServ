@@ -341,22 +341,22 @@ func TestPauseFiltering(t *testing.T) {
 	if r := query(t, addr, "tracker.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
 		t.Fatal("want blocked before the pause")
 	}
-	s.SetPause(true, time.Time{})
+	s.SetPause(true, time.Time{}, false)
 	if r := query(t, addr, "tracker.ads.example", dns.TypeA, "udp"); isBlocked(r) || up.calls.Load() != 1 {
 		t.Fatalf("paused: want a real answer, got %v", r)
 	}
 	if r := query(t, addr, "use-application-dns.net", dns.TypeA, "udp"); r.Rcode == dns.RcodeNameError {
 		t.Fatal("paused: Firefox canary still blocked")
 	}
-	s.SetPause(true, time.Now().Add(-time.Second)) // already over
+	s.SetPause(true, time.Now().Add(-time.Second), false) // already over
 	if r := query(t, addr, "tracker.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
 		t.Fatal("expired pause still lets blocked names through")
 	}
-	s.SetPause(true, time.Now().Add(time.Minute))
+	s.SetPause(true, time.Now().Add(time.Minute), false)
 	if r := query(t, addr, "x.ads.example", dns.TypeA, "udp"); isBlocked(r) {
 		t.Fatal("timed pause not applied")
 	}
-	s.SetPause(false, time.Time{})
+	s.SetPause(false, time.Time{}, false)
 	if r := query(t, addr, "x.ads.example", dns.TypeA, "udp"); !isBlocked(r) {
 		t.Fatal("want blocked after resume")
 	}
@@ -426,5 +426,35 @@ func TestAnswerIPBlocking(t *testing.T) {
 	s.SetPolicy(policy.Build(st))
 	if r := query(t, addr, "www.example.com", dns.TypeA, "udp"); isBlocked(r) {
 		t.Fatalf("an allowed name keeps its answer: %v", r)
+	}
+}
+
+func TestPauseKeepsSchedules(t *testing.T) {
+	s, addr := newTestServer(t, nil, &fakeResolver{})
+	st := &store.State{
+		Groups: map[string]*store.Group{"kids": {ID: "kids", Name: "Kids", Rules: []string{"||games.example^", "@@||school.example^"},
+			Schedules: []store.Schedule{{Name: "Bedtime", Days: []int{0, 1, 2, 3, 4, 5, 6}, Start: "00:00", End: "00:00", BlockAll: true}}}},
+		Devices: map[string]*store.Device{"me": {ID: "me", Name: "Me", Addrs: []string{"127.0.0.1"}, Group: "kids"}},
+	}
+	s.SetPolicy(policy.Build(st))
+	s.SetPause(true, time.Time{}, false)
+	if r := query(t, addr, "www.example.com", dns.TypeA, "udp"); !isBlocked(r) {
+		t.Fatalf("paused: bedtime schedule should still block: %v", r)
+	}
+	if r := query(t, addr, "school.example", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("paused: group allow rule should still beat the schedule: %v", r)
+	}
+	s.SetPause(true, time.Time{}, true)
+	if r := query(t, addr, "www.example.com", dns.TypeA, "udp"); isBlocked(r) {
+		t.Fatalf("schedules paused too: want a real answer: %v", r)
+	}
+	// No schedule running: a pause lifts group rules and lists.
+	st.Groups["kids"].Schedules = nil
+	s.SetPolicy(policy.Build(st))
+	s.SetPause(true, time.Time{}, false)
+	for _, n := range []string{"games.example", "x.ads.example"} {
+		if r := query(t, addr, n, dns.TypeA, "udp"); isBlocked(r) {
+			t.Fatalf("paused: %s still blocked: %v", n, r)
+		}
 	}
 }
