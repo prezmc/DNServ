@@ -112,7 +112,7 @@ step('DNS answers through the fake upstream', async () => {
 });
 
 step('every page opens without errors', async () => {
-  const pages = [['', 'Dashboard'], ['devices', 'Devices'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['queries', 'Query log'],
+  const pages = [['', 'Dashboard'], ['devices', 'Devices'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['traffic', 'Traffic map'], ['queries', 'Query log'],
     ['names', 'Local names'], ['settings', 'Settings'], ['users', 'Users'], ['cluster', 'Cluster'], ['backups', 'Backups & history'],
     ['import', 'Import from AdGuard Home'], ['audit', 'Audit log'], ['account', 'Your account']];
   for (const [hash, title] of pages) {
@@ -215,6 +215,35 @@ step('dashboard shows the lookups', async () => {
   await page.locator('.dev-profile').getByText(/Profile:/).waitFor();
   const devices = await page.locator('.d-flow .flow-node').evaluateAll(ns => ns.filter(n => n.querySelector('text') && n.getBoundingClientRect().left < 300).length);
   assert.equal(devices, 1, 'one device on the map');
+  await page.getByRole('button', { name: 'All devices' }).click();
+  await until('the full map', async () => (await page.locator('.flow-focus').count()) === 0);
+});
+
+step('the traffic map finds any device, not just the busiest', async () => {
+  // Twelve more devices: more than the map has room for, so the quietest
+  // one is folded into Other devices and can only be found by search.
+  for (let i = 2; i <= 13; i++) {
+    for (let j = 0; j < 16 - i; j++) await lookup(node.dnsPort, 'd' + i + '-' + j + '.example.test', 3000, '127.0.0.' + i);
+  }
+  await go('devices');
+  await page.getByRole('link', { name: 'Traffic map' }).first().waitFor();
+  await go('traffic');
+  await heading('Traffic map').waitFor();
+  await until('the quiet device folded away', async () => {
+    await go('traffic');
+    return (await page.locator('.flow-node').getByText(/Other devices/).count()) > 0;
+  });
+  const search = page.getByRole('combobox', { name: 'Show one device' });
+  await search.click();
+  await search.fill('127.0.0.13');
+  await page.getByRole('option', { name: /127\.0\.0\.13/ }).click();
+  await page.locator('.flow-focus').getByText(/Showing only/).waitFor();
+  assert.match(page.url(), /#\/traffic\?device=127\.0\.0\.13/, 'the address follows the device');
+  await until('only that device on the map', async () => (await page.locator('.flow-node text').first().textContent()) === '127.0.0.13');
+  await page.locator('.dev-profile').getByText(/Profile:/).waitFor();
+  // A link straight to a device opens its map.
+  await go('traffic?device=127.0.0.12');
+  await page.locator('.flow-focus').getByText(/Showing only/).waitFor();
   await page.getByRole('button', { name: 'All devices' }).click();
   await until('the full map', async () => (await page.locator('.flow-focus').count()) === 0);
 });
