@@ -878,7 +878,7 @@ function fmtEvery(sec) {
 // the devices; the buttons block or allow the name.
 async function beaconsCard(box) {
   let d;
-  try { d = await api('GET', '/analytics/beacons?range=24h&limit=8'); } catch (_) { return; }
+  try { d = await api('GET', '/analytics/beacons?range=24h&limit=6'); } catch (_) { return; }
   if (!d.detail) { box.replaceChildren(); return; }
   const rows = d.domains || [];
   const who = (x) => (x.who || []).map(w => w.label + (w.label !== w.addr ? ' (' + w.addr + ')' : '') + ': ' + fmtEvery(w.period) + ', ' + fmtNum(w.n) + ' lookups').join('\n');
@@ -899,11 +899,19 @@ async function beaconsCard(box) {
 // DASH_CARDS are the dashboard cards a user can move, widen or hide, in
 // their default order.
 // Each has a default size: s(mall), m(edium), l(arge) or f(ull width).
+// The defaults are paired so rows line up at every width: on wide screens
+// chart + servers, three small lists, then two halves per row (the two
+// long lists side by side, then the two short cards); on medium screens,
+// where small cards are halves, servers pairs with top domains.
 const DASH_CARDS = [
   ['tiles', 'Totals', 'f'], ['security', 'Security', 'm'], ['health', 'Health', 'm'], ['chart', 'Queries chart', 'l'], ['servers', 'Servers', 's'],
-  ['flow', 'Traffic map', 'f'], ['domains', 'Top domains', 's'], ['blocked', 'Top blocked', 's'], ['devices', 'Devices', 's'], ['beacons', 'Repeating lookups', 'm'], ['perf', 'Response times', 's'],
-  ['top', 'Top blocking lists', 's'], ['check', 'Check a domain', 's'], ['lists', 'Lists', 'f'],
+  ['domains', 'Top domains', 's'], ['blocked', 'Top blocked', 's'], ['devices', 'Devices', 's'], ['flow', 'Traffic map', 'f'],
+  ['beacons', 'Repeating lookups', 'm'], ['top', 'Top blocking lists', 'm'], ['perf', 'Response times', 'm'], ['check', 'Check a domain', 'm'], ['lists', 'Lists', 'f'],
 ];
+// DASH_OLD_SIZES are the default sizes before November 2026. Layouts saved
+// back then name a card without its size when it had the default, so
+// those cards keep the size they had; layouts saved since always say.
+const DASH_OLD_SIZES = { perf: 's', top: 's', check: 's' };
 // DASH_SIZES are the sizes as columns of 12: on wide screens, medium
 // screens (small and medium become half, large full) and phones (all full).
 const DASH_SIZES = { s: [4, 6, 12, 'Small'], m: [6, 6, 12, 'Medium'], l: [8, 12, 12, 'Large'], f: [12, 12, 12, 'Full width'] };
@@ -918,7 +926,7 @@ function dashLayout(saved) {
     const hidden = e.startsWith('-'), [name, flag] = e.replace(/^-/, '').split(':');
     if (!known.has(name) || seen.has(name)) continue;
     seen.add(name);
-    const k = known.get(name), size = flag === 'w' ? 'f' : DASH_SIZES[flag] ? flag : k.size;
+    const k = known.get(name), size = flag === 'w' ? 'f' : DASH_SIZES[flag] ? flag : DASH_OLD_SIZES[name] || k.size;
     out.push({ name, label: k.label, hidden, size, def: k.size });
   }
   DASH_CARDS.forEach(([name, label, size], i) => {
@@ -935,7 +943,7 @@ function dashLayout(saved) {
 function dashSaved(cards) {
   const def = DASH_CARDS.map(([n]) => n).join();
   if (cards.map(c => c.name).join() === def && !cards.some(c => c.hidden || c.size !== c.def)) return [];
-  return cards.map(c => (c.hidden ? '-' : '') + c.name + (c.size !== c.def ? ':' + c.size : ''));
+  return cards.map(c => (c.hidden ? '-' : '') + c.name + ':' + c.size);
 }
 
 // applyDashLayout orders, sizes and hides the cards with one style sheet,

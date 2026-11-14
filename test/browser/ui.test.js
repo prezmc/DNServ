@@ -271,7 +271,14 @@ step('arranging the dashboard is saved with the account', async () => {
   await heading('Dashboard').waitFor();
   assert.equal(await page.locator('.d-check').isVisible(), false, 'hidden card stays hidden');
   const me = await api('GET', '/auth/me');
-  assert.ok((me.dashboard || []).includes('-check'));
+  assert.ok((me.dashboard || []).includes('-check:m'), 'saved: ' + me.dashboard);
+  // A layout saved before the defaults changed names cards without their
+  // size; those cards keep the size they had then (small: 4 of 12).
+  await api('PUT', '/auth/dashboard', { layout: ['tiles', 'perf', 'top', 'check'] });
+  await page.reload(); await page.waitForLoadState('networkidle');
+  await heading('Dashboard').waitFor();
+  const span = await page.locator('.d-check').evaluate(el => getComputedStyle(el).gridColumnStart);
+  assert.equal(span, 'span 4', 'old layout keeps small cards small');
   await api('PUT', '/auth/dashboard', { layout: [] });
 });
 

@@ -170,7 +170,7 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bad-text { color: var(--bad); }
 
 /* dashboard: one grid, so cards sit side by side on wide screens */
-.dash { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: .75rem; align-items: start; }
+.dash { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: .75rem; align-items: stretch; }
 .dash > div:not(.card), .dash .cols { display: contents; }
 .dash > *, .dash > div > *, .dash .cols > * { grid-column: 1 / -1; margin: 0; }
 .dash, .dash * { overflow-anchor: none; }
@@ -191,19 +191,19 @@ a.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .dash .d-tiles { order: 1; }
 .dash .d-wait { order: 2; }
 .dash .d-security { order: 2; }
-.dash .d-chart { order: 3; }
-.dash .d-flow { order: 4; }
-.dash .d-health { order: 4; }
+.dash .d-health { order: 3; }
+.dash .d-chart { order: 4; }
 .dash .d-servers { order: 5; }
 .dash .d-domains { order: 6; }
 .dash .d-blocked { order: 7; }
 .dash .d-devices { order: 8; }
-.dash .d-perf { order: 9; }
-.dash .d-top { order: 10; }
-.dash .d-check { order: 11; }
-.dash .d-lists { order: 12; }
+.dash .d-flow { order: 9; }
+.dash .d-beacons { order: 10; }
+.dash .d-top { order: 11; }
+.dash .d-perf { order: 12; }
+.dash .d-check { order: 13; }
+.dash .d-lists { order: 14; }
 .dash .d-ver { order: 99; }
-.dash > div > .card, .dash .cols > .card { align-self: stretch; }
 /* Card order and sizes come from the layout (applyDashLayout in app.js). */
 .dash .d-health th, .dash .d-health td:not(:first-child) { white-space: nowrap; }
 .servers .server { padding: .7rem 0; border-bottom: 1px solid var(--line); }
