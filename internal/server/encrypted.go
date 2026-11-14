@@ -135,6 +135,9 @@ func (s *Server) StartEncrypted(cert tls.Certificate, pick func(*tls.ClientHello
 		}
 		mux := http.NewServeMux()
 		mux.HandleFunc(tc.DoHPath, s.ServeDoH)
+		// Everything else is the dashboard, so https://<name>/ works on
+		// the standard port as well as on the dashboard's own port.
+		mux.HandleFunc("/", s.serveWeb)
 		hs := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 		go hs.Serve(ln)
 		s.mu.Lock()
@@ -144,6 +147,18 @@ func (s *Server) StartEncrypted(cert tls.Certificate, pick func(*tls.ClientHello
 		s.log.Info("dns over https listening", "addr", ln.Addr(), "path", tc.DoHPath)
 	}
 	return nil
+}
+
+// SetWebHandler sets what the DNS over HTTPS listener serves for paths
+// other than the DoH path (the dashboard).
+func (s *Server) SetWebHandler(h http.Handler) { s.web.Store(&h) }
+
+func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
+	if h := s.web.Load(); h != nil {
+		(*h).ServeHTTP(w, r)
+		return
+	}
+	http.NotFound(w, r)
 }
 
 // DoHAddrs returns the bound DoH addresses.

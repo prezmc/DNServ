@@ -78,7 +78,8 @@ sudo systemctl restart systemd-resolved
 The servers find each other by the addresses on the Cluster page. If they are
 on different networks (two sites over a VPN, for example), set
 `DNSERV_CLUSTER_ADVERTISE=<address the other server uses>:8081` in each
-compose file.
+server's `.env` file (see [`.env.example`](../.env.example)). Do the same if
+you moved the cluster port with `DNSERV_CLUSTER_PORT`, using the new port.
 
 ## What happens when
 

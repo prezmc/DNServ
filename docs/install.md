@@ -2,11 +2,30 @@
 
 ```bash
 docker run -d --name dnserv --restart unless-stopped \
-  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 8080:8080 -p 8081:8081 \
+  -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
   -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
 ```
 
 or `docker compose up -d` with the included `docker-compose.yml`.
+
+### Ports
+
+| Port | What for |
+|---|---|
+| 53 (UDP and TCP) | DNS for your devices |
+| 853 | DNS over TLS (Android Private DNS and similar) |
+| 443 | The dashboard over HTTPS at `https://<name>/`, and DNS over HTTPS |
+| 8080 | The dashboard and setup wizard (HTTP, and HTTPS once it's on) |
+| 8081 | Other DNServ servers in the same cluster |
+
+If something on the server already uses one of these, such as a web server
+or reverse proxy on 443, Docker refuses to start the container with
+"port is already allocated". With compose, copy
+[`.env.example`](../.env.example) to `.env` next to `docker-compose.yml` and
+pick another host port there, for example `DNSERV_HTTPS_PORT=8443`. With
+`docker run`, change the left-hand number, for example `-p 8443:443`.
+Keeping your changes in `.env` means you can download a new
+`docker-compose.yml` whenever it changes without editing it again.
 
 No config file is needed. On first start the node prints a one-time setup
 code in its log:
@@ -86,24 +105,28 @@ Notes:
 Environment variables override the optional config file; settings saved in
 the dashboard or API override both.
 
-## Upgrading from DNServe
+## Moving an existing server to the standard compose file
 
-The project was called DNServe until November 2026. Servers set up under
-the old name keep their data, but a few names changed. In each server's
-`docker-compose.yml`:
+Servers set up with an older compose file (including ones from before the
+DNServe to DNServ rename) or with `docker run` can switch to the standard
+`docker-compose.yml` and keep everything. In the server's folder:
 
-1. Change the image to `ghcr.io/prezmc/dnserv:latest`. The old image
-   name gets no more updates.
-2. Rename every `DNSERVE_` environment variable to `DNSERV_` (for
-   example `DNSERVE_CLUSTER_ADVERTISE` becomes `DNSERV_CLUSTER_ADVERTISE`).
-   The old names are ignored.
-3. Leave the `volumes:` lines as they are. The volume holds your settings
-   and history, and a new volume name would start an empty server.
+1. Find the data volume the current container uses:
+   `docker inspect <container name> --format '{{range .Mounts}}{{.Name}} {{end}}'`
+   (the container name is in `docker ps`, for example `dnserve`).
+2. Stop the old container: `docker compose down` (or `docker rm -f <name>`
+   for `docker run`). This keeps the volume and your data.
+3. Download the standard file:
+   `curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml`
+4. Create `.env` next to it with `DNSERV_VOLUME=<the volume name from step 1>`
+   and anything else this server needs from [`.env.example`](../.env.example),
+   such as `TZ` or a different cluster port with its
+   `DNSERV_CLUSTER_ADVERTISE`. Settings that used to be `DNSERVE_...`
+   variables are now `DNSERV_...`.
+5. `docker compose pull && docker compose up -d`, then open the dashboard
+   and check your settings and history are there.
 
-Then run `docker compose pull && docker compose up -d`. Update every
-server: nodes on either side of the rename still talk to each other, so
-the order doesn't matter. You'll need to sign in again, and Prometheus
-metrics now start with `dnserv_`. Backups made before the rename restore
-as normal.
+You'll need to sign in again after the rename, and Prometheus metrics start
+with `dnserv_`. Backups made before the rename restore as normal.
 
 [Back to the README](../README.md)

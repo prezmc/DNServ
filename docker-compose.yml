@@ -1,5 +1,10 @@
-# Single node: `docker compose up -d`, then open http://<host>:8080.
+# DNServ: `docker compose up -d`, then open http://<this server>:8080.
 # No config files needed; settings live in the dnserv-data volume.
+#
+# This file works as it is. If something on this server already uses one
+# of the ports below, or you're setting up a second server, put your
+# changes in a file called .env next to this one (see .env.example), so
+# you can download a new docker-compose.yml any time without losing them.
 services:
   dnserv:
     image: ghcr.io/prezmc/dnserv:latest
@@ -8,16 +13,16 @@ services:
     ports:
       - "53:53/udp"
       - "53:53/tcp"
-      - "853:853/tcp"     # DNS over TLS for your devices
-      - "8080:8080/tcp"   # dashboard, setup wizard, health and metrics
-      - "8081:8081/tcp"   # node-to-node (clustering); only other DNServ nodes need it
-      # DNS over HTTPS. Uncomment if nothing else on the host uses 443,
-      # or map another host port, e.g. "8443:443/tcp".
-      # - "443:443/tcp"
+      - "853:853/tcp"                              # DNS over TLS for your devices
+      - "${DNSERV_HTTPS_PORT:-443}:443/tcp"        # dashboard over HTTPS (https://<name>/) and DNS over HTTPS
+      - "${DNSERV_WEB_PORT:-8080}:8080/tcp"        # dashboard, setup wizard, health and metrics
+      - "${DNSERV_CLUSTER_PORT:-8081}:8081/tcp"    # node-to-node (clustering); only other DNServ servers use it
     volumes:
       - dnserv-data:/data
     environment:
-      - TZ=America/Chicago   # your time zone, used by schedules
+      - TZ=${TZ:-UTC}                                         # your time zone, used by schedules
+      - DNSERV_CLUSTER_ADVERTISE=${DNSERV_CLUSTER_ADVERTISE:-} # only when other servers must reach this one at a different address or port
 
 volumes:
   dnserv-data:
+    name: ${DNSERV_VOLUME:-}   # empty: the usual name; set in .env to keep using an existing volume

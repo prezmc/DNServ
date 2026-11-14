@@ -3377,23 +3377,44 @@ function acmePanel(s) {
     if (hosts) return;
     try {
       hosts = (await api('GET', '/https/dns-hosts')).hosts || [];
-      hostPick.setOptions(hosts.map(x => ({ value: x.code, label: x.name, detail: x.code })));
+      hostPick.setOptions(hosts.map(x => ({ value: x.code, label: x.name, detail: x.name.toLowerCase().replace(/\s+/g, '') === x.code ? '' : x.code })));
       drawFields();
     } catch (e) { fill(hostInfo, msg('err', e.message)); }
   }
-  const field = ([k, d], secret) => h('div', {},
-    h('label', { for: 'hds-' + k }, k),
+  const savedHere = (k) => saved.has(k) && a.dns_host === hostCode;
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  // One box: a plain label, with lego's setting name small underneath for
+  // anyone following its documentation.
+  const input = (k, label, secret, hint, note) => h('div', {},
+    h('label', { for: 'hds-' + k }, label),
     h('input', { id: 'hds-' + k, 'data-setting': k, type: secret ? 'password' : 'text', spellcheck: 'false', autocomplete: 'new-password',
-      placeholder: saved.has(k) && a.dns_host === hostCode ? 'saved' : '' }),
-    h('p', { class: 'muted small' }, stripMd(d)));
+      placeholder: savedHere(k) ? 'saved' : (hint || '') }),
+    h('p', { class: 'muted small' }, note ? [note, ' · '] : null, h('code', {}, k)));
+  const generic = ([k, d], secret) => {
+    const text = stripMd(d).replace(/^Managed by the AWS client\.?\s*/i, '');
+    return input(k, cap(text.split(/[.(]/)[0].replace(/^the\s+/i, '').trim() || k), secret, '', text.includes('(') || text.includes('.') ? text : null);
+  };
   function drawFields() {
     const x = hosts && hosts.find(o => o.code === hostCode);
     if (!x) { fill(fields); fill(hostInfo, hostCode && !hosts ? null : h('p', { class: 'muted small' }, 'About 190 DNS hosts are supported.')); return; }
     const creds = x.credentials.filter(([, d]) => !/^alias to/i.test(d));
-    fill(hostInfo, h('p', { class: 'muted small' }, 'Fill in what your ', x.name, ' login needs; some hosts list alternatives, so you won’t need every box. Leave a saved value empty to keep it. ',
-      h('a', { href: 'https://go-acme.github.io/lego/dns/' + x.code + '/', target: '_blank', rel: 'noopener' }, 'How to get these for ' + x.name)));
-    fill(fields, creds.map(c => field(c, true)),
-      x.additional.length ? h('details', {}, h('summary', {}, 'More settings'), x.additional.map(c => field(c, false))) : null);
+    const guide = h('a', { href: 'https://go-acme.github.io/lego/dns/' + x.code + '/', target: '_blank', rel: 'noopener' }, 'Full details for ' + x.name);
+    const more = x.additional.length ? h('details', {}, h('summary', {}, 'More settings'), x.additional.map(c => generic(c, false))) : null;
+    if (x.main && x.main.length) {
+      const mainVars = new Set(x.main.map(f => f.var));
+      const others = creds.filter(([k]) => !mainVars.has(k));
+      const usingOther = others.some(([k]) => savedHere(k));
+      fill(hostInfo, h('p', { class: 'muted small' }, x.help, ' ', guide, '.'));
+      fill(fields, x.main.map(f => input(f.var, f.label + (f.optional ? ' (optional)' : ''), f.secret, f.hint)),
+        h('p', { class: 'muted small' }, 'Saved values aren’t shown again; leave a box empty to keep it.'),
+        others.length ? h('details', { open: usingOther }, h('summary', {}, 'Other ways to sign in'),
+          h('p', { class: 'muted small' }, 'Only if you can’t use the above. Fill in one way, not all of these.'),
+          others.map(c => generic(c, true))) : null,
+        more);
+      return;
+    }
+    fill(hostInfo, h('p', { class: 'muted small' }, 'Fill in what your ', x.name, ' login needs. Some hosts list alternatives, so you won’t need every box. Leave a saved value empty to keep it. ', guide, '.'));
+    fill(fields, creds.map(c => generic(c, true)), more);
   }
   if (hostCode) loadHosts();
   const records = (a.records || []);
@@ -3516,7 +3537,8 @@ function httpsCard(hs) {
 
   const card = h('div', { class: 'card' },
     h('h2', {}, 'Dashboard HTTPS'),
-    h('p', { class: 'muted' }, 'Encrypts the dashboard and its sign-in on your network. HTTPS uses the same port as now (8080): open ', h('code', {}, 'https://'), ' instead of ', h('code', {}, 'http://'), '. Plain HTTP keeps working unless you turn on the redirect.'),
+    h('p', { class: 'muted' }, 'Encrypts the dashboard and its sign-in on your network. Plain HTTP keeps working unless you turn on the redirect.'),
+    s.mode ? h('p', { class: 'muted small' }, 'Open ', h('code', {}, 'https://<name>/'), ' (port 443) or ', h('code', {}, 'https://<name>:8080'), '. Port 443 only answers if the container publishes it: the current docker-compose.yml does (', h('code', {}, '443:443'), '). If it won’t connect, add that line, or if something else on the server uses 443, set ', h('code', {}, 'DNSERV_HTTPS_PORT=8443'), ' in .env and use that port.') : null,
     form({ 'data-track': true }, [
       h('label', { for: 'hmode' }, 'Certificate'), mode, note,
       Object.values(panels), redirect,

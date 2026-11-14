@@ -4,8 +4,10 @@ The dashboard is plain HTTP on port 8080 until you turn HTTPS on. An admin
 does that under **Settings → Dashboard HTTPS**, and the choice applies to
 every server in the cluster.
 
-HTTPS uses the same port. Open `https://<server>:8080` instead of
-`http://`. Plain HTTP keeps working, unless you tick **Send browsers that
+Once it's on, open `https://<name>/` (port 443, published by the included
+`docker-compose.yml`) or `https://<name>:8080`. Port 443 is shared with DNS
+over HTTPS. If something else on the server uses 443, set another port in
+`.env` (see [Installing](install.md#ports)) or just use port 8080. Plain HTTP keeps working, unless you tick **Send browsers that
 open http:// to https://**. The API, `/healthz` and `/metrics` are never
 redirected, so scripts and health checks keep working.
 

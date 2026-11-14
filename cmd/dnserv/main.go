@@ -597,8 +597,10 @@ func run() error {
 	})
 	httpsMgr.Attach(webLn)
 	go httpsMgr.Run(ctx)
+	webHandler := httpHandler(srv, c, engine, &up, &filterReady, adm.Handler())
+	srv.SetWebHandler(webHandler) // the dashboard on the DNS over HTTPS port (443) too
 	httpSrv := &http.Server{
-		Handler:           httpsMgr.RedirectHTTPS(httpHandler(srv, c, engine, &up, &filterReady, adm.Handler())),
+		Handler:           httpsMgr.RedirectHTTPS(webHandler),
 		ReadHeaderTimeout: 5 * time.Second,
 		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelDebug), // TLS handshake noise
 	}
