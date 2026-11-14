@@ -82,7 +82,7 @@ func TestDockerReplace(t *testing.T) {
 	ctx := context.Background()
 	// Pull of the same image: nothing to do.
 	sh(t, "docker", "pull", "-q", "localhost:5000/updtest:latest")
-	if st, msg := s.Replace(ctx, ""); st != JobUpToDate {
+	if st, msg := s.Replace(ctx, Request{}); st != JobUpToDate {
 		t.Fatalf("same image: %s %s", st, msg)
 	}
 	if st := s.Status(ctx); st.Target != "updtest" || st.Revision != r1 || st.Image != "localhost:5000/updtest:latest" {
@@ -91,7 +91,7 @@ func TestDockerReplace(t *testing.T) {
 
 	// A good new version replaces the container, keeping its settings.
 	pushVersion(t, r2, good)
-	if st, msg := s.Replace(ctx, ""); st != JobDone {
+	if st, msg := s.Replace(ctx, Request{}); st != JobDone {
 		t.Fatalf("v2: %s %s", st, msg)
 	}
 	f := `{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "com.example.mine"}} {{.HostConfig.RestartPolicy.Name}} {{(index (index .HostConfig.PortBindings "53/udp") 0).HostPort}} {{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}} {{range .Mounts}}{{.Name}},{{end}} {{.State.Health.Status}}`
@@ -112,7 +112,7 @@ func TestDockerReplace(t *testing.T) {
 
 	// Rolling back goes to the earlier version's sha- tag, and remembers
 	// that the container follows :latest, so the next update returns.
-	if st, msg := s.Replace(ctx, r1); st != JobDone {
+	if st, msg := s.Replace(ctx, Request{Revision: r1}); st != JobDone {
 		t.Fatalf("rollback to r1: %s %s", st, msg)
 	}
 	lf := `{{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "` + labelTrack + `"}}`
@@ -122,7 +122,7 @@ func TestDockerReplace(t *testing.T) {
 	if st := s.Status(ctx); st.Image != "localhost:5000/updtest:latest" || st.Revision != r1 {
 		t.Fatalf("status after rollback %+v", st)
 	}
-	if st, msg := s.Replace(ctx, ""); st != JobDone {
+	if st, msg := s.Replace(ctx, Request{}); st != JobDone {
 		t.Fatalf("update after rollback: %s %s", st, msg)
 	}
 	if got := sh(t, "docker", "inspect", "-f", lf, "updtest"); got != r2 {
@@ -131,7 +131,7 @@ func TestDockerReplace(t *testing.T) {
 
 	// A version that won't start is undone.
 	pushVersion(t, r3, "exit 3")
-	if st, msg := s.Replace(ctx, ""); st != JobRolledBack {
+	if st, msg := s.Replace(ctx, Request{}); st != JobRolledBack {
 		t.Fatalf("v3: %s %s", st, msg)
 	}
 	if got := sh(t, "docker", "inspect", "-f", `{{index .Config.Labels "org.opencontainers.image.revision"}} {{.State.Running}}`, "updtest"); got != r2+" true" {
@@ -141,7 +141,7 @@ func TestDockerReplace(t *testing.T) {
 	// One that starts but never becomes healthy is undone too.
 	pushVersion(t, r4, "trap 'exit 0' TERM; sleep 3600 & wait")
 	s.HealthWait = 8 * time.Second
-	if st, msg := s.Replace(ctx, ""); st != JobRolledBack {
+	if st, msg := s.Replace(ctx, Request{}); st != JobRolledBack {
 		t.Fatalf("v4: %s %s", st, msg)
 	}
 	if got := sh(t, "docker", "inspect", "-f", `{{index .Config.Labels "org.opencontainers.image.revision"}} {{.State.Running}}`, "updtest"); got != r2+" true" {

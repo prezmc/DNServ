@@ -731,6 +731,12 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		if d.AutoHour < 0 || d.AutoHour > 23 {
 			return nil, nil, errors.New("auto_hour must be 0-23")
 		}
+		if d.Channel == "stable" {
+			d.Channel = ""
+		}
+		if d.Channel != "" && d.Channel != "latest" {
+			return nil, nil, errors.New(`channel must be "stable" or "latest"`)
+		}
 		before := st.Updates
 		d.Skip = before.Skip // set by rollbacks only
 		st.Updates = d

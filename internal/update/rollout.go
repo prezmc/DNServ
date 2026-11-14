@@ -284,7 +284,7 @@ func (m *Manager) runRollout(nodes []NodeInfo) {
 		}
 		if s.Self {
 			m.step(i, StepRestarting, "restarting; this page reconnects when the server is back")
-			if _, err := m.Sidecar.Start(ctx, rev); err != nil {
+			if _, err := m.Sidecar.Start(ctx, Request{Revision: rev, Channel: m.channel()}); err != nil {
 				m.step(i, StepFailed, err.Error())
 				m.end(RolloutFailed, "this server couldn't start: "+err.Error())
 				return
@@ -319,7 +319,7 @@ func summary(done, of int, rollback bool) string {
 func (m *Manager) updatePeer(ctx context.Context, s Step, rev string) (string, string) {
 	wait, poll, settle := m.durations()
 	actx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	raw, err := m.Peers.Ask(actx, s.ID, RPCStart, map[string]string{"revision": rev})
+	raw, err := m.Peers.Ask(actx, s.ID, RPCStart, Request{Revision: rev, Channel: m.channel()})
 	cancel()
 	if err != nil {
 		return StepFailed, "couldn't start: " + err.Error()

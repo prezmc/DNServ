@@ -1,0 +1,87 @@
+name: Release
+
+# Makes a numbered release: Actions > Release > Run workflow, pick how big
+# the change is (or type an exact version), Run. It
+#
+#   1. works out the next version from the newest v* tag,
+#   2. tags main's current commit and publishes a GitHub Release whose notes
+#      list the pull requests merged since the last release,
+#   3. starts "Publish image" for the tag, which pushes :1.2.3, :1.2 and
+#      :stable. Servers on the releases channel see it on their Updates
+#      page within a few hours (or at once with "Check now").
+#
+# See docs/releasing.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: How big the change is (ignored when a version is given)
+        type: choice
+        options: [patch, minor, major]
+        default: minor
+      version:
+        description: Exact version instead, like 1.0.0 (optional)
+        type: string
+        required: false
+
+permissions:
+  contents: write  # tag and release
+  actions: write   # start Publish image
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Work out the version
+        id: v
+        env:
+          BUMP: ${{ inputs.bump }}
+          WANT: ${{ inputs.version }}
+        run: |
+          last=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+          if [ -n "$WANT" ]; then
+            next="${WANT#v}"
+            if ! [[ "$next" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::version must look like 1.2.3"; exit 1
+            fi
+          elif [ -z "$last" ]; then
+            next=1.0.0
+          else
+            IFS=. read -r ma mi pa <<< "${last#v}"
+            case "$BUMP" in
+              major) next="$((ma+1)).0.0" ;;
+              minor) next="$ma.$((mi+1)).0" ;;
+              *)     next="$ma.$mi.$((pa+1))" ;;
+            esac
+          fi
+          if git rev-parse -q --verify "refs/tags/v$next" >/dev/null; then
+            echo "::error::v$next already exists"; exit 1
+          fi
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+          echo "last=$last" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$next (previous: ${last:-none})" >> "$GITHUB_STEP_SUMMARY"
+      - name: Tag and publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+          LAST: ${{ steps.v.outputs.last }}
+        run: |
+          args=(--target "$(git rev-parse HEAD)" --title "DNServ ${TAG#v}" --generate-notes --latest)
+          if [ -n "$LAST" ]; then args+=(--notes-start-tag "$LAST"); fi
+          gh release create "$TAG" "${args[@]}"
+      - name: Publish the images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        # A tag made with the workflow's own token doesn't start other
+        # workflows by itself, so start Publish image for it.
+        run: gh workflow run publish.yml --ref "$TAG"

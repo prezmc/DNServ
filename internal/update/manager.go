@@ -22,6 +22,17 @@ type Prefs struct {
 	// Skip is a version that was rolled back; it isn't offered or
 	// installed automatically until a newer one is out.
 	Skip string
+	// Channel is ChannelStable (numbered releases; "" too) or
+	// ChannelLatest (every change merged to main).
+	Channel string
+}
+
+// channel is the tag this node follows.
+func (m *Manager) channel() string {
+	if c := m.prefs().Channel; c == ChannelLatest {
+		return c
+	}
+	return ChannelStable
 }
 
 // Member is one cluster node, for the rollout.
@@ -47,12 +58,14 @@ const (
 
 // NodeInfo is one server's version and updater, for the Updates page.
 type NodeInfo struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Self     bool      `json:"self,omitempty"`
-	Witness  bool      `json:"witness,omitempty"`
-	Leader   bool      `json:"leader,omitempty"`
-	Version  string    `json:"version,omitempty"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Self    bool   `json:"self,omitempty"`
+	Witness bool   `json:"witness,omitempty"`
+	Leader  bool   `json:"leader,omitempty"`
+	Version string `json:"version,omitempty"`
+	// Release is the release number ("1.2.3"), "" for a build of main.
+	Release  string    `json:"release,omitempty"`
 	Revision string    `json:"revision,omitempty"`
 	Created  time.Time `json:"created,omitzero"`
 	// Ready: answering DNS (a witness: in touch with the cluster).
@@ -109,13 +122,14 @@ type Manager struct {
 	checkedAt time.Time
 	checkErr  string
 	changes   map[string]*Changes
+	notes     map[string][]ReleaseNote // by the newest release's revision
 	rollout   *Rollout
 	autoDay   string
 }
 
 // LocalInfo describes this node.
 func (m *Manager) LocalInfo(ctx context.Context) NodeInfo {
-	n := NodeInfo{Version: m.Version, Revision: RevisionOf(m.Version), Reachable: true, Self: true}
+	n := NodeInfo{Version: m.Version, Release: VersionOf(m.Version), Revision: RevisionOf(m.Version), Reachable: true, Self: true}
 	if m.Ready != nil {
 		n.Ready = m.Ready()
 	}
@@ -136,13 +150,14 @@ func (m *Manager) LocalInfo(ctx context.Context) NodeInfo {
 
 // image is the reference this node checks.
 func (m *Manager) image(ctx context.Context) string {
+	img := m.Image
+	if img == "" {
+		img = DefaultImage
+	}
 	if st, err := m.Sidecar.Status(ctx); err == nil && st.Image != "" && !st.Pinned {
-		return st.Image
+		img = st.Image
 	}
-	if m.Image != "" {
-		return m.Image
-	}
-	return DefaultImage
+	return withTag(img, m.channel())
 }
 
 // Check asks the registry for the newest image now.
@@ -267,13 +282,11 @@ func (m *Manager) HandleInfo(ctx context.Context, _ json.RawMessage) (any, error
 // HandleStart answers RPCStart: update this node now, to the newest
 // version or to {"revision": ...}.
 func (m *Manager) HandleStart(ctx context.Context, body json.RawMessage) (any, error) {
-	var req struct {
-		Revision string `json:"revision"`
-	}
+	var req Request
 	if len(body) > 0 {
 		_ = json.Unmarshal(body, &req)
 	}
-	return m.Sidecar.Start(ctx, req.Revision)
+	return m.Sidecar.Start(ctx, req)
 }
 
 // Changes lists what's new for this node (nil: unknown).
@@ -284,6 +297,33 @@ func (m *Manager) Changes(ctx context.Context) *Changes {
 		return nil
 	}
 	return m.changesFor(ctx, rel, from)
+}
+
+// Releases are the release notes from this node's version up to the
+// newest release, on the releases channel (nil otherwise, or unknown).
+func (m *Manager) Releases(ctx context.Context) []ReleaseNote {
+	rel, _, _ := m.Latest()
+	if rel == nil || m.channel() != ChannelStable {
+		return nil
+	}
+	if _, ok := semver(rel.Version); !ok {
+		return nil
+	}
+	m.mu.Lock()
+	cached, ok := m.notes[rel.Revision]
+	m.mu.Unlock()
+	if !ok {
+		all, err := GitHubReleases(ctx, m.GitHub, m.GitHubAPI, rel.Source)
+		if err != nil {
+			m.Log.Debug("couldn't read the release notes", "err", err)
+			return nil
+		}
+		cached = all
+		m.mu.Lock()
+		m.notes = map[string][]ReleaseNote{rel.Revision: all}
+		m.mu.Unlock()
+	}
+	return notesBetween(cached, VersionOf(m.Version), rel.Version)
 }
 
 // Run checks every few hours, and installs automatically when the owner

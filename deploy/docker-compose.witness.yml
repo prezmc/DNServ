@@ -8,7 +8,7 @@
 #    The code is used once; after joining, the witness ignores it.
 services:
   dnserv-witness:
-    image: ghcr.io/prezmc/dnserv:latest
+    image: ghcr.io/prezmc/dnserv:stable
     container_name: dnserv-witness
     restart: unless-stopped
     ports:
@@ -25,7 +25,7 @@ services:
   # See docker-compose.yml for what it can and can't do; delete it to
   # update by hand instead.
   dnserv-witness-updater:
-    image: ghcr.io/prezmc/dnserv:latest
+    image: ghcr.io/prezmc/dnserv:stable
     container_name: dnserv-witness-updater
     restart: unless-stopped
     command: ["-updater"]

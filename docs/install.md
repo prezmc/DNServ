@@ -94,10 +94,10 @@ If you'd rather use `docker run`, this is the same as the compose file:
 ```bash
 docker run -d --name dnserv --restart unless-stopped \
   -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
-  -e TZ=America/Chicago -v dnserv-data:/data ghcr.io/prezmc/dnserv:latest
+  -e TZ=America/Chicago -v dnserv-data:/data ghcr.io/prezmc/dnserv:stable
 ```
 
-To update, `docker pull ghcr.io/prezmc/dnserv:latest`, then remove the
+To update, `docker pull ghcr.io/prezmc/dnserv:stable`, then remove the
 container and run the same command again. The data volume keeps everything.
 
 ## The dashboard

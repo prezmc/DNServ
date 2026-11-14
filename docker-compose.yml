@@ -7,7 +7,7 @@
 # you can download a new docker-compose.yml any time without losing them.
 services:
   dnserv:
-    image: ghcr.io/prezmc/dnserv:latest
+    image: ghcr.io/prezmc/dnserv:stable
     container_name: dnserv
     restart: unless-stopped
     ports:
@@ -33,7 +33,7 @@ services:
   # Docker: if you'd rather not allow that, delete this service and
   # update with `docker compose pull && docker compose up -d` instead.
   dnserv-updater:
-    image: ghcr.io/prezmc/dnserv:latest
+    image: ghcr.io/prezmc/dnserv:stable
     container_name: dnserv-updater
     restart: unless-stopped
     command: ["-updater"]

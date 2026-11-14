@@ -9,11 +9,20 @@ update is available.
 ## How it works
 
 **Finding new versions.** Every few hours each server asks the image
-registry (`ghcr.io`) which image its tag (`latest`) points to now, and
-compares that image's version with its own. Nothing about your network is
-sent. When the image comes from GitHub, the page also lists what changed
-(the pull requests merged since your version). You can turn checking off on
-the Updates page.
+registry (`ghcr.io`) which image its channel points to now, and compares
+that image's version with its own. Nothing about your network is sent. The
+page shows the release notes for every release since your version. You can
+turn checking off on the Updates page.
+
+**Channels.** Under Settings on the Updates page, choose what to follow:
+
+- **Releases** (default): numbered versions such as 1.3.0, published with
+  release notes when the maintainer marks a version ready (image tag
+  `stable`, also `1.3.0` and `1.3`).
+- **Every change**: a new image for every change merged into the code
+  (image tag `latest`). Fixes arrive sooner; they have had less time in use.
+
+Automatic updates and rollback follow the same channel.
 
 **Installing.** Updates come from a small second container, the
 **updater**, which the standard `docker-compose.yml` runs next to DNServ.
@@ -50,7 +59,7 @@ time, a backup first, each one checked before the next. The version you
 rolled back from isn't offered or installed automatically again; the next
 newer version is (or press **Install anyway**). Each published image also
 has a `sha-<commit>` tag, which is what a rollback installs; the container
-remembers it normally follows `latest`, so the next update goes back to
+remembers which channel it follows (`stable` or `latest`), so the next update goes back to
 that.
 
 A rollback changes the program, not your data: settings, accounts and
@@ -104,29 +113,40 @@ cluster one server at a time.
 
 ## Adding the updater to an existing server
 
-Servers set up before the updater existed don't have it. In the server's
-folder, download the current `docker-compose.yml` (your `.env` is left
-alone), then run once:
+Servers set up before the updater existed don't have it, and the Updates
+page says **Needs one-time setup**. DNServ can't add it by itself: on
+purpose it has no access to Docker, so something that does has to start the
+updater once. Sign in to the server and paste this one line:
+
+```bash
+sudo docker run --rm -u 0 -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/prezmc/dnserv -install-updater
+```
+
+It finds the DNServ container on that server, starts the updater container
+next to it (named after it, e.g. `dnserv-updater`), and restarts DNServ
+with the same settings plus the volume they share. DNS on that server stops
+for a few seconds, so in a cluster do one server at a time. Your compose
+file and `.env` aren't changed. Running it again does nothing harmful. With
+more than one DNServ container on a server, add `-target NAME`.
+
+Later, if you run `docker compose up -d` with an old compose file and it
+recreates DNServ, the connection to the updater is lost: run the line
+again, or download the current `docker-compose.yml` (which includes the
+updater) into the server's folder:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml
 docker compose pull && docker compose up -d
 ```
 
-From then on, updates can be installed from the dashboard. A witness set up
-with `deploy/docker-compose.witness.yml` gets the same: download the new
-file and run `docker compose -f docker-compose.witness.yml up -d`.
-
-The updater itself runs the same image. It changes rarely; the
-`docker compose pull && docker compose up -d` above (run now and then, or
-when the release notes say so) refreshes it too.
+A witness set up with `deploy/docker-compose.witness.yml` works the same.
 
 ## Settings
 
 | Variable | Default | What it does |
 |---|---|---|
 | `DNSERV_UPDATER_TARGET` | the other container on the volume | Container the updater looks after |
-| `DNSERV_UPDATE_IMAGE` | `ghcr.io/prezmc/dnserv:latest` | Image to check when no updater is set up (with one, the container's own image is checked) |
+| `DNSERV_UPDATE_IMAGE` | `ghcr.io/prezmc/dnserv:stable` | Image to check when no updater is set up (with one, the container's own image is checked) |
 | `DNSERV_UPDATE_REGISTRY` | the image's registry | Ask another registry (a mirror) instead, as `host:port` or `http://host:port` |
 
 Tunnel mode (`deploy/docker-compose.tunnel.yml`) doesn't include the updater

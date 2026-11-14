@@ -59,7 +59,7 @@ func fakeRegistry(t *testing.T, annotated bool, rev string) *httptest.Server {
 			return
 		}
 		switch r.URL.Path {
-		case "/v2/prezmc/dnserv/manifests/latest":
+		case "/v2/prezmc/dnserv/manifests/latest", "/v2/prezmc/dnserv/manifests/stable":
 			w.Header().Set("Docker-Content-Digest", "sha256:index")
 			ann := ""
 			if annotated {
@@ -139,7 +139,7 @@ func TestRecreateBody(t *testing.T) {
 	_ = json.Unmarshal([]byte(inspect), &c.Raw)
 	img := &Image{Config: map[string]json.RawMessage{}}
 	_ = json.Unmarshal([]byte(`{"Env":["DNSERV_CONFIG=/data/dnserv.yaml","PATH=/usr/bin"],"Entrypoint":["/usr/local/bin/dnserv"],"User":"dnserv","Labels":{"org.opencontainers.image.revision":"old"}}`), &img.Config)
-	body, err := recreateBody(&c, img, "ghcr.io/prezmc/dnserv:latest", "sha256:new", "ghcr.io/prezmc/dnserv:latest")
+	body, err := recreateBody(&c, img, "ghcr.io/prezmc/dnserv:latest", "sha256:new", "ghcr.io/prezmc/dnserv:latest", "")
 	if err != nil {
 		t.Fatal(err)
 	}

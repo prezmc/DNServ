@@ -30,7 +30,7 @@ import (
 )
 
 // DefaultImage is where official images are published.
-const DefaultImage = "ghcr.io/prezmc/dnserv:latest"
+const DefaultImage = "ghcr.io/prezmc/dnserv:stable"
 
 // OCI label (and annotation) names the publish workflow sets.
 const (
@@ -244,6 +244,12 @@ func (s *regSession) getJSON(ctx context.Context, path, accept string, v any) (s
 				return "", err
 			}
 			continue
+		}
+		if resp.StatusCode == http.StatusNotFound && strings.HasPrefix(path, "manifests/"+s.ref.Tag) {
+			if s.ref.Tag == ChannelStable {
+				return "", errors.New("no release has been published yet, so there is nothing on the Releases channel; choose Every change under Settings below, or wait for the first release")
+			}
+			return "", fmt.Errorf("%s has no image tagged %q", s.ref.Repo, s.ref.Tag)
 		}
 		if resp.StatusCode != http.StatusOK {
 			return "", fmt.Errorf("%s answered HTTP %d for %s", s.ref.Registry, resp.StatusCode, s.ref.Repo)

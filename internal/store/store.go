@@ -91,6 +91,9 @@ type UpdatePrefs struct {
 	// Skip is a version someone rolled back from. It isn't offered or
 	// installed automatically; a newer version is.
 	Skip string `json:"skip,omitempty"`
+	// Channel is what counts as a new version: "" or "stable" for
+	// numbered releases, "latest" for every change merged to main.
+	Channel string `json:"channel,omitempty"`
 }
 
 // Device is a named client on the network, recognized by its addresses.

@@ -38,7 +38,7 @@ services:
       - "8081:8081/tcp"   # node-to-node (clustering)
 
   dnserv:
-    image: ghcr.io/prezmc/dnserv:latest
+    image: ghcr.io/prezmc/dnserv:stable
     container_name: dnserv
     restart: unless-stopped
     network_mode: "service:vpn"
