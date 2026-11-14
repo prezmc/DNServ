@@ -13,13 +13,19 @@ name: Security scan
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "site/**", "**.md", "LICENSE"]
   pull_request:
+    paths-ignore: ["docs/**", "site/**", "**.md", "LICENSE"]
   schedule:
     - cron: "41 5 * * 1" # Mondays 05:41 UTC
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   govulncheck:
@@ -40,8 +46,18 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build image
-        run: docker build -t dnserv:scan .
+        # Reuses cached Go layers, but always reruns the Alpine stage
+        # (apk upgrade) so the scan sees today's packages, like the
+        # published image.
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: dnserv:scan
+          no-cache-filters: runtime
+          cache-from: type=gha,scope=ci-image
       - name: Scan the image (report)
         # Pinned to a commit: action tags can be moved.
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

@@ -8,12 +8,18 @@ name: CodeQL
 on:
   push:
     branches: [main]
+    paths-ignore: ["docs/**", "site/**", "**.md", "LICENSE"]
   pull_request:
+    paths-ignore: ["docs/**", "site/**", "**.md", "LICENSE"]
   schedule:
     - cron: "17 6 * * 1" # Mondays 06:17 UTC
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   analyze:
