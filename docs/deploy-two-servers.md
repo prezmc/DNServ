@@ -94,12 +94,21 @@ wizard.
 1. On the first server's dashboard, open **Cluster** and choose **Make a
    join code**. Check that "Other nodes reach this one at" is the first
    server's address (and port, if you changed it).
+
+   <img src="images/setup/cluster-add-node.webp" alt="The Add a node card on the Cluster page" width="700">
+
+   <img src="images/setup/cluster-join-code.webp" alt="The join code dialog" width="520">
+
 2. Open `http://192.168.1.20:8080`, enter its own setup code, choose **No,
    add this server to my DNServ**, and paste the join code.
+
+   <img src="images/setup/wizard-join.webp" alt="Pasting the join code on the second server" width="380">
 
 A few seconds later the second server has the same accounts, settings and
 blocklists, and both show as healthy on the Cluster page. From now on, sign
 in to either one with the same account.
+
+<img src="images/setup/cluster-two-nodes.webp" alt="Both servers on the Cluster page" width="700">
 
 ### 4. Witness (optional)
 
@@ -115,18 +124,28 @@ first server first. Devices pick up the change when they renew their lease
 (reconnect to Wi-Fi to hurry one along). Remove any other DNS servers there,
 or devices will use them to get around blocking.
 
-### 6. Names and HTTPS (recommended)
+### 6. Names and HTTPS (optional)
 
-This gives each server a name, a trusted certificate and passkey sign-in.
+Everything works over plain HTTP at `http://<server>:8080`, which is how a
+new install starts. Do this step only if you want each server to have a
+name, a trusted certificate (a padlock in the browser) and passkey sign-in.
 
 1. **Local names.** Under **Local names**, add `dns1.example.com` pointing
    at `192.168.1.10` and `dns2.example.com` pointing at `192.168.1.20`.
    They're shared, so both servers answer for both names.
+
+   <img src="images/setup/local-names.webp" alt="Local names for both servers" width="700">
 2. **Certificate.** Under **Settings > Dashboard HTTPS**, choose **Let's
    Encrypt (built in)** and list both names. Pick your DNS host and paste
    its API token (for Cloudflare, one token). The leader asks for one
    certificate covering both names, usually within a minute, and both
    servers use it. See [Dashboard HTTPS](https.md#lets-encrypt-built-in).
+
+   <img src="images/setup/https-letsencrypt.webp" alt="Let's Encrypt settings with two names and a Cloudflare token" width="600">
+
+   Once it's issued, the table under the form shows both servers using it:
+
+   <img src="images/setup/https-issued.webp" alt="Both servers using the Let's Encrypt certificate" width="700">
 3. **Check it.** Open `https://dns1.example.com` and
    `https://dns2.example.com`. Both should show a padlock with no warning.
    Once they do, you can tick **Send browsers that open http:// to

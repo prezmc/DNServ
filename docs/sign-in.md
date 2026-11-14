@@ -51,6 +51,10 @@ home under **Local names** (for example `dns1.example.com` pointing at
    **Continue**.
 4. Approve the prompt from your browser or device.
 
+| | |
+|---|---|
+| <img src="images/setup/passkey-add.webp" alt="Add a passkey dialog" width="380"> | <img src="images/setup/signin-passkey.webp" alt="Sign in with a passkey" width="300"> |
+
 Next time, choose **Sign in with a passkey** on the sign-in page.
 
 ### With more than one server
@@ -63,6 +67,8 @@ So add one passkey on each server: follow the steps above at
 `https://dns1.example.com`, then again at `https://dns2.example.com`. Each
 works even while the other server is down. Your account's Passkeys list
 shows them all, with the server each one works on.
+
+<img src="images/setup/passkey-list.webp" alt="The Passkeys list, showing the server each passkey works on" width="700">
 
 If your passkeys sync (iCloud Keychain, Google Password Manager, 1Password
 and similar), each one is on your other devices too, so you only add one per

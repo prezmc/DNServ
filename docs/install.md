@@ -17,13 +17,15 @@ docker compose up -d
 docker compose logs | grep setup_code
 ```
 
+<img src="images/setup/install-terminal.webp" alt="Installing DNServ in a terminal, ending with the setup code" width="700">
+
 Open `http://<server address>:8080`, enter the setup code, and the wizard
 walks you through it:
 
-1. Create the admin account.
-2. Scan the QR code with an authenticator app and enter a code.
-3. Save your ten recovery codes.
-4. Pick how lookups leave your network and which blocklists to use.
+| | |
+|---|---|
+| <img src="images/setup/wizard-code.webp" alt="Enter the setup code" width="380"><br>**1.** Enter the setup code from the log | <img src="images/setup/wizard-mfa.webp" alt="Set up two-factor sign-in" width="380"><br>**2.** Create the admin account and scan the QR code with an authenticator app |
+| <img src="images/setup/wizard-basics.webp" alt="Pick blocking and privacy" width="380"><br>**3.** Save your ten recovery codes, then pick blocking and how lookups leave your network | |
 
 Then set your router's DHCP DNS server to the server's address. Only someone
 who can read the container's logs can claim a new server.

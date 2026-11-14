@@ -410,7 +410,7 @@ function setupJoin(code) {
   render(centered(
     h('h1', {}, 'Add this server to your DNServ'),
     h('ol', { class: 'steps-list' },
-      h('li', {}, 'On your other DNServ, open ', h('b', {}, 'Cluster'), ' and choose ', h('b', {}, 'Add a node'), '.'),
+      h('li', {}, 'On your other DNServ, open ', h('b', {}, 'Cluster'), ' and choose ', h('b', {}, 'Make a join code'), '.'),
       h('li', {}, 'Copy the join code it shows and paste it here.')),
     form({}, [
       h('label', { for: 'join' }, 'Join code'),
