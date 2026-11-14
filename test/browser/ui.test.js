@@ -248,6 +248,27 @@ step('the traffic map finds any device, not just the busiest', async () => {
   await until('the full map', async () => (await page.locator('.flow-focus').count()) === 0);
 });
 
+step('the devices page search finds devices despite typos', async () => {
+  for (const [name, addr] of [['Living room TV', '192.168.50.91'], ['Shannon iPhone', '192.168.50.74'], ['Kitchen speaker', '192.168.50.33']]) {
+    await api('POST', '/devices', { name, addrs: [addr] });
+  }
+  await go('devices');
+  const box = page.getByRole('searchbox', { name: 'Search devices' });
+  const rows = page.locator('.card tbody tr').filter({ has: page.locator('td') });
+  await box.fill('iphnoe'); // swapped letters
+  await page.getByRole('link', { name: 'Shannon iPhone' }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'Living room TV' }).count(), 0);
+  await box.fill('lvrm'); // letters in order
+  await page.getByRole('link', { name: 'Living room TV' }).waitFor();
+  await box.fill('50.33'); // part of an address
+  await page.getByRole('link', { name: 'Kitchen speaker' }).waitFor();
+  assert.equal(await page.getByRole('link', { name: 'Shannon iPhone' }).count(), 0);
+  if (process.env.DEVICE_SEARCH_SHOT) { await box.fill('kichen'); await page.screenshot({ path: process.env.DEVICE_SEARCH_SHOT }); }
+  await box.press('Escape');
+  await page.getByRole('link', { name: 'Shannon iPhone' }).waitFor();
+  assert.ok(await rows.count() >= 3);
+});
+
 step('performance shows how full the cache is, and the size can change', async () => {
   await go('performance');
   const card = page.locator('.card', { has: page.getByRole('heading', { name: 'How full the cache is' }) });
