@@ -3,3 +3,6 @@
 *.md
 !README.md
 data/
+docs/
+site/
+test/browser/node_modules/

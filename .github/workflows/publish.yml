@@ -16,6 +16,12 @@ permissions:
   contents: read
   packages: write
 
+# One publish at a time, so an older run can't overwrite "latest" after a
+# newer one.
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -62,3 +68,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: VERSION=${{ github.ref_name }}-${{ github.sha }}
+          # The Go stage cross-compiles (see the Dockerfile), so only the
+          # small Alpine stage runs under emulation for arm64. That stage
+          # is always rebuilt so each image gets current Alpine fixes.
+          no-cache-filters: runtime
+          cache-from: type=gha,scope=publish
+          cache-to: type=gha,mode=max,scope=publish
