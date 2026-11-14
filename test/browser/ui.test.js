@@ -200,6 +200,32 @@ step('the query log finds lookups and exports CSV', async () => {
   assert.match(csv, /ads\.listed\.test/);
 });
 
+step('the query log pauses, holds while read, and counts new queries', async () => {
+  await go('queries');
+  const pill = page.locator('.ql-live');
+  await until('live', async () => (await pill.innerText()) === 'Live');
+  // Hovering the list holds it, and new lookups are counted, not shown.
+  await page.locator('.ql-card tbody tr').first().hover();
+  await until('held', async () => /Held/.test(await pill.innerText()));
+  await lookup(node.dnsPort, 'held-' + Date.now() + '.example.test');
+  const newPill = page.getByRole('button', { name: /new quer/ });
+  await newPill.waitFor({ timeout: 15000 });
+  assert.match(await newPill.innerText(), /^\d+\+? new quer/);
+  await newPill.click();
+  await page.locator('.ql-card').getByText(/^held-/).first().waitFor();
+  assert.equal(await newPill.isVisible(), false);
+  // Pause stops updates until Resume, even with the mouse away.
+  await page.mouse.move(5, 5);
+  await page.getByRole('button', { name: 'Pause' }).click();
+  assert.equal(await pill.innerText(), 'Paused');
+  const name = 'paused-' + Date.now() + '.example.test';
+  await lookup(node.dnsPort, name);
+  await newPill.waitFor({ timeout: 15000 });
+  assert.equal(await page.locator('.ql-card').getByText(name).count(), 0);
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await page.locator('.ql-card').getByText(name).first().waitFor();
+});
+
 step('dashboard shows the lookups', async () => {
   await go('');
   const tiles = page.locator('.d-tiles');

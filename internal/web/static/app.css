@@ -549,3 +549,18 @@ details.parts tr.total td { font-weight: 700; border-top: 1px solid currentColor
 .nav-new { margin-left: auto; font-size: .68rem; font-weight: 700; padding: 0 .4rem; border-radius: 99px; background: var(--brand); color: var(--panel); }
 ul.changes { margin: .25rem 0 .5rem; padding-left: 1.2rem; }
 ul.changes li { margin: .15rem 0; }
+
+/* query log: live / paused control and the "N new queries" pill */
+.ql-ctl { display: inline-flex; align-items: center; gap: .4rem; margin-left: auto; }
+.ql-live { white-space: nowrap; }
+.ql-live:not(.ok):not(.warn) .dot { box-shadow: none; }
+.ql-pause { display: inline-flex; align-items: center; gap: .4rem; min-width: 6.2rem; justify-content: center; }
+.ql-pause[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+.ql-ico { font-size: .7rem; letter-spacing: -.12em; line-height: 1; }
+.ql-new-wrap { position: sticky; top: .6rem; z-index: 4; height: 0; display: flex; justify-content: center; align-items: flex-start; }
+.ql-new { display: inline-flex; align-items: center; gap: .5rem; margin-top: .45rem; padding: .4rem .9rem; border-radius: 99px; font-size: .86rem; font-weight: 600;
+  background: var(--primary-bg); color: var(--primary-text); border: 1px solid var(--accent); box-shadow: 0 6px 20px rgb(0 0 0 / .22); }
+.ql-new .dot { background: currentColor; }
+.ql-new b { text-decoration: underline; text-underline-offset: 2px; }
+.ql-new[hidden] { display: none; }
+@media (max-width: 760px) { .ql-new-wrap { top: 3.6rem; } .ql-ctl { margin-left: 0; } }
