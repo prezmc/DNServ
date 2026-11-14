@@ -20,7 +20,9 @@ Everything DNServ does today, in more detail than the README.
   testing; Android Private DNS and most browsers need a trusted
   certificate).
 - **Bypass protection.** Answers Firefox's `use-application-dns.net` canary
-  so it doesn't switch to its own DoH. With `block_bypass` on, also blocks
+  so it doesn't switch to its own DoH, and answers `_dns.resolver.arpa`
+  (RFC 9462) itself, so phones and computers aren't pointed at the
+  upstream's encrypted servers. With `block_bypass` on, also blocks
   well-known public DoH resolvers and iCloud Private Relay.
 - **Encrypted upstreams by default.** DNS over HTTPS to Cloudflare
   (`1.1.1.1`), with DNS over TLS as a fallback. Plain UDP/TCP upstreams are
