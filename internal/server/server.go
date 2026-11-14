@@ -643,6 +643,17 @@ func (s *Server) localAnswer(req *dns.Msg, name string) (*dns.Msg, bool) {
 	if name == "" { // root
 		return nil, false
 	}
+	// resolver.arpa (RFC 9462) asks "which encrypted resolver should I
+	// use instead of you?". Forwarded, the upstream would answer with its
+	// own DoH/DoT servers, and devices that switch to them (iPhones, Macs,
+	// Windows 11, Android) skip this server's filtering altogether. Answer
+	// it here, with no records, as Pi-hole and AdGuard Home do.
+	if name == "resolver.arpa" || strings.HasSuffix(name, ".resolver.arpa") {
+		m := new(dns.Msg)
+		m.SetReply(req)
+		m.Ns = []dns.RR{s.blockSOA("resolver.arpa.")}
+		return m, true
+	}
 	nx := func() (*dns.Msg, bool) {
 		if fwd := s.local.Load(); fwd != nil {
 			return s.forwardLocal(fwd.r, req), true

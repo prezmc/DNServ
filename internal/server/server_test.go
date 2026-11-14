@@ -458,3 +458,20 @@ func TestPauseKeepsSchedules(t *testing.T) {
 		}
 	}
 }
+
+// _dns.resolver.arpa must never reach the upstream: its answer names the
+// upstream's own encrypted servers, and devices that move to them skip
+// filtering.
+func TestDesignatedResolverStaysLocal(t *testing.T) {
+	up := &fakeResolver{}
+	_, addr := newTestServer(t, nil, up)
+	for _, n := range []string{"_dns.resolver.arpa", "resolver.arpa", "_dns.RESOLVER.arpa"} {
+		r := query(t, addr, n, dns.TypeSVCB, "udp")
+		if r.Rcode != dns.RcodeSuccess || len(r.Answer) != 0 {
+			t.Fatalf("%s: want an empty answer, got %v", n, r)
+		}
+	}
+	if up.calls.Load() != 0 {
+		t.Fatalf("resolver.arpa was sent upstream %d times", up.calls.Load())
+	}
+}
