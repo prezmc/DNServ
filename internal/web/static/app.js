@@ -13,7 +13,14 @@ function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
     if (v === null || v === undefined || v === false) continue;
-    if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    if (k.startsWith('on')) {
+      // Handlers go through onProxy, so patch can hand an element that
+      // stays on the page the handlers of the one drawn in its place.
+      const type = k.slice(2);
+      if (!el.__on) el.__on = {};
+      el.__on[type] = v;
+      el.addEventListener(type, onProxy);
+    }
     else if (k === 'class') el.className = v;
     else if (k === 'value') el.value = v;
     else if (k === 'checked') el.checked = !!v;
@@ -25,6 +32,11 @@ function h(tag, attrs, ...kids) {
     el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
   }
   return el;
+}
+
+function onProxy(e) {
+  const f = this.__on && this.__on[e.type];
+  return f ? f.call(this, e) : undefined;
 }
 
 // fuzzyScore says how well q matches text: higher is better, -1 is no
@@ -896,25 +908,217 @@ function listChangedCell(l) {
     days > 180 ? h('span', { class: 'badge warn', title: how + ' Not changed in over 6 months: it may no longer be maintained.' }, ago(l.changed)) : ago(l.changed));
 }
 
-// steady redraws part of the dashboard without moving what the user is
-// looking at: cards above the first one in view may grow or shrink as data
-// changes, so the page scrolls by the same amount to keep that card still.
+// ---------- keeping the dashboard still ----------
+//
+// The dashboard redraws itself every few seconds. Three things keep the
+// card someone is reading where it is:
+//  - patch updates a card in place (text, numbers, bars) instead of
+//    swapping it for a new one, so hover text and selections survive;
+//  - steady holds the height of every card on screen: a card may grow but
+//    doesn't shrink while it's in view (one out of view settles to its
+//    natural height, which moves nothing that can be seen), and when a
+//    card above the one being read changes, the page scrolls by the same
+//    amount;
+//  - the heights cards had are remembered in this browser, so after a
+//    reload, or a change of period, each card's place is kept by a
+//    placeholder of the same height until its data is in.
 // (Browsers' own scroll anchoring is off for the dashboard, since not all
-// of them have it.)
+// of them have it and it picks its own anchor.)
+
+// dashKey is a dashboard part's name: its d-… class.
+function dashKey(el) {
+  if (!el || el.nodeType !== 1) return '';
+  for (const c of el.classList) if (c.startsWith('d-')) return c;
+  return '';
+}
+
+// DASH_UNHELD are parts that come and go as a whole (the pause banner,
+// the arrange bar, the version line), whose height isn't held.
+const DASH_UNHELD = new Set(['d-pause', 'd-arrange', 'd-ver']);
+
+// dashParts are the dashboard's grid items that hold their height.
+function dashParts(dash) {
+  return [...dash.querySelectorAll('.dash > *, .dash > div:not(.card) > *, .dash .cols > *')]
+    .filter(el => { const k = dashKey(el); return k && !DASH_UNHELD.has(k) && !el.classList.contains('cols'); });
+}
+
+// morph makes a (on the page) look and act like b (just drawn), keeping
+// a's elements where their kind matches; it returns the node now shown.
+function morph(a, b) {
+  if (a === b) return a;
+  if (a.nodeType !== b.nodeType || a.nodeName !== b.nodeName || dashKey(a) !== dashKey(b) || (a.classList && a.classList.contains('skel'))) {
+    a.replaceWith(b);
+    return b;
+  }
+  if (a.nodeType !== 1) {
+    if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue;
+    return a;
+  }
+  // Styles go through the style object: the page's content security
+  // policy blocks setting a style attribute.
+  for (const at of [...a.attributes]) if (at.name !== 'style' && !b.hasAttribute(at.name)) a.removeAttribute(at.name);
+  for (const at of b.attributes) if (at.name !== 'style' && a.getAttribute(at.name) !== at.value) a.setAttribute(at.name, at.value);
+  if (a.style && a.style.cssText !== b.style.cssText) a.style.cssText = b.style.cssText;
+  if (a.__on || b.__on) {
+    for (const t of Object.keys(b.__on || {})) if (!a.__on || !a.__on[t]) a.addEventListener(t, onProxy);
+    a.__on = b.__on || {};
+  }
+  if ('value' in b && /^(INPUT|SELECT|TEXTAREA)$/.test(a.nodeName)) {
+    if (a !== document.activeElement && a.value !== b.value) a.value = b.value;
+    if (a.checked !== b.checked) a.checked = b.checked;
+  }
+  morphKids(a, [...b.childNodes]);
+  return a;
+}
+
+// morphKids makes parent's children match kids: parts with a name are
+// matched by name, others by place.
+function morphKids(parent, kids) {
+  const named = new Map();
+  for (const c of parent.children) { const k = dashKey(c); if (k) named.set(k, c); }
+  let ref = parent.firstChild;
+  for (const k of kids) {
+    const key = dashKey(k);
+    let cur = null;
+    if (key) { cur = named.get(key) || null; named.delete(key); } else if (ref && !dashKey(ref)) cur = ref;
+    if (!cur) { parent.insertBefore(k, ref); continue; }
+    if (cur !== ref) parent.insertBefore(cur, ref);
+    ref = morph(cur, k).nextSibling;
+  }
+  while (ref) { const n = ref.nextSibling; ref.remove(); ref = n; }
+}
+
+// patch redraws box with kids, in place, keeping the page still.
+function patch(box, ...kids) {
+  steady(() => morphKids(box, kids.flat(Infinity).filter(k => k !== null && k !== undefined && k !== false)));
+}
+
+// dashHeightsKey names the remembered heights for this width of
+// dashboard: cards wrap differently at other widths.
+const dashHeightsKey = (dash) => 'dash-heights:' + Math.round(dash.clientWidth / 40);
+function dashHeights(dash) {
+  try { return JSON.parse(localStorage.getItem(dashHeightsKey(dash)) || 'null'); } catch (_) { return null; }
+}
+
+// holdHeights sets each part's least height: its natural height, or for a
+// part on screen at least the height it had before.
+function holdHeights(dash) {
+  const w = dash.clientWidth;
+  if (dash.__w !== w) { dash.__w = w; dash.__held = {}; }
+  const parts = dashParts(dash);
+  if (!parts.length) return;
+  for (const el of parts) { el.style.minHeight = ''; el.style.alignSelf = 'start'; }
+  const nat = parts.map(el => el.getBoundingClientRect());
+  const vh = window.innerHeight, seen = {};
+  parts.forEach((el, i) => {
+    el.style.alignSelf = '';
+    const k = dashKey(el), r = nat[i];
+    if (!r.height) return; // hidden
+    if (!el.classList.contains('skel')) seen[k] = Math.round(r.height);
+    // The held height counts from where the part is on screen now.
+    const onScreen = r.top < vh && r.top + Math.max(r.height, dash.__held[k] || 0) > 0;
+    // A placeholder keeps its place until its card is in, on screen or not.
+    const held = onScreen || el.classList.contains('skel') ? Math.max(r.height, dash.__held[k] || 0) : r.height;
+    dash.__held[k] = held;
+    if (held > r.height + 0.5) el.style.minHeight = held + 'px';
+  });
+  if (Object.keys(seen).length) {
+    try {
+      const all = { ...(dashHeights(dash) || {}), ...seen };
+      localStorage.setItem(dashHeightsKey(dash), JSON.stringify(all));
+    } catch (_) { /* per viewer only */ }
+  }
+}
+
+// dashAnchor is the part being read: the one under the pointer, else the
+// one a third of the way down the screen, else the first one in view.
+let dashPointer = null;
+document.addEventListener('pointermove', (e) => { dashPointer = { x: e.clientX, y: e.clientY }; }, { passive: true });
+document.addEventListener('pointerleave', () => { dashPointer = null; });
+function dashAnchor(dash) {
+  const parts = dashParts(dash).map(el => [el, el.getBoundingClientRect()]).filter(([, r]) => r.height);
+  const at = (x, y) => parts.find(([, r]) => r.left <= x && x <= r.right && r.top <= y && y <= r.bottom);
+  const hit = (dashPointer && at(dashPointer.x, dashPointer.y)) ||
+    parts.find(([, r]) => r.top <= window.innerHeight / 3 && r.bottom >= window.innerHeight / 3) ||
+    parts.find(([, r]) => r.bottom > 0);
+  return hit ? { key: dashKey(hit[0]), top: hit[1].top } : null;
+}
+
+// steady redraws part of the dashboard without moving what the user is
+// looking at.
 function steady(redraw) {
   const dash = document.querySelector('.dash');
   const se = document.scrollingElement || document.documentElement;
-  let anchor = null, top = 0;
-  if (dash && se.scrollTop > 0) {
-    for (const c of dash.querySelectorAll('.card')) {
-      const r = c.getBoundingClientRect();
-      if (r.height && r.bottom > 0) { anchor = [...c.classList].find(k => k.startsWith('d-')); top = r.top; break; }
-    }
-  }
+  if (!dash) { redraw(); return; }
+  // At the very top of a page still loading, nothing is being read yet.
+  const anchor = dash.__pin && !dash.__ready ? dash.__pin : se.scrollTop > 0 || dash.__ready ? dashAnchor(dash) : null;
   redraw();
+  holdHeights(dash);
   if (!anchor) return;
-  const now = dash.querySelector('.card.' + anchor);
-  if (now) se.scrollTop += now.getBoundingClientRect().top - top;
+  const now = dash.querySelector('.' + anchor.key);
+  if (now) {
+    const d = now.getBoundingClientRect().top - anchor.top;
+    if (Math.abs(d) >= 1) se.scrollTop += d;
+  }
+}
+
+// The dashboard remembers how far down it was scrolled when the page is
+// left, so a reload opens it at the same place (its placeholders give it its height at once). The
+// browser's own restoring is off: it runs before the page is drawn.
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+const dashSaveScroll = () => {
+  const dash = document.querySelector('.dash');
+  if (!dash || !dash.__ready) return;
+  const y = Math.round((document.scrollingElement || document.documentElement).scrollTop);
+  const at = dashAnchor(dash);
+  try { sessionStorage.setItem('dash-scroll', JSON.stringify({ hash: location.hash, y, ...(at || {}) })); } catch (_) { /* per tab only */ }
+};
+window.addEventListener('pagehide', dashSaveScroll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) dashSaveScroll(); });
+let dashRestored = false;
+function dashRestoreScroll() {
+  if (dashRestored) return;
+  dashRestored = true;
+  // Saved as the page was left (a reload, or going to another site and
+  // back), for this same dashboard address.
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('dash-scroll') || 'null'); sessionStorage.removeItem('dash-scroll'); } catch (_) { return; }
+  if (!saved || saved.hash !== location.hash || !(saved.y > 0)) return;
+  (document.scrollingElement || document.documentElement).scrollTop = saved.y;
+  // Until the cards are in, the one that was being read is kept where it
+  // was on screen, unless the user scrolls first.
+  const dash = document.querySelector('.dash');
+  if (!dash || !saved.key) return;
+  dash.__pin = { key: saved.key, top: saved.top };
+  const unpin = () => { dash.__pin = null; ['wheel', 'touchstart', 'keydown'].forEach(t => window.removeEventListener(t, unpin)); };
+  ['wheel', 'touchstart', 'keydown'].forEach(t => window.addEventListener(t, unpin, { passive: true }));
+  steady(() => {});
+}
+// A change of window width lets every card settle to its new height.
+let dashResizeT = 0;
+window.addEventListener('resize', () => {
+  clearTimeout(dashResizeT);
+  dashResizeT = setTimeout(() => { if (document.querySelector('.dash')) steady(() => {}); }, 150);
+});
+
+// dashSkeletons puts a placeholder where each card will be, as tall as it
+// was last time in this browser, so the page has its full height (and a
+// reload its scroll position) before any data is in.
+const DASH_SKEL_DEFAULT = { 'd-note': 20, 'd-tiles': 120, 'd-chart': 300, 'd-flow': 460, 'd-lists': 220 };
+function dashSkeletons(dash, boxes, cards) {
+  const known = dashHeights(dash);
+  const hidden = new Set(cards.filter(c => c.hidden).map(c => 'd-' + c.name));
+  dash.__held = {}; dash.__w = dash.clientWidth;
+  for (const [box, keys] of boxes) {
+    fill(box, keys.filter(k => !hidden.has(k)).map(k => {
+      const ht = known ? known[k] : DASH_SKEL_DEFAULT[k] || 240;
+      if (!ht) return null; // not shown last time
+      dash.__held[k] = ht;
+      const el = h(k === 'd-note' ? 'p' : 'div', { class: (k === 'd-note' ? 'small ' : 'card ') + 'skel ' + k, 'aria-hidden': 'true' });
+      el.style.minHeight = ht + 'px';
+      return el;
+    }));
+  }
 }
 
 // fmtEvery says how often a beat repeats: every 30 s, every 5 min.
@@ -930,10 +1134,10 @@ function fmtEvery(sec) {
 async function beaconsCard(box) {
   let d;
   try { d = await api('GET', '/analytics/beacons?range=24h&limit=6'); } catch (_) { return; }
-  if (!d.detail) { box.replaceChildren(); return; }
+  if (!d.detail) { patch(box); return; }
   const rows = d.domains || [];
   const who = (x) => (x.who || []).map(w => w.label + (w.label !== w.addr ? ' (' + w.addr + ')' : '') + ': ' + fmtEvery(w.period) + ', ' + fmtNum(w.n) + ' lookups').join('\n');
-  steady(() => box.replaceChildren(h('div', { class: 'card d-beacons' },
+  patch(box, h('div', { class: 'card d-beacons' },
     h('div', { class: 'row spread' }, h('h2', {}, 'Repeating lookups'), h('span', { class: 'muted small' }, 'Last 24 hours')),
     !rows.length ? h('p', { class: 'muted' }, 'No device is looking anything up on a steady beat.') :
       h('table', { class: 'top' }, h('tbody', {}, rows.map(x => h('tr', { title: who(x) || null },
@@ -942,7 +1146,7 @@ async function beaconsCard(box) {
             h('span', { class: 'muted' }, x.devices === 1 ? (x.who && x.who[0] ? x.who[0].label : '1 device') : x.devices + ' devices', x.blocked ? ' · blocked' : '', x.type ? ' · ' + [x.type.category, x.type.company].filter(Boolean).join(' · ') : ''))),
         h('td', { class: 'num' }, fmtNum(x.n)),
         h('td', { class: 'nowrap' }, domainButton(x.name, x.now)))))),
-    h('p', { class: 'muted small' }, 'Names a device asks for on a steady beat, as analytics, telemetry and trackers often do (and also clocks and mail checks). Hover a row to see which devices.'))));
+    h('p', { class: 'muted small' }, 'Names a device asks for on a steady beat, as analytics, telemetry and trackers often do (and also clocks and mail checks). Hover a row to see which devices.')));
 }
 
 // ---------- arranging the dashboard ----------
@@ -1010,6 +1214,10 @@ function applyDashLayout(cards, arranging) {
     (c.hidden ? sel + (arranging ? '{opacity:.45}' : '{display:none}') : ''); };
   const at = (w, k) => '@media (min-width:' + w + 'px){' + cards.map(c => '.dash .d-' + c.name + '{grid-column:span ' + DASH_SIZES[c.size][k] + '}').join('') + '}';
   applyDashLayout.sheet.replaceSync(cards.map(rule).join('\n') + '\n' + at(900, 1) + '\n' + at(1240, 0));
+  // Cards change width with the layout, so the heights held for the old
+  // one no longer apply.
+  const dash = document.querySelector('.dash');
+  if (dash) { dash.__held = {}; dashParts(dash).forEach(el => { el.style.minHeight = ''; }); }
 }
 
 // dashArrange turns on arrange mode: each card gets a bar to move it
@@ -1078,7 +1286,7 @@ function dashArrange(dash, bar, done) {
 }
 
 async function dashboard(main) {
-  const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
+  const body = h('div');
   const devBox = h('div');
   const chartBox = h('div');
   const flowBox = h('div');
@@ -1107,8 +1315,13 @@ async function dashboard(main) {
         route();
       } }, k))) : null);
   const dash = h('div', { class: 'dash' }, arrangeBar, pauseBox, body, secBox, chartBox, flowBox, extraBox, devBox, beaconBox, checkDomainCard(), ver);
-  applyDashLayout(dashLayout(ME && ME.dashboard), false);
+  const layout = dashLayout(ME && ME.dashboard);
+  applyDashLayout(layout, false);
   fill(main, head, dash);
+  const full = can('dashboard.view');
+  dashSkeletons(dash, [[body, ['d-note', 'd-tiles', 'd-servers', 'd-health', 'd-lists']], [devBox, ['d-devices']],
+    ...(full ? [[secBox, ['d-security']], [chartBox, ['d-chart']], [flowBox, ['d-flow']], [extraBox, ['d-domains', 'd-blocked', 'd-perf', 'd-top']], [beaconBox, ['d-beacons']]] : [])], layout);
+  dashRestoreScroll();
   const pause = pauseControl(pauseBtn, pauseBox, () => load());
 
   // The tiles and upstream counts come from the saved query history (the
@@ -1126,7 +1339,7 @@ async function dashboard(main) {
     let s;
     if (Date.now() - hist.at > 60000) await loadHist();
     let pz;
-    try { [s, pz] = await Promise.all([api('GET', '/status'), api('GET', '/pause').catch(() => null)]); } catch (e) { if (!body.querySelector('.card')) body.replaceChildren(msg('err', e.message)); return; }
+    try { [s, pz] = await Promise.all([api('GET', '/status'), api('GET', '/pause').catch(() => null)]); } catch (e) { if (!body.querySelector('.card:not(.skel)')) steady(() => fill(body, msg('err', e.message))); return; }
     pause.show(pz, s);
     const q = s.queries || {};
     let total = ['upstream', 'cached', 'stale', 'blocked', 'local', 'error'].reduce((a, k) => a + (q[k] || 0), 0);
@@ -1174,7 +1387,7 @@ async function dashboard(main) {
     const paused = pz && pz.paused ? (pz.pauses.some(p => p.node === '*') ? 'Filtering paused' : 'Paused on ' + pz.pauses.map(p => p.node_name).join(', ')) : '';
     status.className = 'pill ' + (bad ? 'bad' : loading || paused || off ? 'warn' : 'ok');
     fill(status, h('span', { class: 'dot' }), bad ? 'Needs attention' : paused || (off ? 'Filtering is off' : loading ? 'Loading lists' : 'Protecting your network'));
-    steady(() => fill(body,
+    patch(body,
       total === 0 ? h('div', { class: 'card highlight d-wait' }, h('h2', {}, 'Waiting for your first device'), routerHelp()) : null,
       h('p', { class: 'muted small d-note' }, fromHist ? [RANGES[range], hist.sum.nodes && hist.sum.nodes.length > 1 ? ', all servers' : '', '. DNServ started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '.']
         : ['Counting since DNServ started ', (s.uptime_seconds || 0) < 60 ? 'just now' : fmtDur(s.uptime_seconds) + ' ago', '. Turn on query history to keep counts across restarts.']),
@@ -1201,7 +1414,7 @@ async function dashboard(main) {
         h('thead', {}, h('tr', {}, h('th', {}, 'List'), h('th', {}, 'Rules'), h('th', { title: 'When this server last downloaded the list' }, 'Downloaded'), h('th', { title: 'When the list’s owner last changed it' }, 'Last changed'), h('th', {}, 'Status'))),
         h('tbody', {}, s.filter.lists.map(l => h('tr', {}, h('td', {}, l.name, l.allowlist ? ' (allow)' : ''), h('td', {}, fmtNum(l.rules)), h('td', { class: 'nowrap' }, ago(l.updated)), listChangedCell(l),
           h('td', {}, l.error ? h('span', { class: 'badge bad', title: l.error }, l.rules ? 'update failed, using saved copy' : 'download failed') : h('span', { class: 'badge ok' }, 'ok')))))))) : null,
-    ));
+    );
     ver.textContent = 'DNServ ' + s.version;
   };
   // The devices card shows the busiest devices over the period, or the
@@ -1213,20 +1426,20 @@ async function dashboard(main) {
     try { ds = await api('GET', '/devices'); } catch (_) { return; }
     const seen = ds.filter(d => d.queries > 0);
     const history = can('querylog.view') && can('dashboard.view');
-    if (!seen.length && !history) { devBox.replaceChildren(); return; }
+    if (!seen.length && !history) { patch(devBox); return; }
     const more = seen.length > 5 || can('devices.manage') ? h('p', { class: 'small mt-s' }, h('a', { href: '#/devices' }, seen.length > 5 ? 'All ' + seen.length + ' devices' : 'Name your devices')) : null;
     if (!history) {
-      steady(() => devBox.replaceChildren(h('div', { class: 'card d-devices' },
-        h('h2', {}, 'Devices ', h('span', { class: 'muted small' }, seen.length + ' seen')), deviceTable(seen.slice(0, 5), { compact: true }), more)));
+      patch(devBox, h('div', { class: 'card d-devices' },
+        h('h2', {}, 'Devices ', h('span', { class: 'muted small' }, seen.length + ' seen')), deviceTable(seen.slice(0, 5), { compact: true }), more));
       return;
     }
     const r = devView === 'now' ? '15m' : range;
     let top;
     try { top = await api('GET', '/analytics/top?by=clients&limit=6&range=' + r); } catch (_) { return; }
     const rows = top.rows || [];
-    if (!rows.length && !seen.length && devView === 'top') { devBox.replaceChildren(); return; }
+    if (!rows.length && !seen.length && devView === 'top') { patch(devBox); return; }
     const pick = (v) => { devView = v; try { localStorage.setItem('dash-devices', v); } catch (_) { /* per viewer only */ } loadDevices(); };
-    steady(() => devBox.replaceChildren(h('div', { class: 'card d-devices' },
+    patch(devBox, h('div', { class: 'card d-devices' },
       h('div', { class: 'row spread' }, h('h2', {}, 'Devices'),
         h('div', { class: 'seg small', role: 'group', 'aria-label': 'Devices to show' },
           h('button', { type: 'button', 'aria-pressed': String(devView === 'top'), onclick: () => pick('top') }, 'Most lookups'),
@@ -1237,13 +1450,16 @@ async function dashboard(main) {
             d.label ? h('div', { class: 'muted small' }, d.addrs.join(', ')) : null, bar(d.total, rows[0].total)),
           h('td', { class: 'num' }, fmtNum(d.total), h('div', { class: 'muted small' }, d.blocked ? fmtNum(d.blocked) + ' blocked' : 'none blocked')))))),
       h('p', { class: 'muted small' }, devView === 'now' ? 'Lookups in the last 15 minutes, every server.' : RANGES[range] + ', every server.'),
-      more)));
+      more));
   };
   // The security overview feeds both its card and the chart's risk dots.
   const security = () => (can('dashboard.view') ? api('GET', '/analytics/security?range=' + range).catch(() => null) : Promise.resolve(null));
   const charts = () => { const p = security(); p.then(sec => securityCard(secBox, range, sec, charts)); return dashboardChart(chartBox, range, p); };
   const extras = () => (can('dashboard.view') ? Promise.all([dashboardExtras(extraBox, range), dashboardFlow(flowBox, range), beaconsCard(beaconBox)]) : null);
   await Promise.all([load(), loadDevices(), charts(), extras()]);
+  // A card whose data couldn't be loaded gives up its placeholder.
+  steady(() => dash.querySelectorAll('.skel').forEach(el => el.remove()));
+  dash.__ready = true;
   let tick = 0;
   timer = setInterval(() => {
     // Nothing redraws while the cards are being arranged.
@@ -1359,7 +1575,10 @@ function pauseControl(btnSlot, box, reload) {
 // for the daily refresh.
 function updateListsButton() {
   if (!can('lists.manage')) return null;
-  const b = h('button', { type: 'button', class: 'small', onclick: async () => {
+  return h('button', { type: 'button', class: 'small', onclick: async (ev) => {
+    // The button on the page: a dashboard refresh may have drawn this one
+    // in its place.
+    const b = ev.currentTarget;
     b.disabled = true;
     try {
       await api('POST', '/lists/update');
@@ -1367,14 +1586,16 @@ function updateListsButton() {
     } catch (e) { toast(e.message, 'err'); }
     setTimeout(() => { b.disabled = false; }, 10000);
   } }, 'Update lists now');
-  return b;
 }
 
 // clearCacheButton empties the answer cache on every server, so the next
 // question for each name goes upstream again.
 function clearCacheButton() {
   if (!can('lists.manage')) return null;
-  const b = h('button', { type: 'button', class: 'small', onclick: async () => {
+  return h('button', { type: 'button', class: 'small', onclick: async (ev) => {
+    // The button on the page: a dashboard refresh may have drawn this one
+    // in its place.
+    const b = ev.currentTarget;
     b.disabled = true;
     try {
       const r = await api('POST', '/cache/clear');
@@ -1383,8 +1604,7 @@ function clearCacheButton() {
         (bad.length ? '. Couldn\'t reach ' + bad.map(x => x.server).join(', ') + '.' : '.'), bad.length ? 'err' : undefined);
     } catch (e) { toast(e.message, 'err'); }
     setTimeout(() => { b.disabled = false; }, 3000);
-  } }, 'Clear cache');
-  return b;
+  } }, 'Clear cache');return b;
 }
 
 // clearHistoryButton deletes performance stats ("performance") or all
@@ -2357,7 +2577,7 @@ async function dashboardChart(box, range, secP) {
   range = range || '24h';
   let sum, sec;
   try { [sum, sec] = await Promise.all([api('GET', '/analytics/summary?range=' + range), secP || null]); } catch (_) { return; }
-  if (!sum.counts || !sum.counts.total) { box.replaceChildren(); return; }
+  if (!sum.counts || !sum.counts.total) { steady(() => box.replaceChildren()); return; }
   steady(() => box.replaceChildren(h('div', { class: 'card d-chart' },
     h('div', { class: 'row spread' }, h('h2', {}, RANGES[range]), h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range), class: 'small' }, 'Analytics')),
     h('p', { class: 'muted small' }, fmtNum(sum.counts.total), ' queries, ', fmtNum(sum.counts.blocked), ' blocked, from ', fmtNum(sum.devices), sum.devices === 1 ? ' device.' : ' devices.'),
@@ -2412,7 +2632,7 @@ async function dashboardFlow(box, range, opts) {
     if (opts.page) { history.replaceState(null, '', pageHash(dev)); shownHash = location.hash; }
     dashboardFlow(box, range, opts);
   };
-  if (!data.total && !st.device && !opts.page) { box.replaceChildren(); return; }
+  if (!data.total && !st.device && !opts.page) { steady(() => box.replaceChildren()); return; }
   const rq = range === '24h' ? '' : 'range=' + range;
   const area = h('div', { class: 'flow-area' });
   const tip = h('div', { class: 'flow-tip', hidden: true });
@@ -2458,7 +2678,6 @@ async function dashboardFlow(box, range, opts) {
       : null,
     h('div', { class: 'row flow-kinds' }, kindBoxes, picker ? h('span', { class: 'grow' }) : null, picker),
     wrap, detail);
-  steady(() => box.replaceChildren(card));
 
   const byId = Object.fromEntries(data.nodes.map(n => [n.id, n]));
   function draw() {
@@ -2588,7 +2807,9 @@ async function dashboardFlow(box, range, opts) {
     if (prof) deviceProfile(prof, n.device, n.label, range);
   }
 
-  draw();
+  // The map is drawn as soon as its card is on the page (it sizes itself
+  // to fit), in the same step, so the card never shows half drawn.
+  steady(() => { box.replaceChildren(card); draw(); });
   if (!box.flowWatch) {
     box.flowWatch = true;
     let t = 0;
@@ -3105,7 +3326,7 @@ async function dashboardExtras(box, range) {
         blocked && r.list ? h('div', { class: 'muted small' }, listLabel(r.list)) : null, bar(r.total, rows[0].total, blocked)),
       h('td', { class: 'num' }, fmtNum(r.total))))))) : null);
   // A card whose data didn't load this time keeps what it showed before.
-  const old = (cls) => box.querySelector('.card.' + cls);
+  const old = (cls) => box.querySelector('.card.' + cls + ':not(.skel)');
   const dc = doms ? topCard('d-domains', 'Top domains', doms.rows, false) : old('d-domains');
   const bc = blk ? topCard('d-blocked', 'Top blocked', blk.rows, true) : old('d-blocked');
   if (dc) cards.push(dc);
@@ -3127,7 +3348,7 @@ async function dashboardExtras(box, range) {
   }
   const lc = lists ? topListsCard(lists.rows, range, true) : old('d-top');
   if (lc) cards.push(lc);
-  steady(() => box.replaceChildren(cards.length > 1 ? h('div', { class: 'cols' }, cards) : cards));
+  patch(box, cards);
 }
 
 // ---------- settings ----------

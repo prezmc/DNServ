@@ -72,6 +72,7 @@ lab.
 | Risk scores, threat feeds, scoring tuning, domain types | `threat.*`, `api.TestRiskyDomainsAndTypes` | | |
 | VirusTotal | `virustotal.TestLookup`, `api.TestVirusTotal` | | |
 | Arrange the dashboard | `api.TestDashboardLayout` | arranging the dashboard | |
+| Dashboard stays still on refresh and reload | | dashboard cards stay put across refreshes and a reload | |
 | **Cluster** | | | |
 | Join, replicate, forward writes to the leader | `cluster.TestJoinReplicateAndForward`, `cluster.TestAskPeers` | | yes |
 | Leadership controls, forced recovery, witness | `cluster.TestLeadershipControls`, `cluster.TestForceRecoverTwoNodes`, `cluster.TestWitnessKeepsTwoNodesWorking` | | yes |
