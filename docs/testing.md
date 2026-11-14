@@ -68,7 +68,7 @@ lab.
 | Performance, anomalies | `analytics.TestPerfRecordAndRun`, `analytics.TestAnomalies`, `api.TestPerformanceAndTopLists` | every page opens | |
 | Cache-miss reasons | `analytics.TestCacheMiss`, `api.TestCacheAndBeaconEndpoints` | every page opens | |
 | Repeating lookups | `analytics.TestBeacons`, `api.TestCacheAndBeaconEndpoints` | | |
-| Traffic map and device profile | `analytics.TestFlow`, `api.TestTrafficMap` | dashboard shows the lookups; the traffic map finds any device | |
+| Traffic map and device profile | `analytics.TestFlow`, `api.TestTrafficMap`, `api.TestCategoryOf` | dashboard shows the lookups; the traffic map finds any device | |
 | Risk scores, threat feeds, scoring tuning, domain types | `threat.*`, `api.TestRiskyDomainsAndTypes` | | |
 | VirusTotal | `virustotal.TestLookup`, `api.TestVirusTotal` | | |
 | Arrange the dashboard | `api.TestDashboardLayout` | arranging the dashboard | |

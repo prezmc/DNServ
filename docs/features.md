@@ -148,8 +148,16 @@ Everything DNServ does today, in more detail than the README.
 - **Traffic map.** A Dashboard card draws every lookup as a flow: the
   busiest devices, the DNS server that answered, how it was answered (cache,
   each upstream server, blocked, local names) and the services the lookups
-  were for, grouped by company or by type (AdGuard's companies database,
-  else the site's own domain). Switches hide internet, internal or blocked
+  were for, grouped **By company** (AdGuard's companies database, else the
+  site's own domain) or **By category**: what people use them for, such as
+  social media, streaming, gaming, shopping, news, messaging, work and
+  email, OS and cloud services, smart home and TV, CDNs, ads and tracking
+  and network lookups. Categories come from DNServ's own table of popular
+  apps and sites (including the blocked services catalog), then from the
+  companies database's tracker types and owners; anything else is Other.
+  Clicking a category breaks it out into its busiest apps and sites
+  (Netflix, YouTube, Spotify…), and **All categories** folds it back. The
+  browser remembers which grouping you picked. Switches hide internet, internal or blocked
   lookups; hovering shows counts and shares; clicking a device, an answer
   or a service opens the matching Query log. Clicking a device redraws
   the map with only that device's lookups (the servers that answered them,

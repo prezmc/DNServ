@@ -75,9 +75,42 @@ func TestTrafficMap(t *testing.T) {
 			if byLabel["Netflix"] == nil || byLabel["Netflix"].N != 10 || byLabel["example.co.uk"] == nil || byLabel["Advertising"] == nil {
 				t.Errorf("services: %+v", out.Nodes)
 			}
-		} else if byLabel["Audio video player"] == nil && byLabel["Audio and video players"] == nil && byLabel["Other"] == nil {
-			t.Errorf("types: %+v", out.Nodes)
+		} else if byLabel["Streaming"] == nil || byLabel["Streaming"].N != 10 || byLabel["Streaming"].Group != "Streaming" ||
+			byLabel["Other"] == nil || byLabel["Ads and tracking"] == nil || byLabel["Ads and tracking"].Kind != "blocked" {
+			t.Errorf("categories: %+v", out.Nodes)
 		}
+	}
+
+	// Opening a category breaks it into its apps and sites.
+	var out struct {
+		Nodes []*flowNode
+		Open  string
+	}
+	admin.want(200, "GET", "/api/v1/analytics/flow?range=24h&group=category&open=Streaming", nil, &out)
+	byLabel := map[string]*flowNode{}
+	for _, n := range out.Nodes {
+		byLabel[n.Label] = n
+	}
+	if out.Open != "Streaming" || byLabel["Netflix"] == nil || byLabel["Netflix"].Parent != "Streaming" || byLabel["Netflix"].N != 10 ||
+		byLabel["Streaming"] != nil || byLabel["Other"] == nil || len(byLabel["Netflix"].Domains) != 2 {
+		t.Errorf("opened: %+v", out.Nodes)
+	}
+}
+
+func TestCategoryOf(t *testing.T) {
+	for name, want := range map[string]string{
+		"www.facebook.com": threat.CatSocial, "occ-0-1.nflxvideo.net": threat.CatStreaming, "gateway.icloud.com": threat.CatOS,
+		"a1.anker-in.com": threat.CatSmartHome, "e123.akamaiedge.net": threat.CatCDN, "17.in-addr.arpa": threat.CatNetwork,
+		"resolver.arpa": threat.CatNetwork, "www.bbc.co.uk": threat.CatNews, "store.steampowered.com": threat.CatGaming,
+		"example.org": threat.CatOther,
+	} {
+		if got := threat.CategoryOf(name, nil).Name; got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+	// The companies database fills in what DNServ's table doesn't know.
+	if got := threat.CategoryOf("x.tracker.example", &threat.Type{Category: "Advertising", Company: "Ads Inc."}); got.Name != threat.CatAds || got.Service != "Ads" {
+		t.Errorf("tracker = %+v", got)
 	}
 }
 
