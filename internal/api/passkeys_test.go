@@ -109,8 +109,8 @@ func TestPasskeys(t *testing.T) {
 	admin.want(401, "POST", "/api/v1/auth/passkeys/begin", map[string]any{"password": "wrong"}, nil)
 	var b begun
 	admin.want(200, "POST", "/api/v1/auth/passkeys/begin", map[string]any{"password": pw}, &b)
-	if b.Domain != "example.com" || b.Options.RP.ID != "example.com" {
-		t.Fatalf("passkey domain %q / %q, want the parent domain", b.Domain, b.Options.RP.ID)
+	if b.Domain != "dns1.example.com" || b.Options.RP.ID != "dns1.example.com" {
+		t.Fatalf("passkey domain %q / %q, want this server's name only", b.Domain, b.Options.RP.ID)
 	}
 	admin.want(201, "POST", "/api/v1/auth/passkeys/finish", map[string]any{"ticket": b.Ticket, "name": "Shannon's Mac", "credential": key.create(b.Options)}, nil)
 	// The challenge works once.
@@ -118,7 +118,7 @@ func TestPasskeys(t *testing.T) {
 
 	var list []passkeyView
 	admin.want(200, "GET", "/api/v1/auth/passkeys", nil, &list)
-	if len(list) != 1 || list[0].Name != "Shannon's Mac" || !list[0].Synced || list[0].Domain != "example.com" {
+	if len(list) != 1 || list[0].Name != "Shannon's Mac" || !list[0].Synced || list[0].Domain != "dns1.example.com" {
 		t.Fatalf("list %+v", list)
 	}
 	admin.want(204, "PATCH", "/api/v1/auth/passkeys/"+list[0].ID, map[string]any{"name": "MacBook"}, nil)
@@ -129,7 +129,7 @@ func TestPasskeys(t *testing.T) {
 	c.origin = origin
 	var lb begun
 	c.want(200, "POST", "/api/v1/auth/passkey/begin", nil, &lb)
-	if lb.Options.RPID != "example.com" {
+	if lb.Options.RPID != "dns1.example.com" {
 		t.Fatalf("sign-in rpId %q", lb.Options.RPID)
 	}
 	c.want(200, "POST", "/api/v1/auth/passkey/finish", map[string]any{"ticket": lb.Ticket, "credential": key.get(lb.Options)}, nil)
@@ -139,14 +139,18 @@ func TestPasskeys(t *testing.T) {
 		t.Fatalf("after sign-in %+v", list[0])
 	}
 
-	// From another server under the same domain, the same passkey works.
+	// Another server under the same domain can't use it: each server's
+	// passkey is for that server's name only.
 	key.origin = "https://dns2.example.com"
 	e.api.AllowedOrigins = append(e.api.AllowedOrigins, "dns2.example.com")
 	c2 := e.client()
 	c2.origin = key.origin
 	c2.want(200, "POST", "/api/v1/auth/passkey/begin", nil, &lb)
-	c2.want(200, "POST", "/api/v1/auth/passkey/finish", map[string]any{"ticket": lb.Ticket, "credential": key.get(lb.Options)}, nil)
-	c2.want(200, "GET", "/api/v1/users", nil, nil)
+	if lb.Options.RPID != "dns2.example.com" {
+		t.Fatalf("dns2 sign-in rpId %q", lb.Options.RPID)
+	}
+	c2.want(401, "POST", "/api/v1/auth/passkey/finish", map[string]any{"ticket": lb.Ticket, "credential": key.get(lb.Options)}, nil)
+	c2.want(401, "GET", "/api/v1/users", nil, nil)
 
 	// A different key, or a signature for another challenge, fails.
 	other := newSoftKey(t, origin)
@@ -191,7 +195,7 @@ func TestPasskeys(t *testing.T) {
 
 func TestRPCandidates(t *testing.T) {
 	for host, want := range map[string][]string{
-		"dns1.example.com": {"example.com", "dns1.example.com"},
+		"dns1.example.com": {"dns1.example.com", "example.com"},
 		"example.com":      {"example.com"},
 		"dns.lan":          {"dns.lan"},
 		"localhost":        {"localhost"},
