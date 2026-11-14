@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -84,7 +85,13 @@ func (c *S3) do(ctx context.Context, method, key string, query url.Values, body 
 	p := path + "/" + key
 	// RawPath makes the request carry exactly the escaping that is signed.
 	u := &url.URL{Scheme: scheme, Host: host, Path: p, RawPath: uriEncode(p, false), RawQuery: canonicalQuery(query)}
-	req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(body))
+	raw := u.String()
+	// The endpoint comes from an admin, but still only ever ask a plain
+	// http(s) host, with no user info or other tricks in the address.
+	if !safeS3URL.MatchString(raw) {
+		return nil, fmt.Errorf("%q isn't a usable S3 address", scheme+"://"+host)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, raw, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -107,6 +114,11 @@ func (c *S3) do(ctx context.Context, method, key string, query url.Values, body 
 	}
 	return b, nil
 }
+
+// safeS3URL is what a request address may look like: http or https, a
+// host name or IP address (IPv6 in brackets) with an optional port, and
+// a path and query made of the characters uriEncode leaves.
+var safeS3URL = regexp.MustCompile(`^https?://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?|\[[0-9A-Fa-f:.]{2,45}\])(?::[0-9]{1,5})?/[A-Za-z0-9._~%/-]*(?:\?[A-Za-z0-9._~%&=-]*)?$`)
 
 // maxObject caps what is read back from the bucket.
 const maxObject = 128 << 20

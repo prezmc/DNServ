@@ -105,3 +105,20 @@ func TestS3RoundTrip(t *testing.T) {
 		t.Fatalf("want a hint about keys, got %v", err)
 	}
 }
+
+func TestS3SafeURL(t *testing.T) {
+	for _, u := range []string{"https://bkt.s3.eu-west-2.amazonaws.com/a%20b/x.dnsbak", "http://minio.lan:9000/bkt/?delimiter=%2F&list-type=2&prefix=dns%2F", "http://[fd00::1]:9000/b/x", "https://10.0.0.5/b/"} {
+		if !safeS3URL.MatchString(u) {
+			t.Errorf("rejected %s", u)
+		}
+	}
+	for _, u := range []string{"https://user:pw@host/b/", "ftp://host/b/", "https://host#frag/b/", "https://ho st/b/", "https://-host/b/"} {
+		if safeS3URL.MatchString(u) {
+			t.Errorf("allowed %s", u)
+		}
+	}
+	c := &S3{T: store.S3Target{Endpoint: "https://user:pw@evil", Bucket: "b", AccessKey: "a", SecretKey: "s", PathStyle: true}}
+	if err := c.Put(context.Background(), "x", nil); err == nil || !strings.Contains(err.Error(), "usable S3 address") {
+		t.Fatalf("got %v", err)
+	}
+}
