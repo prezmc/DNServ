@@ -46,7 +46,15 @@ func (f *fakeResolver) Exchange(ctx context.Context, q *dns.Msg) (*dns.Msg, erro
 
 type staticFilter struct{ ix *filter.Index }
 
-func (s staticFilter) Lookup(n string) filter.Match { return s.ix.Lookup(n) }
+func (s staticFilter) LookupFor(n string, sel *filter.Selection) filter.Match {
+	if sel == nil {
+		return s.ix.Lookup(n)
+	}
+	if sel.Empty() {
+		return filter.Match{}
+	}
+	return s.ix.LookupMask(n, sel.Mask(s.ix))
+}
 
 func newTestServer(t testing.TB, mutate func(*config.Config), r Resolver) (*Server, string) {
 	t.Helper()

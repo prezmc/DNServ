@@ -196,3 +196,56 @@ func TestLocalRecordsSetting(t *testing.T) {
 		t.Fatalf("records: %+v", recs)
 	}
 }
+
+func TestGroupListsAndTargetedRules(t *testing.T) {
+	e := newEnv(t)
+	admin, _ := e.setupAdmin()
+	admin.want(200, "PATCH", "/api/v1/settings", map[string]any{"lists": []map[string]any{{"name": "Ads", "url": "https://ads.example/list.txt", "enabled": true}}}, nil)
+
+	// A group can't pick a list that isn't in the settings, unless it adds it.
+	admin.want(400, "POST", "/api/v1/groups", map[string]any{"name": "Kids", "list_mode": "choose", "lists": []string{"https://adult.example/list.txt"}}, nil)
+	admin.want(400, "POST", "/api/v1/groups", map[string]any{"name": "Kids", "list_mode": "some"}, nil)
+	admin.want(400, "POST", "/api/v1/groups", map[string]any{"name": "Kids", "household_rules": "maybe"}, nil)
+	var kids struct{ ID string }
+	admin.want(201, "POST", "/api/v1/groups", map[string]any{"name": "Kids", "list_mode": "choose",
+		"lists":     []string{"https://ads.example/list.txt", "https://adult.example/list.txt", "https://adult.example/list.txt"},
+		"add_lists": []map[string]string{{"name": "Adult", "url": "https://adult.example/list.txt"}}}, &kids)
+	st := e.api.Store.State()
+	if g := st.Groups[kids.ID]; g.ListMode != "choose" || len(g.Lists) != 2 {
+		t.Fatalf("group: %+v", g)
+	}
+	if l := *st.Settings.Lists; len(l) != 2 || l[1].URL != "https://adult.example/list.txt" || l[1].Enabled || l[1].Name != "Adult" {
+		t.Fatalf("added list: %+v", l)
+	}
+
+	// The older "skip" switch reads as no lists and no household rules.
+	var work struct{ ID string }
+	admin.want(201, "POST", "/api/v1/groups", map[string]any{"name": "Work", "skip_blocklists": true}, &work)
+	if g := e.api.Store.State().Groups[work.ID]; g.SkipBlocklists || g.ListMode != "choose" || len(g.Lists) != 0 || g.HouseholdRules != "off" {
+		t.Fatalf("work: %+v", g)
+	}
+
+	// Custom rules for some devices only.
+	admin.want(400, "PATCH", "/api/v1/settings", map[string]any{"rules": []string{"||x.example^$client=~Kids"}}, nil)
+	admin.want(200, "PATCH", "/api/v1/settings", map[string]any{"rules": []string{"||video.example^$client=Kids", "||ads2.example^"}}, nil)
+	var list struct {
+		Groups []struct {
+			Name     string
+			ListMode string `json:"list_mode"`
+			Targeted []string
+		}
+		Lists []struct {
+			URL     string
+			Enabled bool
+		}
+	}
+	admin.want(200, "GET", "/api/v1/groups", nil, &list)
+	if len(list.Lists) != 2 || list.Lists[1].Enabled {
+		t.Fatalf("list choices: %+v", list.Lists)
+	}
+	for _, g := range list.Groups {
+		if g.Name == "Kids" && (len(g.Targeted) != 1 || g.Targeted[0] != "||video.example^$client=Kids") {
+			t.Fatalf("targeted: %+v", g)
+		}
+	}
+}

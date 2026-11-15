@@ -13,6 +13,7 @@
 | `/^[a-z]{5}-[a-z]{5}\.xyz$/` | a regular expression (Go's RE2 syntax, case-insensitive) over the name |
 | `\|\|top^$denyallow=good.top` | `top` and its subdomains, except `good.top` and its subdomains |
 | `\|\|ads.example^$badfilter` | switches off `\|\|ads.example^` in every list |
+| `\|\|tiktok.com^$client=Kids` | custom rules only: just for the devices in the Kids group (see [Groups](#device-groups)) |
 
 Custom rules beat lists. At the same level, an allow rule beats a block.
 
@@ -24,8 +25,9 @@ rule that matched, so a block "by CNAME" shows the alias's rule.
 Rules that can't apply to a DNS name are skipped and counted, so the index
 never claims to block something it doesn't: cosmetic rules, URL rules with a
 path or port, regexes RE2 can't run (lookaheads, backreferences), and
-modifiers other than `$important`, `$denyallow` and `$badfilter` (`$client`,
-`$dnstype` and `$dnsrewrite` among them).
+modifiers other than `$important`, `$denyallow` and `$badfilter` (`$dnstype`
+and `$dnsrewrite` among them, and `$client` inside lists; your custom rules
+can use `$client`).
 
 Wildcard and regex rules are indexed by three letters of the text each one
 needs, so a lookup only tries the few whose letters the name contains: the
@@ -44,6 +46,44 @@ protection level, and each list stays an ordinary row you can switch off,
 rename or remove. A category shows as ticked while all its lists are present
 and on. The setup wizard offers the same categories. The catalog is
 `filter.Bundles` (`GET /api/v1/lists/bundles`).
+
+## Device groups
+
+A group on the **Devices** page gives some devices their own filtering.
+Devices not in a group follow the household settings. In the group editor:
+
+- **Blocklists:** *Same as the household*, or *Choose lists for this
+  group*. Choosing lets you tick any list in Settings > Filtering, including
+  ones switched off there: a list that's off for the household but ticked by
+  a group is downloaded and used for that group only. Ticking a category
+  ticks its lists, and adds any that aren't in the settings yet as rows
+  switched off for the household (that needs permission to manage
+  blocklists). Choosing no lists at all is fine. Allowlists are chosen the
+  same way. Settings > Filtering shows which groups use each list.
+- **Use the household's custom rules and blocked services:** on by default.
+  Untick it for, say, a work laptop. With no lists as well, the group's
+  devices aren't filtered except by the group's own rules and schedules.
+- **Extra rules, blocked services, safe search and schedules** of the group's
+  own. A group's allow rules beat everything, even its schedules.
+
+A custom rule can also be for some devices only, with AdGuard Home's
+`$client` modifier: a group name, a device name (quoted if it has spaces) or
+an address, several separated by `|`. Names ignore case.
+
+```
+||tiktok.com^$client=Kids
+@@||games.example^$client='Living room TV'|192.168.1.20
+```
+
+Such a rule works like one of the named group's own rules (or, for a device
+not in a group, like a rule just for it), so it applies even to a group that
+doesn't use the household's rules, and a targeted allow beats the lists.
+Excluding devices (`$client=~name`) isn't supported. The AdGuard Home import
+keeps `$client` rules.
+
+Each list is compiled once into one index that remembers which lists have
+each domain, so a group with its own lists costs the same per lookup as the
+household: no copy of the lists per group.
 
 ## Blocked services and safe search
 

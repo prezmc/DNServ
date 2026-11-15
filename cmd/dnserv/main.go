@@ -211,6 +211,7 @@ func run() error {
 	// Filtering. DNS starts answering right away; the index is built in the
 	// background and /readyz reports ready once it is in place.
 	engine := filter.NewEngine(cfg.Filtering, cfg.DataDir, nil, log)
+	engine.SetGroupLists(groupLists(boot))
 	syncLists(ctx, cl, engine, log)
 	var filterReady atomic.Bool
 	go func() {
@@ -242,7 +243,7 @@ func run() error {
 			g.SetObserver(obs)
 		}
 	}
-	srv.SetPolicy(policy.Build(boot))
+	srv.SetPolicy(policy.BuildWith(boot, cfg.Filtering.Rules))
 	selfID := cl.ID() // fixed for the life of the node
 	setPause(srv, boot, selfID)
 	if loc, err := cfg.Location(); err == nil {
@@ -558,8 +559,18 @@ func run() error {
 		old := shown
 		shown = new
 		// Groups are cheap to compile, so apply them right here.
-		if !reflect.DeepEqual(old.Groups, new.Groups) || !reflect.DeepEqual(old.Devices, new.Devices) {
-			srv.SetPolicy(policy.Build(new))
+		if !reflect.DeepEqual(old.Groups, new.Groups) || !reflect.DeepEqual(old.Devices, new.Devices) ||
+			!reflect.DeepEqual(old.Settings.Rules, new.Settings.Rules) {
+			srv.SetPolicy(policy.BuildWith(new, new.Settings.Overlay(base).Filtering.Rules))
+		}
+		// A group that picks a list switched off for the household needs
+		// it loaded.
+		if !reflect.DeepEqual(old.Groups, new.Groups) && engine.SetGroupLists(groupLists(new)) {
+			go func() {
+				if err := engine.Rebuild(ctx, false); err != nil {
+					log.Error("filter rebuild failed", "err", err)
+				}
+			}()
 		}
 		if !reflect.DeepEqual(old.Pauses, new.Pauses) || old.Cluster.ID != new.Cluster.ID {
 			setPause(srv, new, selfID)
@@ -797,6 +808,18 @@ func applySettings(ctx context.Context, cfg, next config.Config, srv *server.Ser
 		}
 	}
 	return next
+}
+
+// groupLists are the lists (by URL) device groups choose for themselves.
+func groupLists(st *store.State) []string {
+	var out []string
+	for _, g := range st.Groups {
+		if g := g.Shared(); g.ListMode == "choose" {
+			out = append(out, g.Lists...)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // recoverAccount is the locked-out-admin escape hatch. It needs shell

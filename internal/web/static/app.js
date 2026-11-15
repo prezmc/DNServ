@@ -1842,6 +1842,80 @@ function blockedText(rules, services) {
   return parts.join(' and ');
 }
 
+// groupRulesText sums up a group's filtering for the Groups table.
+function groupRulesText(g, lists) {
+  const parts = [];
+  if (g.list_mode !== 'choose') parts.push('Household blocklists');
+  else if (!(g.lists || []).length) parts.push('No blocklists');
+  else {
+    const names = g.lists.map(u => ((lists || []).find(l => l.url === u) || { name: u }).name || u);
+    parts.push(names.length > 3 ? plural(names.length, 'own list', 'own lists') : 'Own lists: ' + names.join(', '));
+  }
+  if (g.household_rules === 'off') parts.push('no household rules');
+  const own = (g.rules || []).length + (g.targeted || []).length;
+  if (own) parts.push(plural(own, 'rule', 'rules'));
+  if ((g.services || []).length) parts.push(plural(g.services.length, 'blocked service', 'blocked services'));
+  return parts.join(', ');
+}
+
+// groupListPicker chooses a group's blocklists: the household's, or its
+// own pick of the lists in the filtering settings (category bundles tick
+// several at once, adding lists not there yet when the user may). read()
+// returns { list_mode, lists, add_lists }.
+function groupListPicker(g, choices) {
+  choices = (choices || []).slice();
+  const own = g.list_mode === 'choose';
+  const picked = new Set(own ? (g.lists || []) : choices.filter(l => l.enabled).map(l => l.url));
+  const added = new Map(); // url -> {name, url}, from bundles
+  const rows = h('div', { class: 'perms list-pick' });
+  const draw = () => {
+    rows.replaceChildren(...choices.map(l => h('label', { class: 'inline', title: l.url },
+      h('input', { type: 'checkbox', 'data-url': l.url, checked: picked.has(l.url), onchange: (ev) => { if (ev.target.checked) picked.add(l.url); else picked.delete(l.url); syncBundles(); } }),
+      l.name || l.url, l.allowlist ? h('span', { class: 'badge ok' }, 'allow') : null,
+      !l.enabled ? h('span', { class: 'muted small' }, added.has(l.url) ? ' (new, groups only)' : ' (off for the household)') : null)));
+    if (!choices.length) rows.append(h('p', { class: 'muted small' }, 'No lists yet. Add some under Settings, Filtering.'));
+  };
+  const bundleBox = h('div', { class: 'perms' }, h('span', { class: 'muted small' }, 'Loading categories…'));
+  let bundles = [];
+  const mayAdd = can('lists.manage');
+  const usable = (b) => mayAdd || b.lists.every(l => choices.some(c => c.url === l.url));
+  const syncBundles = () => bundleBox.querySelectorAll('[data-bundle]').forEach(c => {
+    const b = bundles.find(x => x.id === c.dataset.bundle);
+    c.checked = b.lists.every(l => picked.has(l.url));
+  });
+  loadBundles().then((bs) => {
+    bundles = bs;
+    bundleBox.replaceChildren(...bs.map(b => h('label', { class: 'inline', title: b.about + ' ' + b.lists.map(l => l.name).join(', ') },
+      h('input', { type: 'checkbox', 'data-bundle': b.id, disabled: !usable(b), onchange: (ev) => {
+        if (ev.target.checked) {
+          b.lists.forEach(l => {
+            if (!choices.some(c => c.url === l.url)) { choices.push({ name: l.name, url: l.url, enabled: false }); added.set(l.url, l); }
+            picked.add(l.url);
+          });
+        } else {
+          const keep = new Set(bundles.filter(o => o !== b && o.lists.every(l => picked.has(l.url))).flatMap(o => o.lists.map(l => l.url)));
+          b.lists.forEach(l => { if (!keep.has(l.url)) picked.delete(l.url); });
+        }
+        draw(); syncBundles();
+      } }), b.name)));
+    if (!mayAdd && bs.some(b => !usable(b))) bundleBox.append(h('p', { class: 'muted small' }, 'Greyed-out categories have lists that aren’t in the filtering settings yet; someone who can manage blocklists can add them.'));
+    syncBundles();
+  }).catch(e => fill(bundleBox, h('p', { class: 'muted small' }, "Couldn't load the categories: " + e.message)));
+  const pickBox = h('div', { class: 'indent', hidden: !own },
+    h('p', { class: 'muted small' }, 'Tick a category to tick its lists, or pick lists one by one. A list switched off for the household is downloaded for this group only.'),
+    bundleBox, h('p', { class: 'muted small mt-s' }, 'Lists:'), rows);
+  const mode = h('select', { id: 'glmode', name: 'lmode', onchange: () => { pickBox.hidden = mode.value !== 'choose'; } },
+    h('option', { value: '', selected: !own }, 'Same as the household'),
+    h('option', { value: 'choose', selected: own }, 'Choose lists for this group'));
+  draw();
+  const box = h('div', {}, h('label', { for: 'glmode' }, 'Blocklists'), mode, pickBox);
+  box.read = () => mode.value !== 'choose' ? { list_mode: '', lists: [], add_lists: [] } : {
+    list_mode: 'choose', lists: choices.filter(l => picked.has(l.url)).map(l => l.url),
+    add_lists: [...added.values()].filter(l => picked.has(l.url)).map(l => ({ name: l.name, url: l.url })),
+  };
+  return box;
+}
+
 function groupsCard(groups, devs, gs) {
   const manage = can('devices.manage');
   const named = devs.filter(d => d.id);
@@ -1853,8 +1927,7 @@ function groupsCard(groups, devs, gs) {
       h('tbody', {}, groups.map(g => h('tr', {},
         h('td', {}, h('b', {}, g.name), g.active.length ? h('div', {}, h('span', { class: 'badge bad nowrap' }, g.active.join(', ') + ' on now')) : null),
         h('td', { class: 'small' }, g.devices.length ? g.devices.map(id => (named.find(d => d.id === id) || { name: id }).name).join(', ') : h('span', { class: 'muted' }, 'none yet')),
-        h('td', { class: 'small' }, g.skip_blocklists ? 'Skips the household blocklists' : 'Household blocklists', g.rules.length ? ', plus ' + g.rules.length + ' rule' + (g.rules.length > 1 ? 's' : '') : '',
-          (g.services || []).length ? ', ' + plural(g.services.length, 'blocked service', 'blocked services') : ''),
+        h('td', { class: 'small' }, groupRulesText(g, gs.lists)),
         h('td', { class: 'small' }, g.schedules.length ? g.schedules.map(sc => h('div', {}, sc.name, ': ', sc.block_all ? 'no internet' : 'blocks ' + blockedText(sc.rules.length, (sc.services || []).length), ', ', sc.start, '–', sc.end, ' ', daysText(sc.days))) : h('span', { class: 'muted' }, 'none')),
         manage ? h('td', { class: 'nowrap' },
           h('button', { class: 'link', onclick: () => editGroup(g, named, gs) }, 'Edit'),
@@ -1976,8 +2049,10 @@ function scheduleEditor(sc) {
 }
 
 function editGroup(g, named, gs) {
-  g = g || { name: '', devices: [], rules: [], schedules: [], skip_blocklists: false };
+  g = g || { name: '', devices: [], rules: [], schedules: [], targeted: [] };
   const gsvc = servicePicker(g.services, 'Services blocked for this group', true);
+  const glists = groupListPicker(g, gs.lists);
+  const targeted = g.targeted || [];
   const scheds = h('div', {}, g.schedules.map(scheduleEditor));
   const preset = (sc) => scheds.append(scheduleEditor(sc));
   const dlg = dialog(g.id ? 'Edit group' : 'Add a group', form({}, [
@@ -1989,10 +2064,18 @@ function editGroup(g, named, gs) {
     } }) : null,
     h('div', { class: 'perms' }, named.map(d => h('label', { class: 'inline', 'data-k': d.name + ' ' + (d.addrs || []).join(' '), title: (d.addrs || []).join(', ') || null },
       h('input', { type: 'checkbox', name: 'dev', value: d.id, checked: g.devices.includes(d.id) }), d.name))),
-    h('label', { class: 'inline mt' }, h('input', { type: 'checkbox', name: 'skip', checked: g.skip_blocklists }), 'Skip the household blocklists and custom rules (for example a work laptop)'),
+    h('h3', {}, 'Blocklists and rules'),
+    glists,
+    h('label', { class: 'inline mt' }, h('input', { type: 'checkbox', name: 'hrules', checked: g.household_rules !== 'off' }),
+      'Use the household’s custom rules and blocked services'),
+    h('p', { class: 'muted small' }, 'Untick for a device that shouldn’t follow your own rules, such as a work laptop. Choose no lists above as well to skip filtering for it entirely.'),
     h('label', { for: 'grules' }, 'Extra rules for this group'),
     h('textarea', { id: 'grules', name: 'rules', spellcheck: 'false', class: 'short', placeholder: '||games.example^\n@@||school.example^' }, g.rules.join('\n')),
     h('p', { class: 'muted small' }, 'Same syntax as custom rules. Allow rules here (', h('code', {}, '@@||site^'), ') beat everything, even schedules.'),
+    targeted.length ? h('div', { class: 'small' }, h('p', { class: 'muted' }, 'Also for this group, from your custom rules:'),
+      h('ul', { class: 'plain' }, targeted.map(r => h('li', {}, h('code', {}, r))))) : null,
+    h('p', { class: 'muted small' }, 'A custom rule ending in ', h('code', {}, '$client=' + (/^[\w.-]+$/.test(g.name || 'Kids') ? g.name || 'Kids' : "'" + g.name + "'")),
+      ' applies to this group only', can('rules.edit') ? [' (', h('a', { href: '#/settings' }, 'Custom rules'), ')'] : null, '.'),
     h('h3', {}, 'Blocked services'),
     h('p', { class: 'muted small' }, 'Blocked all the time for this group, on top of the ones blocked for everyone. Use a schedule below to block them only at some times.'),
     gsvc,
@@ -2013,7 +2096,7 @@ function editGroup(g, named, gs) {
       h('button', { type: 'button', onclick: () => dlg.close() }, 'Cancel')),
   ], async (f) => {
     const body = {
-      name: val(f, 'name').trim(), skip_blocklists: f.elements.skip.checked, rules: lines(val(f, 'rules')),
+      name: val(f, 'name').trim(), ...glists.read(), household_rules: f.elements.hrules.checked ? '' : 'off', rules: lines(val(f, 'rules')),
       services: gsvc.read(), safe_search: val(f, 'safe'),
       schedules: [...scheds.children].map(x => x.read()),
       devices: [...f.querySelectorAll('input[name=dev]:checked')].map(i => i.value),
@@ -3609,13 +3692,24 @@ async function settings(main) {
 
   if (can('lists.manage')) {
     const fl = eff.Filtering;
+    // Which groups pick each list for themselves, shown beside it.
+    const groupsP = api('GET', '/groups').then(r => r.groups || []).catch(() => []);
+    const usedBy = (td, url) => groupsP.then(gs => {
+      const names = gs.filter(g => g.list_mode === 'choose' && (g.lists || []).includes(url)).map(g => g.name);
+      fill(td, names.length ? h('span', { class: 'small' }, names.join(', ')) : h('span', { class: 'muted small' }, '\u2014'));
+    });
     const listEditor = (name, items) => {
       const body = h('tbody');
-      const addRow = (l) => body.append(h('tr', {},
-        h('td', {}, h('input', { type: 'checkbox', 'data-f': 'enabled', checked: l.enabled, 'aria-label': 'Enabled' })),
-        h('td', {}, h('input', { type: 'text', 'data-f': 'name', value: l.name, 'aria-label': 'Name' })),
-        h('td', {}, h('input', { type: 'text', 'data-f': 'url', value: l.url, 'aria-label': 'URL', spellcheck: 'false' })),
-        h('td', {}, h('button', { type: 'button', class: 'link danger', onclick: (ev) => ev.target.closest('tr').remove() }, 'Remove'))));
+      const addRow = (l) => {
+        const groupsTd = h('td', { class: 'nowrap' });
+        if (l.url) usedBy(groupsTd, l.url);
+        body.append(h('tr', {},
+          h('td', {}, h('input', { type: 'checkbox', 'data-f': 'enabled', checked: l.enabled, 'aria-label': 'On for the household' })),
+          h('td', {}, h('input', { type: 'text', 'data-f': 'name', value: l.name, 'aria-label': 'Name' })),
+          h('td', {}, h('input', { type: 'text', 'data-f': 'url', value: l.url, 'aria-label': 'URL', spellcheck: 'false' })),
+          groupsTd,
+          h('td', {}, h('button', { type: 'button', class: 'link danger', onclick: (ev) => ev.target.closest('tr').remove() }, 'Remove'))));
+      };
       (items || []).forEach(addRow);
       const presets = name === 'lists' ? h('select', { 'aria-label': 'Add a known list', onchange: (ev) => {
         const p = PRESET_LISTS.find(x => x.url === ev.target.value);
@@ -3623,7 +3717,8 @@ async function settings(main) {
         ev.target.value = '';
       } }, h('option', { value: '' }, 'Add a known list…'), PRESET_LISTS.map(p => h('option', { value: p.url }, p.name))) : null;
       const el = h('div', { 'data-list': name },
-        h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'On'), h('th', {}, 'Name'), h('th', {}, 'URL or file path'), h('th', {}))), body)),
+        h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', { title: 'On for devices that follow the household settings' }, 'On'), h('th', {}, 'Name'), h('th', {}, 'URL or file path'),
+          h('th', { title: 'Device groups that choose this list for themselves' }, 'Groups'), h('th', {}))), body)),
         h('div', { class: 'row mt-s' },
           h('button', { type: 'button', onclick: () => addRow({ name: '', url: '', enabled: true }) }, 'Add list'), presets));
       const rowOf = (url) => [...body.rows].find(r => r.querySelector('[data-f=url]').value.trim() === url);
@@ -3650,6 +3745,8 @@ async function settings(main) {
         h('p', { class: 'muted small' }, 'Tick a category to add its lists to the blocklists below, then Save. Categories stack on top of your protection level, and each list can still be switched off on its own.'),
         bundlePicker(block),
         h('div', { class: 'row spread mt' }, h('h3', {}, 'Blocklists'), updateListsButton()), block,
+        h('p', { class: 'muted small' }, '“On” is for devices that follow the household settings. A device group can choose its own lists on the ', h('a', { href: '#/devices' }, 'Devices'),
+          ' page, including ones switched off here; removing a list here takes it away from those groups too.'),
         h('h3', {}, 'Allowlists'), h('p', { class: 'muted small' }, 'Domains on these lists are never blocked by a blocklist.'), allow,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({
@@ -3685,6 +3782,9 @@ async function settings(main) {
         h('p', { class: 'muted small' }, h('code', {}, '||ads.example.com^'), ' blocks a domain and its subdomains · ', h('code', {}, '@@||cdn.example.com^'), ' always allows · ',
           h('code', {}, '*.tracker.example'), ' subdomains only · ', h('code', {}, 'exact.example.com'), ' just that name · ',
           h('code', {}, '||ad-*.example.com^'), ' wildcards · ', h('code', {}, '/^ads[0-9]+\\./'), ' regex. Custom rules beat every list.'),
+        h('p', { class: 'muted small' }, 'For some devices only, add ', h('code', {}, '$client='), ' with a group, a device name or an address: ',
+          h('code', {}, '||tiktok.com^$client=Kids'), ' · ', h('code', {}, "@@||games.example^$client='Living room TV'|192.168.1.20"),
+          '. These work like the group’s own rules, even for a group that doesn’t use the household’s rules.'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ rules: lines(val(f, 'rules')).filter(l => !l.startsWith('#') && !l.startsWith('!')) }, { rules: norm(eff.Filtering.Rules) }))));
   }

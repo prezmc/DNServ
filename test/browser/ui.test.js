@@ -385,6 +385,57 @@ step('the devices page search finds devices despite typos', async () => {
   assert.ok(await rows.count() >= 3);
 });
 
+step('a group uses its own blocklists and targeted custom rules', async () => {
+  // A list switched off for the household, and a device in a Kids group.
+  const set = await api('GET', '/settings');
+  const lists = (set.effective.Filtering.Lists || []).concat([{ name: 'Kids only list', url: node.kidsListURL, enabled: false }]);
+  await api('PATCH', '/settings', { lists });
+  await api('POST', '/devices', { name: 'Kid tablet', addrs: ['127.0.0.20'] });
+  await go('devices');
+  await page.getByRole('button', { name: 'Add a group' }).click();
+  const dlg = page.locator('dialog[open]');
+  await dlg.locator('#gname').fill('Kids');
+  await dlg.getByLabel('Kid tablet').check();
+  await dlg.locator('#glmode').selectOption('choose');
+  await dlg.getByLabel(/Kids only list/).check();
+  await dlg.getByLabel('Browser test list').uncheck();
+  const shots = process.env.GROUP_SHOTS; // folder for PR screenshots
+  if (shots) await dlg.screenshot({ path: path.join(shots, 'group-editor.png') });
+  await dlg.getByRole('button', { name: 'Save' }).click();
+  await page.locator('.card', { hasText: 'Own lists: Kids only list' }).first().waitFor();
+  await until('the kids list to load', async () => {
+    const st = await api('GET', '/status');
+    return (st.filter && st.filter.lists || []).some(x => x.name === 'Kids only list' && x.rules === 1);
+  }, 30000);
+  const kid = (n) => lookup(node.dnsPort, n, 3000, '127.0.0.20');
+  await until('the kids list to block', async () => (await kid('grownup.listed.test')).a[0] === '0.0.0.0');
+  assert.notEqual((await lookup(node.dnsPort, 'grownup.listed.test')).a[0], '0.0.0.0', 'household devices skip a groups-only list');
+  assert.notEqual((await kid('ads.listed.test')).a[0], '0.0.0.0', 'the group left the household list out');
+  assert.deepEqual((await lookup(node.dnsPort, 'ads.listed.test')).a, ['0.0.0.0']);
+  // Settings shows which group uses the list.
+  await go('settings');
+  await page.locator('[data-list=lists] tr', { hasText: 'Kids' }).first().waitFor();
+  if (shots) await page.locator('.card', { has: page.locator('[data-list=lists]') }).screenshot({ path: path.join(shots, 'blocklists-groups-column.png') });
+  // A custom rule for the group only.
+  const rules = (set.effective.Filtering.Rules || []).concat(['||homework-free.test^$client=Kids']);
+  await api('PATCH', '/settings', { rules });
+  await until('the targeted rule', async () => (await kid('homework-free.test')).a[0] === '0.0.0.0');
+  assert.notEqual((await lookup(node.dnsPort, 'homework-free.test')).a[0], '0.0.0.0', 'a $client rule is for the group only');
+  await go('devices');
+  await page.locator('.card', { hasText: 'Groups' }).getByRole('button', { name: 'Edit' }).first().click();
+  await page.locator('dialog[open]').getByText('||homework-free.test^$client=Kids').waitFor();
+  if (shots) {
+    await page.locator('dialog[open]').getByText('Also for this group').scrollIntoViewIfNeeded();
+    await page.locator('dialog[open]').screenshot({ path: path.join(shots, 'group-editor-targeted.png') });
+  }
+  await page.locator('dialog[open]').getByRole('button', { name: 'Cancel' }).click();
+  if (shots) {
+    await page.locator('.card', { hasText: 'Give some devices their own rules' }).screenshot({ path: path.join(shots, 'groups-table.png') });
+    await go('settings');
+    await page.locator('.card', { has: page.getByRole('heading', { name: /^Custom rules/ }) }).screenshot({ path: path.join(shots, 'custom-rules-help.png') });
+  }
+});
+
 step('performance shows how full the cache is, and the size can change', async () => {
   await go('performance');
   const card = page.locator('.card', { has: page.getByRole('heading', { name: 'How full the cache is' }) });

@@ -134,9 +134,18 @@ type Device struct {
 type Group struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
-	// SkipBlocklists lets the group's devices bypass the shared blocklists
-	// (custom rules and the group's own rules still apply).
+	// SkipBlocklists is the older form of ListMode "choose" with no lists
+	// plus HouseholdRules "off": the group skips the household's lists and
+	// custom rules (its own rules still apply). See Shared.
 	SkipBlocklists bool `json:"skip_blocklists"`
+	// ListMode is "" for the household's lists, or "choose" for exactly
+	// Lists (URLs of blocklists and allowlists in the filtering settings;
+	// none at all is fine).
+	ListMode string   `json:"list_mode,omitempty"`
+	Lists    []string `json:"lists,omitempty"`
+	// HouseholdRules is "" when the household's custom rules, blocked
+	// services and bypass protection apply to the group, "off" when not.
+	HouseholdRules string `json:"household_rules,omitempty"`
 	// Rules are extra rules for this group, in the custom rule syntax.
 	Rules []string `json:"rules"`
 	// Services are blocked services (catalog ids) for this group, on top
@@ -146,6 +155,19 @@ type Group struct {
 	SafeSearch string     `json:"safe_search,omitempty"`
 	Schedules  []Schedule `json:"schedules"`
 	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// Shared returns the group with the older SkipBlocklists switch turned
+// into ListMode and HouseholdRules.
+func (g Group) Shared() Group {
+	if g.SkipBlocklists {
+		g.SkipBlocklists = false
+		if g.ListMode == "" {
+			g.ListMode, g.Lists = "choose", nil
+		}
+		g.HouseholdRules = "off"
+	}
+	return g
 }
 
 // Schedule tightens a group's filtering at set times, in the node's time

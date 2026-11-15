@@ -39,6 +39,9 @@ type ListStatus struct {
 	// came from the cluster leader rather than the list's own server.
 	SHA256     string `json:"sha256,omitempty"`
 	FromLeader bool   `json:"from_leader,omitempty"`
+	// GroupsOnly: the list is off for the household and loaded because
+	// a device group uses it.
+	GroupsOnly bool   `json:"groups_only,omitempty"`
 	Error      string `json:"error,omitempty"`
 }
 
@@ -56,6 +59,10 @@ type Engine struct {
 
 	peer      atomic.Pointer[Peer]
 	onRebuild atomic.Pointer[func(changed bool)]
+
+	// extra are lists (by URL) that only some groups use: loaded even
+	// when switched off for the household.
+	extra atomic.Pointer[map[string]bool]
 }
 
 // NewEngine creates an engine. dataDir caches downloaded lists so a
@@ -84,6 +91,36 @@ func (e *Engine) Lookup(name string) Match {
 		return Match{}
 	}
 	return e.idx.Load().Lookup(name)
+}
+
+// LookupFor is Lookup for a group with its own Selection (nil: the
+// household's).
+func (e *Engine) LookupFor(name string, sel *Selection) Match {
+	if !e.cfg.Load().Enabled {
+		return Match{}
+	}
+	ix := e.idx.Load()
+	if sel == nil {
+		return ix.Lookup(name)
+	}
+	if ix == nil || sel.Empty() {
+		return Match{}
+	}
+	return ix.LookupMask(name, sel.Mask(ix))
+}
+
+// SetGroupLists sets the lists (by URL) groups use. It reports whether
+// that adds a list not loaded before, so the caller knows to Rebuild.
+func (e *Engine) SetGroupLists(urls []string) (changed bool) {
+	next := map[string]bool{}
+	for _, u := range urls {
+		next[u] = true
+	}
+	old := e.extra.Swap(&next)
+	if old == nil {
+		return len(next) > 0
+	}
+	return !maps.Equal(*old, next)
 }
 
 // Rules returns the number of rules in the current index.
@@ -119,9 +156,16 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 
 	b := NewBuilder()
 	var statuses []ListStatus
+	extra := map[string]bool{}
+	if x := e.extra.Load(); x != nil {
+		extra = *x
+	}
 
-	custom := b.AddSource("Custom rules", TierCustom)
+	custom := b.AddSourceKey("Custom rules", TierCustom, "custom", true)
 	for _, line := range cfg.Rules {
+		if _, _, has, _ := ClientTargets(line); has {
+			continue // for some devices only: the device groups apply it
+		}
 		rules, ok, _ := ParseLine(line)
 		if !ok {
 			e.log.Warn("ignoring unsupported custom rule", "rule", line)
@@ -133,7 +177,7 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 	}
 
 	if cfg.BlockBypass {
-		src := b.AddSource("Bypass protection", TierList)
+		src := b.AddSourceKey("Bypass protection", TierList, "bypass", true)
 		for _, d := range BypassDomains {
 			b.Add(src, Rule{Domain: d, Kind: Suffix})
 		}
@@ -142,10 +186,10 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 	AddServices(b, cfg.BlockedServices)
 
 	load := func(l config.ListConfig, allow bool) {
-		if !l.Enabled {
+		if !l.Enabled && !extra[l.URL] {
 			return
 		}
-		st := ListStatus{Name: l.Name, URL: l.URL, Allowlist: allow}
+		st := ListStatus{Name: l.Name, URL: l.URL, Allowlist: allow, GroupsOnly: !l.Enabled}
 		if st.Name == "" {
 			st.Name = l.URL
 		}
@@ -171,7 +215,7 @@ func (e *Engine) Rebuild(ctx context.Context, forceDownload bool) error {
 			return
 		}
 		defer rc.Close()
-		src := b.AddSource(st.Name, TierList)
+		src := b.AddSourceKey(st.Name, TierList, "list:"+l.URL, l.Enabled)
 		ps, err := ParseList(rc, func(r Rule) {
 			r.Allow = r.Allow || allow
 			b.Add(src, r)
