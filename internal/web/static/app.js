@@ -1833,6 +1833,15 @@ function daysText(days) {
   return days.map(d => DAYS[d]).join(', ');
 }
 
+// blockedText says what a schedule blocks: "2 domains", "3 services" or
+// "1 domain and 2 services".
+function blockedText(rules, services) {
+  const parts = [];
+  if (rules || !services) parts.push(plural(rules, 'domain', 'domains'));
+  if (services) parts.push(plural(services, 'service', 'services'));
+  return parts.join(' and ');
+}
+
 function groupsCard(groups, devs, gs) {
   const manage = can('devices.manage');
   const named = devs.filter(d => d.id);
@@ -1844,8 +1853,9 @@ function groupsCard(groups, devs, gs) {
       h('tbody', {}, groups.map(g => h('tr', {},
         h('td', {}, h('b', {}, g.name), g.active.length ? h('div', {}, h('span', { class: 'badge bad nowrap' }, g.active.join(', ') + ' on now')) : null),
         h('td', { class: 'small' }, g.devices.length ? g.devices.map(id => (named.find(d => d.id === id) || { name: id }).name).join(', ') : h('span', { class: 'muted' }, 'none yet')),
-        h('td', { class: 'small' }, g.skip_blocklists ? 'Skips the household blocklists' : 'Household blocklists', g.rules.length ? ', plus ' + g.rules.length + ' rule' + (g.rules.length > 1 ? 's' : '') : ''),
-        h('td', { class: 'small' }, g.schedules.length ? g.schedules.map(sc => h('div', {}, sc.name, ': ', sc.block_all ? 'no internet' : 'blocks ' + sc.rules.length + ' domain' + (sc.rules.length > 1 ? 's' : ''), ', ', sc.start, '–', sc.end, ' ', daysText(sc.days))) : h('span', { class: 'muted' }, 'none')),
+        h('td', { class: 'small' }, g.skip_blocklists ? 'Skips the household blocklists' : 'Household blocklists', g.rules.length ? ', plus ' + g.rules.length + ' rule' + (g.rules.length > 1 ? 's' : '') : '',
+          (g.services || []).length ? ', ' + plural(g.services.length, 'blocked service', 'blocked services') : ''),
+        h('td', { class: 'small' }, g.schedules.length ? g.schedules.map(sc => h('div', {}, sc.name, ': ', sc.block_all ? 'no internet' : 'blocks ' + blockedText(sc.rules.length, (sc.services || []).length), ', ', sc.start, '–', sc.end, ' ', daysText(sc.days))) : h('span', { class: 'muted' }, 'none')),
         manage ? h('td', { class: 'nowrap' },
           h('button', { class: 'link', onclick: () => editGroup(g, named, gs) }, 'Edit'),
           h('button', { class: 'link danger', onclick: async () => {

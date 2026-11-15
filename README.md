@@ -23,7 +23,8 @@
 - **Spots threats.** Every lookup is scored against public malware and phishing feeds. The Dashboard tells you when something risky got through, who reached it, and lets you block it in one click. You can see and tune how scores add up.
 - **Keeps working when a server fails.** Run two or more nodes. Settings stay in sync and any node can take over.
 - **Private.** Uses encrypted DNS to Cloudflare by default, or resolves on its own with the bundled Unbound, optionally through a VPN.
-- **Safe to run.** Two-factor sign-in is required for every account. Roles are admin, power user and viewer. Every change is in the audit log, and backups are encrypted.
+- **Safe to run.** Two-factor sign-in (or a passkey) for every account. Roles are admin, power user and viewer. Every change is in the audit log. Encrypted backups go to a NAS, a network share or S3 storage, and the dashboard can have a free Let's Encrypt certificate.
+- **Updates itself.** The Updates page shows what's new and installs it on every server, one at a time, with a backup first and one-click rollback. Follow numbered releases or every change.
 - **No config files.** Pull the image, start it, and finish setup in the browser. You can import an existing AdGuard Home setup.
 
 ## Quick start
@@ -62,10 +63,11 @@ Then add the second server as your router's second DNS server. For a trusted cer
 | | |
 |---|---|
 | <img src="docs/images/security.png" alt="Security card" width="420"><br>**Security** says whether anything risky got through, and who reached it | <img src="docs/images/traffic-map.png" alt="Traffic map" width="420"><br>**Traffic map** follows lookups from devices to servers to services |
-| <img src="docs/images/query-log.png" alt="Query log" width="420"><br>**Query log** searches every server's history | <img src="docs/images/analytics.png" alt="Analytics" width="420"><br>**Analytics** shows top domains, what blocked them, and busy devices |
+| <img src="docs/images/query-log-paused.png" alt="Query log, paused" width="420"><br>**Query log** searches every server's history, and holds still while you read | <img src="docs/images/analytics.png" alt="Analytics" width="420"><br>**Analytics** shows top domains, what blocked them, and busy devices |
 | <img src="docs/images/performance.png" alt="Performance" width="420"><br>**Performance** shows response times, upstream health and anything unusual | <img src="docs/images/cluster.png" alt="Cluster" width="420"><br>**Cluster** shows your nodes, with leader controls and join codes |
 | <img src="docs/images/group.png" alt="Group with schedules" width="420"><br>**Groups** have blocked services, safe search and schedules | <img src="docs/images/scoring.png" alt="Tune risk scoring" width="420"><br>**Risk scoring** explains every score, with presets and a preview when you tune it |
-| <img src="docs/images/dashboard-light.png" alt="Light theme" width="420"><br>**Light theme**, which follows your system setting | |
+| <img src="docs/images/updates.png" alt="Updates" width="420"><br>**Updates** shows what's new and updates every server one at a time | <img src="docs/images/backups.png" alt="Backups" width="420"><br>**Backups** go to each server, a network share or S3 storage, encrypted |
+| <img src="docs/images/devices-search.png" alt="Device search" width="420"><br>**Devices** search forgives typos | <img src="docs/images/dashboard-light.png" alt="Light theme" width="420"><br>**Light theme**, which follows your system setting |
 
 ## Documentation
 
@@ -82,7 +84,7 @@ Then add the second server as your router's second DNS server. For a trusted cer
 | [Filtering](docs/filtering.md) | Rule syntax, blocked services, safe search, stopping bypass |
 | [Security and risk scoring](docs/risk-scoring.md) | Threat feeds, the Security card, how scores add up, tuning |
 | [Dashboard HTTPS](docs/https.md) | Let's Encrypt (built in), Nginx Proxy Manager, your own certificate or self-signed |
-| [Backups and history](docs/backups.md) | Encrypted backups, schedules, restore |
+| [Backups and history](docs/backups.md) | Encrypted backups to a NAS, SMB share or S3, schedules, restore |
 | [Moving from AdGuard Home](docs/adguard-import.md) | What the importer brings across |
 | [Tunnel mode](docs/tunnel-mode.md) | Recursive DNS through a WireGuard VPN |
 | [Admin API](docs/api.md) | Endpoints, tokens, permissions, account recovery |

@@ -6,6 +6,8 @@ dashboard, one server at a time, so your network never loses DNS.
 Open **Updates** in the menu (admins). The menu entry shows **new** when an
 update is available.
 
+![Updates page with a new version](images/updates.png)
+
 ## How it works
 
 **Finding new versions.** Every few hours each server asks the image

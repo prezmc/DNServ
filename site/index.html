@@ -138,10 +138,12 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
     <div class="frame">
       <figure class="slide on" data-title="Dashboard" data-text="Queries over time, what was blocked, your top domains and each server, at a glance."><img src="img/dashboard.webp" alt="Dashboard" decoding="async"></figure>
       <figure class="slide" data-title="Traffic map" data-text="Follow lookups from each device, through your servers, out to the services it reaches."><img data-src="img/traffic-map.webp" alt="Traffic map" decoding="async"></figure>
-      <figure class="slide" data-title="Query log" data-text="Search every server's history, with risk scores and one-click block or allow."><img data-src="img/query-log.webp" alt="Query log" decoding="async"></figure>
+      <figure class="slide" data-title="Query log" data-text="Search every server's history, with risk scores and one-click block or allow. It holds still while you read."><img data-src="img/query-log.webp" alt="Query log" decoding="async"></figure>
       <figure class="slide" data-title="Analytics" data-text="Top domains, which lists blocked them, and your busiest devices."><img data-src="img/analytics.webp" alt="Analytics" decoding="async"></figure>
       <figure class="slide" data-title="Performance" data-text="Response times, cache hits, upstream health, and anything unusual compared with last week."><img data-src="img/performance.webp" alt="Performance" decoding="async"></figure>
       <figure class="slide" data-title="Two servers, always in sync" data-text="Settings, rules and blocklists stay the same on every server. If one fails, the other answers in about 2 seconds."><img data-src="img/cluster.webp" alt="Two servers, always in sync" decoding="async"></figure>
+      <figure class="slide" data-title="One-click updates" data-text="See what's new, then update every server one at a time, with a backup first and rollback in one click."><img data-src="img/updates.webp" alt="One-click updates" decoding="async"></figure>
+      <figure class="slide" data-title="Backups off the server" data-text="Encrypted backups on a schedule, copied to a network share or S3 storage. Nothing to mount."><img data-src="img/backups.webp" alt="Backups off the server" decoding="async"></figure>
       <figure class="slide" data-title="Rules per device" data-text="Groups like Kids get their own blocked services, safe search, and schedules for bedtime or homework."><img data-src="img/group.webp" alt="Rules per device" decoding="async"></figure>
       <figure class="slide" data-title="Spots threats" data-text="Every lookup is checked against malware and phishing feeds, and each score shows how it adds up."><img data-src="img/scoring.webp" alt="Spots threats" decoding="async"></figure>
     </div>
@@ -167,8 +169,8 @@ footer .wrap { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space
     <div class="card"><div class="ico red"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="M12 8v5M12 16h0"/></svg></div><h3>Spots threats</h3><p>Every lookup is scored against public malware and phishing feeds. See what got through, who reached it, and block it in one click.</p></div>
     <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="8" height="16" rx="2"/><rect x="13" y="4" width="8" height="16" rx="2"/><path d="M7 8h0M17 8h0"/></svg></div><h3>Keeps working when a server fails</h3><p>Run two or more nodes. Settings stay in sync, and any node can take over as leader.</p></div>
     <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div><h3>Private</h3><p>Encrypted DNS to Cloudflare or Quad9, or its own recursive resolver (Unbound), optionally through a VPN.</p></div>
-    <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Safe to run</h3><p>Two-factor sign-in for every account, admin, power-user and viewer roles, an audit log, encrypted backups, and HTTPS.</p></div>
-    <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></div><h3>No config files</h3><p>Pull the image, start it, finish setup in the browser. Bring your AdGuard Home setup across in one step.</p></div>
+    <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Safe to run</h3><p>Two-factor sign-in or passkeys for every account, admin, power-user and viewer roles, an audit log, encrypted backups to a NAS or S3, and free Let's Encrypt HTTPS.</p></div>
+    <div class="card"><div class="ico sage"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg></div><h3>No config files, easy updates</h3><p>Pull the image, start it, finish setup in the browser. Updates install from the dashboard, one server at a time. Bring your AdGuard Home setup across in one step.</p></div>
   </div>
 </div></section>
 
@@ -214,14 +216,16 @@ docker compose logs | grep setup_code</pre>
   <div class="docs">
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/features.md">Features<span>Everything DNServ does</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/install.md">Installing<span>Install, update, .env</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/updates.md">Updates<span>One click, one server at a time</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/deploy-two-servers.md">Two-server guide<span>Deploy and failure scenarios</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/clustering.md">Clustering<span>Nodes, witnesses, recovery</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/filtering.md">Filtering<span>Rules, services, safe search</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/risk-scoring.md">Security<span>Threat feeds and risk scores</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/https.md">Dashboard HTTPS<span>Let's Encrypt, NPM or your own</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/sign-in.md">Signing in<span>Two-factor and passkeys</span></a>
-    <a href="https://github.com/prezmc/DNServ/blob/main/docs/backups.md">Backups<span>Encrypted, scheduled, restorable</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/backups.md">Backups<span>Encrypted, to a NAS, SMB share or S3</span></a>
     <a href="https://github.com/prezmc/DNServ/blob/main/docs/adguard-import.md">From AdGuard Home<span>What the importer brings</span></a>
+    <a href="https://github.com/prezmc/DNServ/blob/main/docs/performance.md">Performance<span>Benchmarks and dnsbench</span></a>
   </div>
 </div></section>
 </main>
