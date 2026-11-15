@@ -8,7 +8,7 @@ good.
 Run the same image on a second server (same command or compose file, port
 8081 published and open between the servers). Then:
 
-1. On your first node, open **Cluster** and choose **Make a join code**.
+1. On your first node, open **Servers** and choose **Make a join code**.
 2. Open the new node's dashboard, enter its setup code, choose **No, add
    this server to my DNServ**, and paste the join code.
 
@@ -35,7 +35,7 @@ the settings, so a node cut off from the others keeps filtering with what it
 last had. Without a leader only changes pause; sign-in still works (with an
 authenticator code).
 
-Leadership controls, under **Cluster**:
+Leadership controls, under **Servers**:
 
 - **Rename** changes the node's name. Tick **Also add a local name** to
   make a name like `dns1.home` point at the server, so you can open its

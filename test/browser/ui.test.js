@@ -108,7 +108,7 @@ step('setup wizard creates the admin with an authenticator', async () => {
 step('weekly usage summary stays off until an admin says yes', async () => {
   let u = await api('GET', '/usage');
   assert.equal(u.choice, '');
-  await go('settings');
+  await go('general');
   const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Weekly usage summary' }) });
   await card.getByText('Not decided').waitFor();
   await card.getByText('See exactly what would be sent').click();
@@ -132,17 +132,28 @@ step('DNS answers through the fake upstream', async () => {
 });
 
 step('every page opens without errors', async () => {
-  const pages = [['', 'Dashboard'], ['devices', 'Devices'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['traffic', 'Traffic map'], ['queries', 'Query log'],
-    ['names', 'Local names'], ['settings', 'Settings'], ['users', 'Users'], ['cluster', 'Cluster'], ['backups', 'Backups & history'], ['updates', 'Updates'],
+  const pages = [['', 'Dashboard'], ['devices', 'Devices & groups'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['traffic', 'Traffic map'], ['queries', 'Query log'],
+    ['blocklists', 'Blocklists'], ['services', 'Blocked services'], ['rules', 'Custom rules'], ['upstream', 'Upstream & cache'], ['risk', 'Risk scoring'], ['general', 'General'],
+    ['names', 'Local names'], ['settings', 'Settings'], ['users', 'Users'], ['cluster', 'Servers'], ['backups', 'Backups & restore'], ['updates', 'Updates'],
     ['import', 'Import from AdGuard Home'], ['audit', 'Audit log'], ['account', 'Your account']];
   for (const [hash, title] of pages) {
     await go(hash);
     await heading(title).waitFor();
     assert.equal(await page.locator('.msg.err').count(), 0, title + ' shows an error');
   }
-  // The menu links to each page shown.
+  // The menu links to each page shown, under its group headings.
   const links = await page.locator('nav a[href^="#/"]').count();
   assert.ok(links >= 10, 'menu has ' + links + ' links');
+  assert.deepEqual(await page.locator('nav .nav-group').allInnerTexts().then(t => t.map(x => x.trim().toLowerCase())), ['activity', 'filtering', 'network', 'system']);
+  // A settings page shows only its own cards, and a link can open it at one.
+  await go('blocklists');
+  await heading(/^Filtering/).waitFor();
+  assert.equal(await page.getByRole('heading', { name: 'Weekly usage summary' }).count(), 0, 'Blocklists shows only its cards');
+  await go('upstream?card=cache');
+  await page.locator('#card-cache.flash').waitFor();
+  // The name block opens Your account.
+  await page.locator('nav a.who').click();
+  await heading('Your account').waitFor();
 });
 
 step('block a domain from the dashboard, then remove the rule', async () => {
@@ -164,7 +175,7 @@ step('block a domain from the dashboard, then remove the rule', async () => {
 });
 
 step('a blocklist added in Settings downloads and blocks', async () => {
-  await go('settings');
+  await go('blocklists');
   const editor = page.locator('[data-list=lists]');
   await editor.getByRole('button', { name: 'Add list' }).click();
   const row = editor.locator('tbody tr').last();
@@ -185,6 +196,19 @@ step('a blocklist added in Settings downloads and blocks', async () => {
   const changed = await lists.locator('tr', { hasText: 'Browser test list' }).getAttribute('title').catch(() => null);
   const cell = await lists.locator('tr', { hasText: 'Browser test list' }).innerText();
   assert.match(cell + ' ' + (changed || ''), /ago|2026/, 'last changed shown');
+});
+
+step('the protection level can be changed after setup', async () => {
+  await go('blocklists');
+  const urls = () => page.locator('[data-list=lists] [data-f=url]').evaluateAll(els => els.map(e => e.value));
+  await page.locator('input[name=level][value=light]').check();
+  assert.ok((await urls()).some(u => u.endsWith('/light.txt')), 'Light adds its list');
+  await page.locator('input[name=level][value=pro]').check();
+  const now = await urls();
+  assert.ok(now.some(u => u.endsWith('/pro.txt')) && !now.some(u => u.endsWith('/light.txt')), 'one level at a time');
+  await page.locator('input[name=level][value=off]').check();
+  assert.ok(!(await urls()).some(u => /\/(light|multi|pro)\.txt$/.test(u)), 'None removes it');
+  assert.ok((await urls()).includes(node.listURL), 'other lists stay');
 });
 
 step('local names answer on DNS', async () => {
@@ -413,7 +437,7 @@ step('a group uses its own blocklists and targeted custom rules', async () => {
   assert.notEqual((await kid('ads.listed.test')).a[0], '0.0.0.0', 'the group left the household list out');
   assert.deepEqual((await lookup(node.dnsPort, 'ads.listed.test')).a, ['0.0.0.0']);
   // Settings shows which group uses the list.
-  await go('settings');
+  await go('blocklists');
   await page.locator('[data-list=lists] tr', { hasText: 'Kids' }).first().waitFor();
   if (shots) await page.locator('.card', { has: page.locator('[data-list=lists]') }).screenshot({ path: path.join(shots, 'blocklists-groups-column.png') });
   // A custom rule for the group only.
@@ -431,7 +455,7 @@ step('a group uses its own blocklists and targeted custom rules', async () => {
   await page.locator('dialog[open]').getByRole('button', { name: 'Cancel' }).click();
   if (shots) {
     await page.locator('.card', { hasText: 'Give some devices their own rules' }).screenshot({ path: path.join(shots, 'groups-table.png') });
-    await go('settings');
+    await go('rules');
     await page.locator('.card', { has: page.getByRole('heading', { name: /^Custom rules/ }) }).screenshot({ path: path.join(shots, 'custom-rules-help.png') });
   }
 });
@@ -441,7 +465,7 @@ step('performance shows how full the cache is, and the size can change', async (
   const card = page.locator('.card', { has: page.getByRole('heading', { name: 'How full the cache is' }) });
   await card.waitFor();
   assert.match(await card.innerText(), /of 100,000 answers/);
-  await go('settings');
+  await go('upstream?card=cache');
   await page.fill('#csize', '50000');
   await page.locator('#csize').locator('xpath=ancestor::form').getByRole('button', { name: 'Save' }).click();
   await until('the new size', async () => (await api('GET', '/settings')).effective.Cache.MaxEntries === 50000);
@@ -514,7 +538,7 @@ step('a viewer signs in, sets up two-factor and can only look', async () => {
     await vp.getByRole('button', { name: 'Continue' }).click();
     await vp.getByRole('heading', { name: 'Dashboard', exact: true }).waitFor();
     const nav = await vp.locator('nav').innerText();
-    for (const hidden of ['Settings', 'Users', 'Cluster', 'Backups', 'Query log', 'Audit log']) assert.ok(!nav.includes(hidden), 'viewer menu has ' + hidden);
+    for (const hidden of ['Blocklists', 'Custom rules', 'Upstream', 'General', 'Users', 'Servers', 'Backups', 'Query log', 'Audit log']) assert.ok(!nav.includes(hidden), 'viewer menu has ' + hidden);
     assert.equal(await vp.locator('.d-check').getByRole('button', { name: 'Block', exact: true }).count(), 0, 'viewer gets no Block button');
     // The API refuses changes too, not just the menu.
     const status = await vp.evaluate(async () => (await fetch('/api/v1/settings', { method: 'PATCH', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf }, body: '{"filtering_enabled":false}' })).status);

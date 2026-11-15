@@ -53,10 +53,10 @@ Is port 53 already in use? See [Installing](docs/install.md) for systemd-resolve
 ## A second server
 
 1. Install the same way on another machine, with port 8081 open between the two.
-2. On the first server, open **Cluster** and choose **Make a join code**.
+2. On the first server, open **Servers** and choose **Make a join code**.
 3. On the new server, enter its setup code, choose **No, add this server to my DNServ**, and paste the join code.
 
-Then add the second server as your router's second DNS server. For a trusted certificate on both, give each server a name under **Local names** and turn on Let's Encrypt under **Settings > Dashboard HTTPS**; then add a passkey on each server. To keep taking changes while either server is down, add a witness on a third machine. The [two-server guide](docs/deploy-two-servers.md) covers firewalls, upgrades, and what happens when something fails.
+Then add the second server as your router's second DNS server. For a trusted certificate on both, give each server a name under **Local names** and turn on Let's Encrypt under **System → General → Dashboard HTTPS**; then add a passkey on each server. To keep taking changes while either server is down, add a witness on a third machine. The [two-server guide](docs/deploy-two-servers.md) covers firewalls, upgrades, and what happens when something fails.
 
 ## Screenshots
 
@@ -64,7 +64,7 @@ Then add the second server as your router's second DNS server. For a trusted cer
 |---|---|
 | <img src="docs/images/security.png" alt="Security card" width="420"><br>**Security** says whether anything risky got through, and who reached it | <img src="docs/images/traffic-map.png" alt="Traffic map" width="420"><br>**Traffic map** follows lookups from devices to servers to services |
 | <img src="docs/images/query-log-paused.png" alt="Query log, paused" width="420"><br>**Query log** searches every server's history, and holds still while you read | <img src="docs/images/analytics.png" alt="Analytics" width="420"><br>**Analytics** shows top domains, what blocked them, and busy devices |
-| <img src="docs/images/performance.png" alt="Performance" width="420"><br>**Performance** shows response times, upstream health and anything unusual | <img src="docs/images/cluster.png" alt="Cluster" width="420"><br>**Cluster** shows your nodes, with leader controls and join codes |
+| <img src="docs/images/performance.png" alt="Performance" width="420"><br>**Performance** shows response times, upstream health and anything unusual | <img src="docs/images/cluster.png" alt="Cluster" width="420"><br>**Servers** shows your nodes, with leader controls and join codes |
 | <img src="docs/images/group.png" alt="Group with schedules" width="420"><br>**Groups** have their own blocklists, blocked services, safe search and schedules | <img src="docs/images/scoring.png" alt="Tune risk scoring" width="420"><br>**Risk scoring** explains every score, with presets and a preview when you tune it |
 | <img src="docs/images/updates.png" alt="Updates" width="420"><br>**Updates** shows what's new and updates every server one at a time | <img src="docs/images/backups.png" alt="Backups" width="420"><br>**Backups** go to each server, a network share or S3 storage, encrypted |
 | <img src="docs/images/devices-search.png" alt="Device search" width="420"><br>**Devices** search forgives typos | <img src="docs/images/dashboard-light.png" alt="Light theme" width="420"><br>**Light theme**, which follows your system setting |

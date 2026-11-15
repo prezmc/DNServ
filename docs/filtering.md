@@ -36,7 +36,7 @@ rules together) add well under a microsecond per lookup.
 
 ## Categories
 
-**Settings > Filtering > Categories** adds curated lists for one kind of
+**Filtering → Blocklists > Categories** adds curated lists for one kind of
 blocking in one tick: ads and pop-ups, malware and phishing, scams and fake
 shops, smart TV tracking, phone and computer tracking, adult sites, gambling,
 piracy, and VPN/proxy bypass. Ticking a category adds its lists to the
@@ -55,13 +55,13 @@ Devices not in a group follow the household settings. In the group editor:
 ![Group editor with its own blocklists](images/group.png)
 
 - **Blocklists:** *Same as the household*, or *Choose lists for this
-  group*. Choosing lets you tick any list in Settings > Filtering, including
+  group*. Choosing lets you tick any list in Filtering → Blocklists, including
   ones switched off there: a list that's off for the household but ticked by
   a group is downloaded and used for that group only. Ticking a category
   ticks its lists, and adds any that aren't in the settings yet as rows
   switched off for the household (that needs permission to manage
   blocklists). Choosing no lists at all is fine. Allowlists are chosen the
-  same way. Settings > Filtering shows which groups use each list.
+  same way. Filtering → Blocklists shows which groups use each list.
 
   ![Blocklists with the Groups column](images/lists-groups.png)
 - **Use the household's custom rules and blocked services:** on by default.
@@ -91,7 +91,7 @@ household: no copy of the lists per group.
 
 ## Blocked services and safe search
 
-**Settings > Blocked services and safe search** blocks well-known apps and
+**Filtering → Blocked services** blocks well-known apps and
 sites with one tick each (YouTube, TikTok, Roblox, Discord and about 35
 more), for everyone. A group on the Devices page can block more services for
 its devices, all the time or only during a schedule (homework time, say).

@@ -49,7 +49,7 @@ and a witness, updated and then rolled back, about 40 seconds each, while a
 device asked both for a name every 50 ms) there was never a moment when
 neither server answered.
 
-**A backup first.** When backups are set up (Backups & history), every
+**A backup first.** When backups are set up (Backups & restore), every
 update and rollback starts by saving a backup of the settings, accounts and
 settings history on the server you started it from (and in the off-box
 folder, if you have one). If that backup fails, nothing is changed. The
@@ -68,7 +68,7 @@ A rollback changes the program, not your data: settings, accounts and
 history stay as they are, since updates only ever add to them and older
 versions ignore what they don't know. To also put the settings back as they
 were before the update, restore the backup named on the Updates page under
-**Backups & history** after rolling back. Changes made since the update are
+**Backups & restore** after rolling back. Changes made since the update are
 then undone too.
 
 **Automatic updates** (off by default): tick **Install new versions
