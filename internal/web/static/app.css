@@ -592,3 +592,4 @@ nav.side .nav-search input::placeholder { color: var(--nav-text); opacity: .8; }
 @media (max-width: 760px) { nav.side.open .links .nav-search { grid-column: 1 / -1; } }
 a.tile.link-tile { color: inherit; text-decoration: none; }
 a.tile.link-tile:hover { box-shadow: var(--shadow); outline: 1px solid var(--line); }
+.choice .level-src { display: block; margin-top: .15rem; }
