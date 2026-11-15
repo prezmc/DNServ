@@ -25,7 +25,7 @@ walks you through it:
 | | |
 |---|---|
 | <img src="images/setup/wizard-code.webp" alt="Enter the setup code" width="380"><br>**1.** Enter the setup code from the log | <img src="images/setup/wizard-mfa.webp" alt="Set up two-factor sign-in" width="380"><br>**2.** Create the admin account and scan the QR code with an authenticator app |
-| <img src="images/setup/wizard-basics.webp" alt="Pick blocking and privacy" width="380"><br>**3.** Save your ten recovery codes, then pick blocking and how lookups leave your network | |
+| <img src="images/setup/wizard-basics.webp" alt="Pick blocking and privacy" width="380"><br>**3.** Save your ten recovery codes, then pick blocking, how lookups leave your network, and whether to send the [weekly usage summary](usage-stats.md) | |
 
 Then set your router's DHCP DNS server to the server's address. Only someone
 who can read the container's logs can claim a new server.

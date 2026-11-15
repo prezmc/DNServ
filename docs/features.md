@@ -50,6 +50,16 @@ Everything DNServ does today, in more detail than the README.
 - **Safe by default.** Only private networks may query unless you configure
   `allowed_nets`, so a node can't become an open resolver by accident.
   Optional per-client rate limit.
+- **Weekly usage summary, only if you say yes.** The setup wizard asks
+  with two equal choices and nothing picked; change it any time under
+  Settings > Weekly usage summary, where you can also see exactly what
+  would be sent. If yes, the leading server sends one short anonymous
+  summary a week (version, server count, rough ranges of devices and
+  lookups, answer speed, which features are on), never a domain, address
+  or name, with no ID linking one week to the next. `DNSERV_USAGE_REPORT=off`
+  stops a server sending whatever the admin chose. Totals are public at
+  [dnserv.dev/stats.html](https://dnserv.dev/stats.html). See
+  [Usage stats](usage-stats.md).
 - **Observable.** `/healthz`, `/readyz` and Prometheus `/metrics` (queries by
   outcome, latency histograms, cache and upstream stats).
 - **Accounts with mandatory two-factor sign-in.** Admins, power users (an

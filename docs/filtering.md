@@ -52,6 +52,8 @@ and on. The setup wizard offers the same categories. The catalog is
 A group on the **Devices** page gives some devices their own filtering.
 Devices not in a group follow the household settings. In the group editor:
 
+![Group editor with its own blocklists](images/group.png)
+
 - **Blocklists:** *Same as the household*, or *Choose lists for this
   group*. Choosing lets you tick any list in Settings > Filtering, including
   ones switched off there: a list that's off for the household but ticked by
@@ -60,6 +62,8 @@ Devices not in a group follow the household settings. In the group editor:
   switched off for the household (that needs permission to manage
   blocklists). Choosing no lists at all is fine. Allowlists are chosen the
   same way. Settings > Filtering shows which groups use each list.
+
+  ![Blocklists with the Groups column](images/lists-groups.png)
 - **Use the household's custom rules and blocked services:** on by default.
   Untick it for, say, a work laptop. With no lists as well, the group's
   devices aren't filtered except by the group's own rules and schedules.
