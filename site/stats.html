@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DNServ usage stats</title>
+<meta name="description" content="How many people run DNServ and how well it works, from download counts and the opt-in weekly summary. Totals only.">
+<!-- Where the totals come from. Change both if the receiver moves. -->
+<meta name="stats-totals" content="https://stats.dnserv.dev/v1/totals">
+<meta name="stats-downloads" content="https://raw.githubusercontent.com/prezmc/DNServ/stats/stats/downloads.csv">
+<link rel="canonical" href="https://dnserv.dev/stats.html">
+<link rel="icon" href="favicon-32.png" sizes="32x32">
+<style>
+:root { --bg: #0f0f0e; --panel: #191917; --text: #ecebe6; --muted: #a19c90; --line: #2b2a26; --amber: #f5a524; --sage: #6cc4a1; color-scheme: dark; }
+@media (prefers-color-scheme: light) {
+  :root { --bg: #f3f1ec; --panel: #fffdf8; --text: #1d1b17; --muted: #6b665c; --line: #e3ded3; --amber: #a35f00; --sage: #3f8f6f; color-scheme: light; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+a { color: var(--amber); text-decoration: none; } a:hover { text-decoration: underline; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 0 16px; }
+header { border-bottom: 1px solid var(--line); }
+header .wrap { display: flex; align-items: center; gap: 10px; height: 60px; font-weight: 700; }
+header img { width: 26px; height: 26px; }
+h1 { font-size: 2rem; margin: 32px 0 4px; }
+h2 { margin: 36px 0 8px; font-size: 1.3rem; }
+.muted { color: var(--muted); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 16px 0; }
+.tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.tile b { display: block; font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+.tile span { color: var(--muted); font-size: .9rem; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.card h3 { margin: 0 0 8px; font-size: 1rem; }
+.bar { display: grid; grid-template-columns: 9rem 1fr 3.5rem; gap: 8px; align-items: center; font-size: .9rem; }
+.bar i { display: block; height: 10px; border-radius: 5px; background: var(--amber); }
+.bar em { font-style: normal; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+svg { width: 100%; height: auto; display: block; }
+svg text { fill: var(--muted); font-size: 11px; }
+footer { border-top: 1px solid var(--line); margin-top: 48px; padding: 20px 0; color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<header><div class="wrap"><img src="logo.svg" alt=""><a href="/" style="color:inherit">DNServ</a></div></header>
+<main class="wrap">
+  <h1>Usage stats</h1>
+  <p class="muted">Totals only. Downloads come from GitHub. Everything else comes from servers whose admins chose to send a weekly anonymous summary, so it is a sample, not every install. No IP addresses, domains or names are collected. <a href="https://github.com/prezmc/DNServ/blob/main/docs/usage-stats.md">What is sent, and how</a>.</p>
+
+  <h2>Downloads</h2>
+  <div id="downloads"><p class="muted">Loading…</p></div>
+
+  <h2>Weekly summaries</h2>
+  <div id="usage"><p class="muted">Loading…</p></div>
+</main>
+<footer><div class="wrap">DNServ is open source under the Apache License 2.0 · <a href="https://github.com/prezmc/DNServ">GitHub</a></div></footer>
+<script>
+const meta = (n) => document.querySelector('meta[name="' + n + '"]').content;
+const el = (tag, attrs, ...kids) => { const e = document.createElement(tag); Object.assign(e, attrs || {}); e.append(...kids.flat().filter(k => k != null)); return e; };
+const fmt = (n) => n == null ? '–' : Number(n).toLocaleString();
+const tile = (v, label) => el('div', { className: 'tile' }, el('b', {}, v), el('span', {}, label));
+
+function line(points, label) {
+  if (points.length < 2) return null;
+  const W = 600, H = 160, P = 28, max = Math.max(...points.map(p => p.v)) || 1;
+  const x = (i) => P + (i * (W - 2 * P)) / (points.length - 1), y = (v) => H - P - (v / max) * (H - 2 * P);
+  const ns = 'http://www.w3.org/2000/svg', s = document.createElementNS(ns, 'svg');
+  s.setAttribute('viewBox', '0 0 ' + W + ' ' + H); s.setAttribute('role', 'img'); s.setAttribute('aria-label', label);
+  const path = document.createElementNS(ns, 'polyline');
+  path.setAttribute('points', points.map((p, i) => x(i) + ',' + y(p.v)).join(' '));
+  path.setAttribute('fill', 'none'); path.setAttribute('stroke', 'currentColor'); path.setAttribute('stroke-width', '2');
+  s.style.color = 'var(--amber)'; s.append(path);
+  for (const [i, p] of [[0, points[0]], [points.length - 1, points[points.length - 1]]]) {
+    const t = document.createElementNS(ns, 'text'); t.setAttribute('x', x(i)); t.setAttribute('y', H - 8);
+    t.setAttribute('text-anchor', i ? 'end' : 'start'); t.textContent = p.t; s.append(t);
+  }
+  const t = document.createElementNS(ns, 'text'); t.setAttribute('x', P); t.setAttribute('y', 14); t.textContent = fmt(max); s.append(t);
+  return el('div', { className: 'card' }, el('h3', {}, label), s);
+}
+
+function bars(title, counts, total) {
+  const rows = Object.entries(counts || {}).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  if (!rows.length) return null;
+  const max = Math.max(...rows.map(r => r[1]));
+  return el('div', { className: 'card' }, el('h3', {}, title), rows.map(([k, n]) => el('div', { className: 'bar' },
+    el('span', {}, k), el('i', { style: 'width:' + Math.max(2, (100 * n) / max) + '%' }), el('em', {}, total ? Math.round((100 * n) / total) + '%' : fmt(n)))));
+}
+
+async function downloads() {
+  const box = document.getElementById('downloads');
+  try {
+    const r = await fetch(meta('stats-downloads'), { cache: 'no-store' });
+    if (!r.ok) throw new Error();
+    const [head, ...lines] = (await r.text()).trim().split('\n');
+    const cols = head.split(',');
+    const rows = lines.map(l => Object.fromEntries(l.split(',').map((v, i) => [cols[i], v === '' ? null : Number.isNaN(+v) ? v : +v])));
+    const last = rows[rows.length - 1] || {};
+    const pts = (k) => rows.filter(r => r[k] != null).map(r => ({ t: r.date, v: r[k] }));
+    box.replaceChildren(
+      el('div', { className: 'tiles' }, tile(fmt(last.ghcr_downloads), 'image downloads, all time'), tile(fmt(last.stars), 'GitHub stars'), tile(fmt(last.release_downloads), 'release file downloads')),
+      el('div', { className: 'grid' }, line(pts('ghcr_downloads'), 'Image downloads over time'), line(pts('unique_views'), 'GitHub visitors per day')),
+      el('p', { className: 'muted' }, 'Image downloads count every pull, including updates and reinstalls, so they run higher than the number of people.'));
+  } catch (_) { box.replaceChildren(el('p', { className: 'muted' }, 'No download numbers saved yet.')); }
+}
+
+async function usage() {
+  const box = document.getElementById('usage');
+  try {
+    const r = await fetch(meta('stats-totals'));
+    if (!r.ok) throw new Error();
+    const weeks = (await r.json()).weeks || [];
+    if (!weeks.length) throw new Error();
+    const w = weeks[weeks.length > 1 ? weeks.length - 2 : 0]; // the last full week
+    const m = w.median || {};
+    box.replaceChildren(
+      el('p', { className: 'muted' }, 'Week ' + w.week + '.'),
+      el('div', { className: 'tiles' },
+        tile(fmt(w.clusters), 'clusters sent a summary'), tile(fmt(w.servers), 'DNS servers in them'),
+        tile(m.answer_ms_p50 == null ? '–' : m.answer_ms_p50 + ' ms', 'typical answer time (median)'),
+        tile(m.cache_hit_pct == null ? '–' : m.cache_hit_pct + '%', 'answered from cache (median)')),
+      el('div', { className: 'grid' },
+        line(weeks.map(x => ({ t: x.week, v: x.clusters })), 'Clusters sending a summary, by week'),
+        bars('Versions', w.versions, w.clusters), bars('Devices per cluster', w.devices, w.clusters),
+        bars('Lookups per day', w.lookups_per_day, w.clusters), bars('Servers per cluster', w.cluster_sizes, w.clusters),
+        bars('How names are looked up', w.upstream_modes, w.clusters), bars('Features in use', w.features, w.clusters),
+        bars('Countries', w.countries, w.clusters)));
+  } catch (_) { box.replaceChildren(el('p', { className: 'muted' }, 'No weekly summaries yet.')); }
+}
+downloads(); usage();
+</script>
+</body>
+</html>

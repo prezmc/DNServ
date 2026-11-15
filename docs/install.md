@@ -167,6 +167,7 @@ These variables give a server its starting values, for people who use
 | `DNSERV_ALLOWED_ORIGINS` | `dns.example.com` | extra host names for the admin API behind a reverse proxy |
 | `DNSERV_HTTPS` | `off` | turns dashboard HTTPS off on this server whatever Settings say, to get back in after a bad certificate |
 | `DNSERV_HTTPS_NAMES` | `dns1.example.com` | extra names for this server's self-signed dashboard certificate |
+| `DNSERV_USAGE_REPORT` | `off` | this server never sends the weekly anonymous usage summary, whatever the admin chose (see [Usage stats](usage-stats.md)) |
 
 Environment variables override the optional config file; settings saved in
 the dashboard or API override both.

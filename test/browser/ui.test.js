@@ -96,9 +96,29 @@ step('setup wizard creates the admin with an authenticator', async () => {
   // Recovery codes must be acknowledged.
   await page.locator('input[type=checkbox]').check();
   await page.getByRole('button', { name: 'Continue' }).click();
+  // The usage summary question: two choices, neither picked.
+  await page.getByRole('heading', { name: 'Help improve DNServ' }).waitFor();
+  assert.equal(await page.locator('input[name=usage]').count(), 2);
+  assert.equal(await page.locator('input[name=usage]:checked').count(), 0);
   await page.getByRole('button', { name: 'Skip' }).click();
   await page.getByRole('button', { name: 'Open the dashboard' }).click();
   await heading('Dashboard').waitFor();
+});
+
+step('weekly usage summary stays off until an admin says yes', async () => {
+  let u = await api('GET', '/usage');
+  assert.equal(u.choice, '');
+  await go('settings');
+  const card = page.locator('.card', { has: page.getByRole('heading', { name: 'Weekly usage summary' }) });
+  await card.getByText('Not decided').waitFor();
+  await card.getByText('See exactly what would be sent').click();
+  await card.locator('pre').filter({ hasText: '"schema"' }).waitFor();
+  await card.getByRole('button', { name: 'Send a weekly summary' }).click();
+  await card.getByText('On', { exact: true }).waitFor();
+  u = await api('GET', '/usage');
+  assert.equal(u.choice, 'yes');
+  await card.getByRole('button', { name: 'Turn off' }).click();
+  await card.getByText('Off', { exact: true }).waitFor();
 });
 
 step('DNS answers through the fake upstream', async () => {

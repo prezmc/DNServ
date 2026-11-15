@@ -29,6 +29,7 @@ import (
 	"github.com/prezmc/dnserv/internal/store"
 	"github.com/prezmc/dnserv/internal/threat"
 	"github.com/prezmc/dnserv/internal/update"
+	"github.com/prezmc/dnserv/internal/usage"
 	"github.com/prezmc/dnserv/internal/virustotal"
 )
 
@@ -94,6 +95,9 @@ type API struct {
 	// Updates finds and installs new versions (nil: unavailable, as in
 	// tests).
 	Updates *update.Manager
+	// Usage sends the weekly anonymous usage summary when an admin
+	// agreed (nil: unavailable, as in tests).
+	Usage *usage.Sender
 	// smbDial is used to reach network shares (nil: a plain dialer; tests
 	// set it).
 	smbDial func(ctx context.Context, network, addr string) (net.Conn, error)
@@ -216,6 +220,7 @@ func (a *API) Handler() http.Handler {
 	// Status and audit.
 	a.pauseRoutes(m)
 	a.updateRoutes(m)
+	a.usageRoutes(m)
 	m.HandleFunc("GET /api/v1/status", a.authed(store.PermDashboard, a.status))
 	m.HandleFunc("GET /api/v1/audit", a.authed(store.PermAudit, a.audit))
 

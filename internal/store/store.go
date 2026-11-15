@@ -76,7 +76,31 @@ type State struct {
 	// Updates is how DNServ looks for and installs new versions of
 	// itself. Not a setting either: it isn't in settings history.
 	Updates UpdatePrefs `json:"updates,omitzero"`
+	// Usage is whether the cluster sends DNServ's developers a weekly
+	// anonymous usage summary (docs/usage-stats.md). Off until an admin
+	// says yes. Not a setting: it isn't in settings history.
+	Usage UsagePrefs `json:"usage,omitzero"`
 }
+
+// UsagePrefs are the admin's answer about the weekly usage summary and
+// what was last sent.
+type UsagePrefs struct {
+	// Choice is "" (not asked yet), "yes" or "no".
+	Choice string    `json:"choice,omitempty"`
+	By     string    `json:"by,omitempty"`
+	At     time.Time `json:"at,omitzero"`
+	// Schema is the report version the admin agreed to. A newer DNServ
+	// whose report holds more asks again before sending it.
+	Schema int `json:"schema,omitempty"`
+	// SentWeek is the ISO week ("2026-W46") of the last summary sent,
+	// SentAt when, and Last the summary itself, shown in Settings.
+	SentWeek string          `json:"sent_week,omitempty"`
+	SentAt   time.Time       `json:"sent_at,omitzero"`
+	Last     json.RawMessage `json:"last,omitempty"`
+}
+
+// Sending says whether summaries of the given schema may be sent.
+func (u UsagePrefs) Sending(schema int) bool { return u.Choice == "yes" && u.Schema >= schema }
 
 // UpdatePrefs say how DNServ looks for new versions. The zero value is
 // the default: check every few hours, install only when someone asks.

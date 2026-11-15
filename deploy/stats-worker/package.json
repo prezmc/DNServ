@@ -1,0 +1,13 @@
+{
+  "name": "dnserv-stats-worker",
+  "private": true,
+  "description": "Receiver for DNServ's opt-in weekly usage summary. See docs/usage-stats.md.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "wrangler": "4.59.0"
+  }
+}

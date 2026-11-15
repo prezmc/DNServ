@@ -88,6 +88,7 @@ Then add the second server as your router's second DNS server. For a trusted cer
 | [Admin API](docs/api.md) | Endpoints, tokens, permissions, account recovery |
 | [Performance](docs/performance.md) | Benchmarks and the `dnsbench` load tester |
 | [Development](docs/development.md) | Building, tests and roadmap |
+| [Usage stats](docs/usage-stats.md) | The opt-in weekly anonymous summary: every field, where it goes, how to turn it off |
 | [Testing](docs/testing.md) | Test layers, browser tests, the feature checklist and security scans |
 
 ## License

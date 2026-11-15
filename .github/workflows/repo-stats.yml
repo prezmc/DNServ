@@ -1,0 +1,49 @@
+# Saves DNServ's download and interest numbers once a day: ghcr.io image
+# downloads, release downloads, stars, and repo traffic (which GitHub
+# keeps for only 14 days). Rows go to stats/downloads.csv on the "stats"
+# branch, so main isn't touched. dnserv.dev/stats.html charts them.
+#
+# Repo traffic needs a token that can push: add one as the secret
+# REPO_STATS_TOKEN (fine-grained, this repo, Administration: read).
+# Without it those columns stay empty.
+name: Repo stats
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: repo-stats
+
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Get today's numbers
+        env:
+          GH_TOKEN: ${{ secrets.REPO_STATS_TOKEN || github.token }}
+          REPO: ${{ github.repository }}
+        run: scripts/repo-stats.sh > /tmp/row.csv && cat /tmp/row.csv
+      - name: Add them to the stats branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch --depth=1 origin stats 2>/dev/null; then
+            git checkout -B stats FETCH_HEAD
+          else
+            git checkout --orphan stats && git rm -rfq .
+          fi
+          mkdir -p stats
+          f=stats/downloads.csv
+          [ -f "$f" ] || echo "date,ghcr_downloads,release_downloads,releases,stars,forks,watchers,open_issues,views,unique_views,clones,unique_clones" > "$f"
+          day=$(cut -d, -f1 /tmp/row.csv)
+          grep -v "^$day," "$f" > /tmp/old.csv || true
+          cat /tmp/old.csv /tmp/row.csv > "$f"
+          git add "$f"
+          git commit -qm "Repo stats for $day" || exit 0
+          git push origin stats

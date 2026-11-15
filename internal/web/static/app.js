@@ -739,8 +739,11 @@ async function setupBasics() {
       h('h2', { class: 'mt' }, 'Extra protection'),
       h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'bypass', checked: eff.Filtering.BlockBypass }),
         h('span', {}, h('b', {}, "Don't let devices skip DNServ"), ' ', h('span', { class: 'muted small' }, 'Blocks browsers and apps from using their own encrypted DNS (and iCloud Private Relay). Good for families. A few apps may then fail to connect.'))),
+      can('cluster.manage') ? usageAsk() : null,
       h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save and finish'), h('button', { type: 'button', onclick: setupDone }, 'Skip')),
     ], async (f) => {
+      const usage = f.querySelector('input[name=usage]:checked');
+      if (usage) await api('PUT', '/usage', { send: usage.value === 'yes' });
       const mode = f.querySelector('input[name=mode]:checked').value;
       const patch = { upstream_mode: mode };
       const p = val(f, 'provider');
@@ -756,6 +759,61 @@ async function setupBasics() {
       setupDone();
     }),
   )));
+}
+
+// ---------- weekly usage summary ----------
+
+const USAGE_DOC = 'https://github.com/prezmc/DNServ/blob/main/docs/usage-stats.md';
+const USAGE_WHAT = 'Once a week, one of your servers sends DNServ\u2019s developers a short anonymous summary: the version, how many servers, rough ranges of devices and lookups, answer speed, and which features are on. Never a domain, an address, a device or server name, or anything anyone looked up. There\u2019s no ID that links one week to the next.';
+
+// usagePreview is a "see exactly what's sent" toggle.
+function usagePreview() {
+  const box = h('pre', { class: 'code small' }, 'Loading\u2026');
+  return h('details', { class: 'mt-s', ontoggle: async (ev) => {
+    if (!ev.target.open) return;
+    try {
+      const u = await api('GET', '/usage?preview=1');
+      box.textContent = u.preview ? JSON.stringify(u.preview, null, 2) : (u.preview_error || 'Not available on this server.');
+    } catch (e) { box.textContent = e.message; }
+  } }, h('summary', {}, 'See exactly what would be sent'), box);
+}
+
+// usageAsk is the setup wizard's question: two equal choices, neither
+// picked, and the form won't save until one is.
+function usageAsk() {
+  const opt = (value, title, note) => h('label', { class: 'choice' },
+    h('input', { type: 'radio', name: 'usage', value, required: true }),
+    h('span', {}, h('b', {}, title), h('span', { class: 'muted small' }, ' ' + note)));
+  return h('div', {},
+    h('h2', { class: 'mt' }, 'Help improve DNServ'),
+    h('p', { class: 'muted' }, USAGE_WHAT, ' ', h('a', { href: USAGE_DOC, target: '_blank', rel: 'noopener' }, 'Every field, and where it goes')),
+    h('div', { class: 'choices', role: 'radiogroup', 'aria-label': 'Weekly usage summary' },
+      opt('yes', 'Send a weekly summary', 'Helps us see how many people run DNServ and how well it works.'),
+      opt('no', 'No thanks', 'Nothing is sent.')),
+    h('p', { class: 'muted small' }, 'Pick one to continue. You can change it any time in Settings.'),
+    usagePreview());
+}
+
+// usageCard is the Settings section for the same choice.
+async function usageCard() {
+  let u;
+  try { u = await api('GET', '/usage'); } catch (_) { return null; }
+  const set = async (send) => {
+    try { await api('PUT', '/usage', { send }); toast(send ? 'Weekly summary turned on. Thank you!' : 'Weekly summary turned off. Nothing more is sent.'); route(); } catch (e) { toast(e.message, 'err'); }
+  };
+  const state = u.off ? h('p', {}, h('span', { class: 'badge' }, 'Off on this server'), ' ', h('span', { class: 'muted small' }, 'DNSERV_USAGE_REPORT=off is set, so this server never sends it.'))
+    : u.choice === 'yes' ? h('p', {}, h('span', { class: 'badge ok' }, 'On'), ' ', h('span', { class: 'muted small' }, u.sent_at ? 'Last sent ' + ago(u.sent_at) + '.' : 'The first one goes out within the hour.'))
+    : u.choice === 'no' ? h('p', {}, h('span', { class: 'badge' }, 'Off'), ' ', h('span', { class: 'muted small' }, 'Nothing is sent.'))
+    : h('p', {}, h('span', { class: 'badge warn' }, u.ask_again ? 'Needs another look' : 'Not decided'), ' ', h('span', { class: 'muted small' }, u.ask_again ? 'This version\u2019s summary holds more than the one you agreed to, so it isn\u2019t sent until you say yes again.' : 'Nothing is sent until you say yes.'));
+  return h('div', { class: 'card' },
+    h('h2', {}, 'Weekly usage summary'),
+    h('p', { class: 'muted' }, USAGE_WHAT, ' It goes to ', h('code', {}, new URL(u.url).host), ', which keeps no IP addresses. ', h('a', { href: USAGE_DOC, target: '_blank', rel: 'noopener' }, 'Every field, and where it goes')),
+    state,
+    h('div', { class: 'actions' },
+      u.choice === 'yes' ? h('button', { type: 'button', onclick: () => set(false) }, 'Turn off')
+        : [h('button', { class: 'primary', type: 'button', onclick: () => set(true) }, 'Send a weekly summary'), u.choice === '' ? h('button', { type: 'button', onclick: () => set(false) }, 'No thanks') : null]),
+    usagePreview(),
+    u.last ? h('details', { class: 'mt-s' }, h('summary', {}, 'The last summary sent'), h('pre', { class: 'code small' }, JSON.stringify(u.last, null, 2))) : null);
 }
 
 function setupDone() {
@@ -3739,6 +3797,11 @@ async function settings(main) {
     let hs = null;
     try { hs = await api('GET', '/https'); } catch (_) { /* unavailable */ }
     if (hs) sections.push(httpsCard(hs));
+  }
+
+  if (can('cluster.manage')) {
+    const uc = await usageCard();
+    if (uc) sections.push(uc);
   }
 
   // A row of section chips at the top, so a long settings page is one
