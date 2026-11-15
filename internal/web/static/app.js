@@ -345,10 +345,16 @@ const MODES = {
 const HAGEZI = 'https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/';
 const LEVELS = [
   { id: 'off', name: 'Off', note: 'No blocklist. Your own rules still apply.' },
-  { id: 'light', name: 'Light', list: { name: 'HaGeZi Light', url: HAGEZI + 'light.txt' }, note: 'Ads and trackers only. Almost never breaks a site.' },
-  { id: 'normal', name: 'Standard', list: { name: 'HaGeZi Multi Normal', url: HAGEZI + 'multi.txt' }, note: 'Ads, tracking, malware and scams. A good fit for most homes.' },
-  { id: 'pro', name: 'Strong', list: { name: 'HaGeZi Multi Pro', url: HAGEZI + 'pro.txt' }, note: 'Blocks more trackers and telemetry. Now and then a site needs an allow rule.' },
+  { id: 'light', name: 'Light', size: 'about 90,000', list: { name: 'HaGeZi Light', url: HAGEZI + 'light.txt' }, note: 'Ads and trackers only. Almost never breaks a site.' },
+  { id: 'normal', name: 'Standard', size: 'about 220,000', list: { name: 'HaGeZi Multi Normal', url: HAGEZI + 'multi.txt' }, note: 'Ads, tracking, malware and scams. A good fit for most homes.' },
+  { id: 'pro', name: 'Strong', size: 'about 240,000', list: { name: 'HaGeZi Multi Pro', url: HAGEZI + 'pro.txt' }, note: 'Blocks more trackers and telemetry. Now and then a site needs an allow rule.' },
 ];
+// levelSource says which list a level uses, so the choice isn't a black
+// box: its name (linked to the HaGeZi project), roughly how many domains it
+// holds, and a link to the list itself.
+const levelSource = (l) => l.list ? h('span', { class: 'muted small level-src' },
+  h('a', { href: 'https://github.com/hagezi/dns-blocklists', target: '_blank', rel: 'noopener' }, l.list.name), ', ', l.size, ' domains, updated daily. ',
+  h('a', { href: l.list.url, target: '_blank', rel: 'noopener' }, 'See the list')) : null;
 const ADDONS = [
   { name: 'HaGeZi Threat Intelligence', url: HAGEZI + 'tif.txt', title: 'Extra malware and phishing protection', note: 'Fresh lists of scam, phishing and malware domains.' },
 ];
@@ -727,7 +733,7 @@ async function setupBasics() {
       h('h2', {}, 'Blocking'),
       h('div', { class: 'choices' }, LEVELS.map(l => h('label', { class: 'choice' },
         h('input', { type: 'radio', name: 'level', value: l.id, checked: level === l.id }),
-        h('span', {}, h('b', {}, l.name), h('span', { class: 'muted small' }, ' ' + l.note))))),
+        h('span', {}, h('b', {}, l.name), h('span', { class: 'muted small' }, ' ' + l.note), levelSource(l))))),
       ADDONS.map(a => h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'addon', value: a.url, checked: onURLs.has(a.url) }),
         h('span', {}, h('b', {}, a.title), ' ', h('span', { class: 'muted small' }, a.note)))),
 
@@ -3867,13 +3873,13 @@ async function settings(main, key) {
           h('option', { value: 'nxdomain', selected: fl.BlockMode === 'nxdomain' }, 'Domain does not exist (NXDOMAIN)'),
           h('option', { value: 'refused', selected: fl.BlockMode === 'refused' }, 'Refused')),
         h('h3', { class: 'mt' }, 'Protection level'),
-        h('p', { class: 'muted small' }, 'The main blocklist, the same choice as in setup. Picking one swaps it in the blocklists below; click Save to use it.'),
+        h('p', { class: 'muted small' }, 'The main blocklist, the same choice as in setup. Each level is one of the HaGeZi DNS blocklists, a widely used open-source project; a stronger level is a bigger list. Picking one swaps it in the blocklists below; click Save to use it.'),
         h('div', { class: 'choices' }, LEVELS.map(l => h('label', { class: 'choice' },
           h('input', { type: 'radio', name: 'level', value: l.id, checked: levelOf(fl.Lists) === l.id, onchange: () => {
             LEVELS.forEach(x => { if (x.list) block.drop(x.list.url); });
             if (l.list) block.add(l.list);
           } }),
-          h('span', {}, h('b', {}, l.id === 'off' ? 'None' : l.name), h('span', { class: 'muted small' }, ' ' + (l.id === 'off' ? 'No built-in list. Only the lists you add below, and your own rules.' : l.note)))))),
+          h('span', {}, h('b', {}, l.id === 'off' ? 'None' : l.name), h('span', { class: 'muted small' }, ' ' + (l.id === 'off' ? 'No built-in list. Only the lists you add below, and your own rules.' : l.note)), levelSource(l))))),
         h('h3', { class: 'mt' }, 'Categories'),
         h('p', { class: 'muted small' }, 'Tick a category to add its lists to the blocklists below, then Save. Categories stack on top of the protection level, and each list can still be switched off on its own.'),
         bundlePicker(block),
