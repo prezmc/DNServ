@@ -246,6 +246,14 @@ func (b *builder) rules() []recordCand {
 			add(line, line, "")
 			continue
 		}
+		// Rules for some devices ($client=name or address) work the same
+		// way in DNServ once the devices are imported with their names.
+		if rest, _, has, err := filter.ClientTargets(line); has && err == nil {
+			if _, ok, _ := filter.ParseLine(rest); ok {
+				add(line, line, "For some devices only")
+				continue
+			}
+		}
 		sec.Skipped = append(sec.Skipped, Item{Text: line, Detail: unsupportedReason(line)})
 	}
 
@@ -374,8 +382,8 @@ func unsupportedReason(line string) string {
 	switch {
 	case strings.HasPrefix(l, "/") && strings.HasSuffix(strings.SplitN(l, "$", 2)[0], "/"):
 		return "Regular expressions aren't supported."
-	case strings.Contains(l, "$client="):
-		return "Rules for one device: add it to a group on the Devices page and put the rule there."
+	case strings.Contains(l, "$client=~") || strings.Contains(l, "|~"):
+		return `Excluding devices ("~") in $client isn't supported. Put the rule in a group instead.`
 	case strings.Contains(l, "$ctag="):
 		return "Rules for device types (tags) aren't supported. Put the rule in a group instead."
 	case strings.Contains(l, "$dnsrewrite"):

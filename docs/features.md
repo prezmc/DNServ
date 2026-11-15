@@ -280,11 +280,14 @@ Everything DNServ does today, in more detail than the README.
   reverse lookups of their addresses return the name. They're kept with the
   settings, so they're in settings history and backups. In a config file
   they're `dns.records: [{name, value, note}]`.
-- **Groups with schedules.** Put devices in a group (say, Kids) to give
-  them extra rules, let them skip the household blocklists, or add
-  schedules: pause the internet at bedtime, or block a few sites during
+- **Groups with their own lists and schedules.** Put devices in a group
+  (say, Kids) to give them their own blocklists and categories (including
+  lists switched off for everyone else), extra rules, blocked services and
+  safe search, to drop the household's custom rules, or to add schedules: pause the internet at bedtime, or block a few sites during
   homework time. Windows that end before they start run overnight. Allow
   rules in a group beat everything, so a school site keeps working at
-  bedtime. Schedules follow the time zone set in Settings.
+  bedtime. Schedules follow the time zone set in Settings. Custom rules
+  can name a group, device or address with `$client=`
+  ([Filtering](filtering.md#device-groups)).
 
 [Back to the README](../README.md)

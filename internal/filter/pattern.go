@@ -245,20 +245,23 @@ func triHash(a, b, c byte) uint32 {
 	return (uint32(a)*977 ^ uint32(b)*31 ^ uint32(c)) * 2654435761 >> 19 % triBits
 }
 
-// find returns the strongest-tier pattern matching name, earliest first.
-func (ps *patterns) find(name string) (*pattern, bool) {
+// find returns the strongest-tier pattern matching name under mask (see
+// Index.eff), earliest first, with the source and tier it counts as.
+func (ps *patterns) find(name string, ix *Index, mask []uint64) (*pattern, uint16, Tier, bool) {
 	if ps == nil || len(ps.list) == 0 {
-		return nil, false
+		return nil, 0, 0, false
 	}
 	best := int32(-1)
+	var bestSrc uint16
+	var bestTier Tier
 	try := func(ids []int32) {
 		for _, i := range ids {
-			if best >= 0 && (ps.list[i].ref.tier < ps.list[best].ref.tier ||
-				ps.list[i].ref.tier == ps.list[best].ref.tier && i > best) {
+			src, t, ok := ix.eff(ps.list[i].ref, mask)
+			if !ok || best >= 0 && (t < bestTier || t == bestTier && i > best) {
 				continue
 			}
 			if ps.list[i].matches(name) {
-				best = i
+				best, bestSrc, bestTier = i, src, t
 			}
 		}
 	}
@@ -272,9 +275,9 @@ func (ps *patterns) find(name string) (*pattern, bool) {
 	}
 	try(ps.scan)
 	if best < 0 {
-		return nil, false
+		return nil, 0, 0, false
 	}
-	return &ps.list[best], true
+	return &ps.list[best], bestSrc, bestTier, true
 }
 
 var patternCache sync.Map // pattern text -> *regexp.Regexp

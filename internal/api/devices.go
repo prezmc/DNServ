@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/prezmc/dnserv/internal/auth"
+	"github.com/prezmc/dnserv/internal/config"
 	"github.com/prezmc/dnserv/internal/filter"
 	"github.com/prezmc/dnserv/internal/policy"
 	"github.com/prezmc/dnserv/internal/querylog"
@@ -214,9 +215,46 @@ func (a *API) checkDomain(w http.ResponseWriter, r *http.Request, p *Principal) 
 
 // groupView adds what's happening now to a group.
 type groupView struct {
-	*store.Group
+	store.Group
 	Devices []string `json:"devices"` // device ids
 	Active  []string `json:"active"`  // schedules running now
+	// Targeted are household custom rules with $client naming the group.
+	Targeted []string `json:"targeted"`
+}
+
+// listChoice is a list a group can pick, from the filtering settings.
+type listChoice struct {
+	Name      string `json:"name"`
+	URL       string `json:"url"`
+	Enabled   bool   `json:"enabled"` // on for the household
+	Allowlist bool   `json:"allowlist,omitempty"`
+}
+
+func (a *API) listChoices() []listChoice {
+	fl := a.Effective().Filtering
+	out := []listChoice{}
+	for _, l := range fl.Lists {
+		out = append(out, listChoice{l.Name, l.URL, l.Enabled, false})
+	}
+	for _, l := range fl.Allowlists {
+		out = append(out, listChoice{l.Name, l.URL, l.Enabled, true})
+	}
+	return out
+}
+
+// targetedRules maps a lowercased group name to the custom rules whose
+// $client names it.
+func targetedRules(rules []string) map[string][]string {
+	out := map[string][]string{}
+	for _, r := range rules {
+		if _, clients, has, err := filter.ClientTargets(r); has && err == nil {
+			for _, c := range clients {
+				k := strings.ToLower(c)
+				out[k] = append(out[k], r)
+			}
+		}
+	}
+	return out
 }
 
 // zone is the time zone schedules (groups and backups) run in, and its
@@ -237,10 +275,15 @@ func (a *API) listGroups(w http.ResponseWriter, r *http.Request, p *Principal) {
 	st := a.Store.State()
 	loc, zone := a.zone()
 	now := a.now().In(loc)
-	set := policy.Build(st)
+	rules := a.Effective().Filtering.Rules
+	set := policy.BuildWith(st, rules)
+	targeted := targetedRules(rules)
 	out := []groupView{}
 	for _, g := range st.Groups {
-		v := groupView{Group: g, Devices: []string{}, Active: []string{}}
+		v := groupView{Group: g.Shared(), Devices: []string{}, Active: []string{}, Targeted: targeted[strings.ToLower(g.Name)]}
+		if v.Targeted == nil {
+			v.Targeted = []string{}
+		}
 		for _, d := range st.Devices {
 			if d.Group == g.ID {
 				v.Devices = append(v.Devices, d.ID)
@@ -253,18 +296,26 @@ func (a *API) listGroups(w http.ResponseWriter, r *http.Request, p *Principal) {
 		out = append(out, v)
 	}
 	slices.SortFunc(out, func(x, y groupView) int { return strings.Compare(strings.ToLower(x.Name), strings.ToLower(y.Name)) })
-	writeJSON(w, http.StatusOK, map[string]any{"groups": out, "time_zone": zone, "now": now.Format("Mon 15:04")})
+	res := map[string]any{"groups": out, "time_zone": zone, "now": now.Format("Mon 15:04")}
+	if p.Can(store.PermDevices) {
+		res["lists"] = a.listChoices() // to pick from when editing a group
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
 	var req struct {
 		store.Group
 		Devices *[]string // device ids to put in this group (nil leaves them)
+		// AddLists are lists (from a category bundle) the group picks
+		// that aren't in the filtering settings yet: they are added there,
+		// switched off for the household. Needs lists.manage.
+		AddLists []config.ListConfig `json:"add_lists"`
 	}
 	if !readJSON(w, r, &req) {
 		return
 	}
-	g := req.Group
+	g := req.Group.Shared()
 	id := r.PathValue("id")
 	status := http.StatusOK
 	st := a.Store.State()
@@ -296,6 +347,47 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if g.ListMode != "" && g.ListMode != "choose" {
+		writeErr(w, http.StatusBadRequest, `list_mode must be "" or "choose"`)
+		return
+	}
+	if g.HouseholdRules != "" && g.HouseholdRules != "off" {
+		writeErr(w, http.StatusBadRequest, `household_rules must be "" or "off"`)
+		return
+	}
+	var addLists []config.ListConfig
+	if g.ListMode == "choose" {
+		known := map[string]bool{}
+		for _, l := range a.listChoices() {
+			known[l.URL] = true
+		}
+		for _, l := range req.AddLists {
+			l.URL = strings.TrimSpace(l.URL)
+			if l.URL != "" && !known[l.URL] {
+				known[l.URL] = true
+				addLists = append(addLists, config.ListConfig{Name: strings.TrimSpace(l.Name), URL: l.URL})
+			}
+		}
+		if len(addLists) > 0 && !p.Can(store.PermLists) {
+			writeErr(w, http.StatusForbidden, "adding lists needs permission to manage blocklists")
+			return
+		}
+		lists := []string{}
+		for _, u := range g.Lists {
+			u = strings.TrimSpace(u)
+			if u == "" || slices.Contains(lists, u) {
+				continue
+			}
+			if !known[u] {
+				writeErr(w, http.StatusBadRequest, "unknown list "+strconv.Quote(u)+": add it under Settings, Filtering first")
+				return
+			}
+			lists = append(lists, u)
+		}
+		g.Lists = lists
+	} else {
+		g.Lists = nil
+	}
 	if g.SafeSearch != "" && g.SafeSearch != "on" && g.SafeSearch != "off" {
 		writeErr(w, http.StatusBadRequest, `safe_search must be "", "on" or "off"`)
 		return
@@ -315,6 +407,13 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
 				writeErr(w, http.StatusBadRequest, "unknown device "+strconv.Quote(d))
 				return
 			}
+		}
+	}
+	if len(addLists) > 0 {
+		cur := slices.Clone(a.Effective().Filtering.Lists)
+		cur = append(cur, addLists...)
+		if _, ok := a.apply(w, store.NewCommand(store.OpSettingsUpdate, p.Actor(), store.Settings{Lists: &cur})); !ok {
+			return
 		}
 	}
 	if _, ok := a.apply(w, store.NewCommand(store.OpGroupSave, p.Actor(), g)); !ok {

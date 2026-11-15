@@ -32,7 +32,7 @@ func TestGroupPolicy(t *testing.T) {
 	if s.For(netip.MustParseAddr("192.168.1.40")) != nil || s.For(netip.MustParseAddr("10.0.0.1")) != nil {
 		t.Fatal("ungrouped device has a group")
 	}
-	if !s.For(netip.MustParseAddr("192.168.1.30")).SkipShared {
+	if w := s.For(netip.MustParseAddr("192.168.1.30")); w.Shared == nil || !w.Shared.Empty() {
 		t.Fatal("work group should skip shared lists")
 	}
 
@@ -72,5 +72,66 @@ func TestGroupPolicy(t *testing.T) {
 	var nilSet *Set
 	if nilSet.For(netip.MustParseAddr("192.168.1.20")) != nil {
 		t.Fatal("nil set")
+	}
+}
+
+func TestTargetedRulesAndSelection(t *testing.T) {
+	st := &store.State{
+		Groups: map[string]*store.Group{
+			"kids": {ID: "kids", Name: "Kids", Rules: []string{"||games.example^"}, ListMode: "choose", Lists: []string{"https://adult"}},
+			"work": {ID: "work", Name: "Work", HouseholdRules: "off"},
+		},
+		Devices: map[string]*store.Device{
+			"tab": {ID: "tab", Name: "Tablet", Addrs: []string{"192.168.1.20"}, Group: "kids"},
+			"pad": {ID: "pad", Name: "iPad", Addrs: []string{"192.168.1.21"}, Group: "kids"},
+			"tv":  {ID: "tv", Name: "Living room TV", Addrs: []string{"192.168.1.40"}},
+			"lap": {ID: "lap", Name: "Laptop", Addrs: []string{"192.168.1.30"}, Group: "work"},
+		},
+	}
+	rules := []string{"||ads.example^", "||video.example^$client=kids", "||shop.example^$client='Living room TV'|192.168.1.30", "@@||ok.example^$client=Tablet"}
+	s := BuildWith(st, rules)
+	at := time.Date(2026, 11, 11, 12, 0, 0, 0, time.Local)
+	check := func(ip, name string) (bool, bool) {
+		g := s.For(netip.MustParseAddr(ip))
+		if g == nil {
+			return false, false
+		}
+		m, decided := g.Check(name, at)
+		return m.Blocked, decided
+	}
+	if b, _ := check("192.168.1.20", "video.example"); !b {
+		t.Error("$client=kids (any case) should block for the tablet")
+	}
+	if b, _ := check("192.168.1.21", "games.example"); !b {
+		t.Error("group rules lost on a device with targeted rules")
+	}
+	if b, d := check("192.168.1.20", "ok.example"); b || !d {
+		t.Error("device-targeted allow")
+	}
+	if _, d := check("192.168.1.21", "ok.example"); d {
+		t.Error("the allow for Tablet applied to the iPad")
+	}
+	if b, _ := check("192.168.1.40", "shop.example"); !b {
+		t.Error("device name with quotes")
+	}
+	if b, _ := check("192.168.1.30", "shop.example"); !b {
+		t.Error("address target")
+	}
+	if b, d := check("192.168.1.40", "ads.example"); b || d {
+		t.Error("household rules belong to the shared filter, not the policy")
+	}
+	tv := s.For(netip.MustParseAddr("192.168.1.40"))
+	if tv.Shared != nil || tv.HasSchedules() {
+		t.Error("a household device with targeted rules should follow the household")
+	}
+	kids := s.For(netip.MustParseAddr("192.168.1.21"))
+	if kids.Shared == nil || !kids.Shared.Lists["https://adult"] || kids.Shared.NoHousehold {
+		t.Errorf("kids selection: %+v", kids.Shared)
+	}
+	if s.For(netip.MustParseAddr("192.168.1.20")).Shared != kids.Shared {
+		t.Error("devices of one group should share its selection")
+	}
+	if w := s.For(netip.MustParseAddr("192.168.1.30")); w.Shared == nil || w.Shared.Lists != nil || !w.Shared.NoHousehold {
+		t.Errorf("work selection: %+v", w.Shared)
 	}
 }

@@ -45,10 +45,17 @@ func (e *Engine) AlsoOn(ctx context.Context, name string) []ListHit {
 	cfg := *e.cfg.Load()
 	var out []ListHit
 	for _, line := range cfg.Rules {
+		label := "Custom rules"
+		if rest, clients, has, err := ClientTargets(line); has {
+			if err != nil {
+				continue
+			}
+			line, label = rest, "Custom rules (for "+strings.Join(clients, ", ")+")"
+		}
 		rules, ok, _ := ParseLine(line)
 		for _, r := range rules {
 			if ok && !r.Bad && r.Matches(name) {
-				out = append(out, ListHit{List: "Custom rules", Rule: r.Text(), Allowlist: r.Allow})
+				out = append(out, ListHit{List: label, Rule: r.Text(), Allowlist: r.Allow})
 			}
 		}
 	}
@@ -71,13 +78,17 @@ func (e *Engine) AlsoOn(ctx context.Context, name string) []ListHit {
 		allow bool
 	}
 	var jobs []job
+	extra := map[string]bool{}
+	if x := e.extra.Load(); x != nil {
+		extra = *x
+	}
 	for _, l := range cfg.Allowlists {
-		if l.Enabled {
+		if l.Enabled || extra[l.URL] {
 			jobs = append(jobs, job{l, true})
 		}
 	}
 	for _, l := range cfg.Lists {
-		if l.Enabled {
+		if l.Enabled || extra[l.URL] {
 			jobs = append(jobs, job{l, false})
 		}
 	}

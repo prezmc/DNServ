@@ -101,7 +101,7 @@ func AddServices(b *Builder, ids []string) {
 		if !ok {
 			continue
 		}
-		src := b.AddSource("Blocked service: "+s.Name, TierCustom)
+		src := b.AddSourceKey("Blocked service: "+s.Name, TierCustom, "service:"+id, true)
 		for _, d := range s.Domains {
 			b.Add(src, Rule{Domain: d, Kind: Suffix})
 		}

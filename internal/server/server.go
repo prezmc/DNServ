@@ -45,7 +45,9 @@ type fetched struct {
 
 // Filter is the blocking engine.
 type Filter interface {
-	Lookup(name string) filter.Match
+	// LookupFor checks a name with a group's choice of lists and rules
+	// (nil: the household's).
+	LookupFor(name string, sel *filter.Selection) filter.Match
 }
 
 // Server handles DNS queries.
@@ -394,22 +396,21 @@ func (s *Server) checkIP(g *policy.Group, ip net.IP, now time.Time) filter.Match
 }
 
 // check decides one name for a client in group g (nil for none): the
-// group's own rules and schedules first, then the shared blocklists
-// unless the group skips them.
+// group's own rules and schedules first, then the shared blocklists and
+// rules the group uses.
 func (s *Server) check(g *policy.Group, name string, now time.Time) filter.Match {
-	shared := true
-	var match filter.Match
+	var sel *filter.Selection
 	if g != nil {
 		m, decided := g.Check(name, now)
 		if decided {
 			return m
 		}
-		shared = !g.SkipShared
+		sel = g.Shared
 	}
-	if f := s.filter; f != nil && shared {
-		match = f.Lookup(name)
+	if f := s.filter; f != nil {
+		return f.LookupFor(name, sel)
 	}
-	return match
+	return filter.Match{}
 }
 
 // answer gets the real answer for name, from the cache or upstream, and

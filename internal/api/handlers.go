@@ -595,7 +595,15 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 	}
 	if patch.Rules != nil {
 		for _, rule := range *patch.Rules {
-			if _, ok, _ := filter.ParseLine(rule); !ok {
+			body := rule
+			if rest, _, has, err := filter.ClientTargets(rule); has {
+				if err != nil {
+					writeErr(w, http.StatusBadRequest, fmt.Sprintf("rule %q: %v", rule, err))
+					return
+				}
+				body = rest
+			}
+			if _, ok, _ := filter.ParseLine(body); !ok {
 				writeErr(w, http.StatusBadRequest, fmt.Sprintf("rule %q isn't supported", rule))
 				return
 			}

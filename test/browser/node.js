@@ -62,6 +62,7 @@ async function startNodeOnce() {
   const up = await fakeUpstream();
   const lists = http.createServer((req, res) => {
     if (req.url === '/list.txt') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end(BLOCKLIST); return; }
+    if (req.url === '/kids.txt') { res.writeHead(200, { 'Content-Type': 'text/plain' }); res.end('||grownup.listed.test^\n'); return; }
     res.writeHead(404); res.end();
   });
   await new Promise(r => lists.listen(0, '127.0.0.1', r));
@@ -84,6 +85,7 @@ async function startNodeOnce() {
   const node = {
     dir, dnsPort, httpPort, url: 'http://127.0.0.1:' + httpPort + '/',
     listURL: 'http://127.0.0.1:' + lists.address().port + '/list.txt',
+    kidsListURL: 'http://127.0.0.1:' + lists.address().port + '/kids.txt',
     upstream: up, log,
     async setupCode() {
       for (let i = 0; i < 100; i++) {

@@ -176,7 +176,10 @@ func TestBuildPlan(t *testing.T) {
 	if has(rules.Items, "version.bind") || has(rules.Items, "nas.lan") {
 		t.Errorf("rules include defaults or rewrites: %v", texts(rules.Items))
 	}
-	if len(rules.Have) != 1 || len(rules.Skipped) != 2 { // $client, REFUSED rewrite
+	if !has(rules.Items, "||kid.example^$client=192.168.1.20") {
+		t.Errorf("rules missing the $client rule: %v", texts(rules.Items))
+	}
+	if len(rules.Have) != 1 || len(rules.Skipped) != 1 { // REFUSED rewrite
 		t.Errorf("rules have %v skipped %v", texts(rules.Have), texts(rules.Skipped))
 	}
 	r := *p.patches[KeyRules].Rules
