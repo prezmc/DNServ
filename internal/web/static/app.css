@@ -584,3 +584,11 @@ pre.code { white-space: pre-wrap; word-break: break-word; background: var(--bg);
   .page-head .seg { margin-left: auto; }
   .page-head .seg button { padding: .22rem .5rem; }
 }
+
+/* the menu's search box */
+nav.side .nav-search { margin: 0 0 .5rem; }
+nav.side .nav-search input { width: 100%; background: var(--nav-hover); border: 1px solid var(--nav-line); color: #fff; font-size: .86rem; padding: .38rem .6rem; border-radius: 7px; }
+nav.side .nav-search input::placeholder { color: var(--nav-text); opacity: .8; }
+@media (max-width: 760px) { nav.side.open .links .nav-search { grid-column: 1 / -1; } }
+a.tile.link-tile { color: inherit; text-decoration: none; }
+a.tile.link-tile:hover { box-shadow: var(--shadow); outline: 1px solid var(--line); }

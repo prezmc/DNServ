@@ -861,6 +861,7 @@ const ROUTES = [
   { path: 'queries', title: 'Query log', page: queries, show: () => can('querylog.view'), group: 'Activity' },
   { path: 'analytics', title: 'Analytics', page: analyticsPage, show: () => can('dashboard.view'), group: 'Activity' },
   { path: 'traffic', title: 'Traffic map', page: trafficPage, show: () => can('dashboard.view'), group: 'Activity' },
+  { path: 'security', title: 'Security', page: securityPage, show: () => can('dashboard.view'), group: 'Activity' },
   { path: 'performance', title: 'Performance', page: performancePage, show: () => can('dashboard.view'), group: 'Activity' },
   { path: 'blocklists', title: 'Blocklists', page: settingsPage('blocklists'), show: () => can('lists.manage'), group: 'Filtering' },
   { path: 'services', title: 'Blocked services', page: settingsPage('services'), show: () => can('lists.manage'), group: 'Filtering' },
@@ -895,7 +896,7 @@ function route() {
   } }, r.title + ' \u25be');
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, h('a', { href: '#/', class: 'logo' }, h('img', { src: 'logo.svg', alt: '', width: 26, height: 26 }), h('span', {}, 'DN', h('b', {}, 'Serv'))), menu),
-    h('div', { id: 'navlinks', class: 'links' },
+    h('div', { id: 'navlinks', class: 'links' }, navSearch(),
       ROUTES.filter(x => x.show() && !x.hidden).map((x, i, shown) => [
         x.group && (i === 0 || shown[i - 1].group !== x.group) ? h('div', { class: 'nav-group' }, x.group) : null,
         h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, navIcon(x.path), x.title,
@@ -933,6 +934,7 @@ const NAV_ICONS = {
   devices: 'M3 5h18v11H3zM8 20h8M12 16v4',
   analytics: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   performance: 'M13 3 4 14h7l-1 7 9-11h-7z',
+  security: 'M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6zM12 8v5M12 16v.5',
   traffic: 'M3 6h3M3 18h3M6 6c6 0 6 6 12 6M6 18c6 0 6-6 12-6M18 12h3',
   queries: 'M4 6h16M4 12h16M4 18h10',
   names: 'M4 4h10l6 6v10H4zM14 4v6h6M8 14h8M8 17h5',
@@ -2726,7 +2728,7 @@ async function analyticsPage(main) {
     let sum, dom, blk, cli, risky, lists;
     try {
       [sum, dom, blk, cli, risky, lists] = await Promise.all([q('summary'), q('top', { by: 'allowed', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
-        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '10' }), q('top', { by: 'lists', limit: '10' })]);
+        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '1' }), q('top', { by: 'lists', limit: '10' })]);
     } catch (e) { fill(body, msg('err', e.message)); return; }
     const c = sum.counts;
     const pct = (n) => (c.total ? (100 * n / c.total).toFixed(1) + '%' : '—');
@@ -2738,12 +2740,9 @@ async function analyticsPage(main) {
         tile('Queries', fmtNum(c.total)),
         tile('Blocked', fmtNum(c.blocked), pct(c.blocked)),
         tile('Answered from cache', c.total - c.blocked - (c.local || 0) > 0 ? fmtPct(c.cached / (c.total - c.blocked - (c.local || 0))) : '—', ['without blocked and local names · ', pct(c.cached), ' of all queries']),
-        tile('Average response', c.total ? (c.ms_sum / c.total).toFixed(1) + ' ms' : '—'),
         st.client ? null : tile('Devices', fmtNum(sum.devices)),
-        risky.feeds || risky.domains ? tile('Risky domains', fmtNum(risky.domains), risky.domains ? fmtNum(risky.queries) + ' queries' : 'none seen') : null),
-      risky.rows.length ? h('div', { class: 'risky' }, topList('Risky domains', risky.rows, 'risky'),
-        h('p', { class: 'muted small' }, 'Scored from malware and phishing feeds and how the name looks. Scores never block anything; use Block, or add the feeds as blocklists. ',
-          risky.domains > risky.rows.length ? 'Showing the ' + risky.rows.length + ' riskiest of ' + fmtNum(risky.domains) + '.' : '')) : null,
+        risky.feeds || risky.domains ? h('a', { class: 'tile link-tile', href: '#/security' + (st.range === '24h' ? '' : '?range=' + st.range) }, h('div', { class: 'label' }, 'Risky domains'), h('div', { class: 'value' }, fmtNum(risky.domains)),
+          h('div', { class: 'muted small' }, risky.domains ? fmtNum(risky.queries) + ' queries · see Security' : 'none seen')) : null),
       h('div', { class: 'card' }, h('h2', {}, 'Queries over time'), c.total ? queryChart(sum) : h('p', { class: 'muted' }, 'No queries in this period.')),
       (sum.nodes || []).length > 1 ? serversCard(sum, {}) : null,
       h('div', { class: 'cols' }, topList('Top domains', dom.rows, 'domains'), topList('Top blocked', blk.rows, 'blocked')),
@@ -2752,6 +2751,92 @@ async function analyticsPage(main) {
   };
   await load();
   timer = setInterval(() => { if (!document.hidden && !document.querySelector('dialog[open]')) load(); }, 30000);
+}
+
+// securityPage gathers risk in one place: the verdict and needs-attention
+// list (the Dashboard's Security card), every risky domain devices looked
+// up, and for admins the way to the scoring and feed settings.
+async function securityPage(main) {
+  const params = hashParams();
+  let range = RANGES[params.get('range')] ? params.get('range') : '24h';
+  const secBox = h('div'), riskyBox = h('div');
+  const seg = rangeSeg(Object.keys(RANGES), range, (k) => {
+    range = k;
+    history.replaceState(null, '', '#/security' + (k === '24h' ? '' : '?range=' + k));
+    shownHash = location.hash;
+    load();
+  });
+  const admin = can('lists.manage') ? h('div', { class: 'card' }, h('h2', {}, 'How risk is scored'),
+    h('p', { class: 'muted' }, 'Domains are scored from public malware and phishing feeds and from how the name looks. A score never blocks anything on its own.'),
+    h('div', { class: 'row' },
+      h('button', { type: 'button', onclick: scoringGuide }, 'How risk scores work'),
+      h('button', { type: 'button', onclick: scoringTune }, 'Tune scoring'),
+      h('a', { href: '#/risk', class: 'small' }, 'Threat feeds, trusted domains and keys'))) : null;
+  fill(main, h('div', { class: 'page-head' }, h('h1', {}, 'Security'), h('span', { class: 'grow' }), seg), secBox, riskyBox, admin);
+  async function load() {
+    let sec, risky;
+    try {
+      [sec, risky] = await Promise.all([api('GET', '/analytics/security?range=' + range),
+        api('GET', '/analytics/risky?' + new URLSearchParams({ range, limit: '50' }))]);
+    } catch (e) { fill(riskyBox, msg('err', e.message)); return; }
+    securityCard(secBox, range, sec, load);
+    const rows = risky.rows || [];
+    const total = rows.length ? rows[0].total : 0;
+    fill(riskyBox, h('div', { class: 'card' }, h('h2', {}, 'Risky domains'),
+      !rows.length ? h('p', { class: 'muted' }, risky.feeds === false ? 'Risk scoring is off.' : 'No risky domains in this period.')
+        : h('table', { class: 'top' }, h('tbody', {}, rows.map(r => h('tr', {},
+          h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(r.key, range) }, r.key), ' ', riskBadge(r.risk),
+            h('div', { class: 'small' }, ((r.risk && r.risk.reasons) || []).join(' \u00b7 ')), bar(r.total, total)),
+          h('td', { class: 'num' }, can('querylog.view') ? h('a', { href: '#/queries?' + new URLSearchParams({ search: r.key, range }) }, fmtNum(r.total)) : fmtNum(r.total)),
+          h('td', { class: 'nowrap' }, domainButton(r.key, r.now)))))),
+      risky.domains > rows.length ? h('p', { class: 'muted small' }, 'Showing the ' + rows.length + ' riskiest of ' + fmtNum(risky.domains) + '.') : null));
+  }
+  await load();
+  timer = setInterval(() => { if (!document.hidden && !document.querySelector('dialog[open]')) load(); }, 60000);
+}
+
+// navSearch is the menu's search box: type a domain or a device. Devices
+// that match link to their lookups; a domain can be checked, blocked or
+// allowed straight away.
+function navSearch() {
+  const input = h('input', { type: 'search', name: 'q', placeholder: 'Find a domain or device', 'aria-label': 'Find a domain or device', spellcheck: 'false', autocapitalize: 'off' });
+  return h('form', { class: 'nav-search', role: 'search', onsubmit: (ev) => { ev.preventDefault(); const q = input.value.trim(); if (q) { input.value = ''; searchDialog(q); } } }, input);
+}
+
+async function searchDialog(q) {
+  const devBox = h('div'), domBox = h('div', {}, h('p', { class: 'muted' }, 'Checking…'));
+  const d = dialog('Find \u201c' + q + '\u201d', [devBox, domBox, h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Close'))]);
+  const go = (hash) => { d.close(); location.hash = hash; };
+  let devs = [];
+  try { devs = await api('GET', '/devices'); } catch (_) { /* domains still work */ }
+  const hits = devs.map(x => ({ x, score: fuzzyFind(q, [x.name, x.hostname, ...(x.addrs || [])]) })).filter(r => r.score > 0).sort((a, b) => b.score - a.score).slice(0, 5);
+  fill(devBox, hits.length ? [h('h3', {}, 'Devices'), h('table', { class: 'top' }, h('tbody', {}, hits.map(({ x }) => h('tr', {},
+    h('td', {}, h('b', {}, deviceLabel(x)), deviceLabel(x) !== x.addrs.join(', ') ? h('div', { class: 'muted small' }, x.addrs.join(', ')) : null),
+    h('td', { class: 'nowrap' },
+      can('querylog.view') ? h('button', { class: 'link', type: 'button', onclick: () => go('#/queries?client=' + encodeURIComponent(x.id || x.addrs[0])) }, 'Lookups') : null, ' ',
+      can('dashboard.view') ? h('button', { class: 'link', type: 'button', onclick: () => go('#/traffic?device=' + encodeURIComponent(x.id || x.addrs[0])) }, 'Traffic map') : null)))))] : null);
+  // Anything shaped like a name is checked as a domain.
+  const name = q.toLowerCase().replace(/^https?:\/\//, '').replace(/[/?#].*$/, '').replace(/\.$/, '');
+  if (isIP(name) || !/^[a-z0-9*_-]+(\.[a-z0-9_-]+)+$/.test(name)) {
+    fill(domBox, hits.length ? null : h('p', { class: 'muted' }, 'No device matches, and it doesn\u2019t look like a domain name.'));
+    return;
+  }
+  const show = async (note) => {
+    let r;
+    try { r = await api('GET', '/domains/check?name=' + encodeURIComponent(name)); } catch (e) { fill(domBox, h('h3', {}, 'Domain'), msg('err', e.message)); return; }
+    const why = r.rule ? [' by ', h('code', {}, r.rule), ' from ', r.custom ? 'your custom rules' : r.list] : [];
+    const act = (action, label) => h('button', { type: 'button', onclick: async () => {
+      try { await api('POST', '/domains', { domain: name, action }); show({ block: 'Blocked ', allow: 'Allowed ', clear: 'Removed your rule for ' }[action] + name + '. Applies to its subdomains too.'); } catch (e) { toast(e.message, 'err'); }
+    } }, label);
+    fill(domBox, h('h3', {}, 'Domain'),
+      note ? msg('ok', note) : null,
+      msg(r.blocked && !r.allowed ? 'warn' : 'ok', [h('b', {}, r.name), r.allowed ? [' is allowed', why, '.'] : r.blocked ? [' is blocked', why, '.'] : ' is not blocked.']),
+      h('div', { class: 'row' },
+        can('domains.allowblock') ? [act('block', 'Block'), act('allow', 'Allow'), r.custom ? act('clear', 'Remove rule') : null] : null,
+        can('dashboard.view') ? h('button', { type: 'button', onclick: () => { d.close(); domainDialog(name, '24h'); } }, 'Details') : null,
+        can('querylog.view') ? h('button', { type: 'button', class: 'link', onclick: () => go('#/queries?search=' + encodeURIComponent(name)) }, 'Who looked it up') : null));
+  };
+  await show();
 }
 
 // securityCard is the Dashboard's security overview, as a security
@@ -2781,7 +2866,7 @@ function securityCard(box, range, sec, reload) {
     h('div', { class: 'grow' },
       h('h2', {}, active.length ? plural(active.length, 'risky domain', 'risky domains') + ' got through in the ' + win : 'All clear: nothing risky got through in the ' + win),
       h('div', { class: 'muted small' }, meta.join(' · '),
-        wt.domains ? [' · ', h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range) }, plural(wt.domains, 'medium-risk domain', 'medium-risk domains'), ' worth a look')] : null)));
+        wt.domains ? [' · ', h('a', { href: '#/security' + (range === '24h' ? '' : '?range=' + range) }, plural(wt.domains, 'medium-risk domain', 'medium-risk domains'), ' worth a look')] : null)));
   const warn = [];
   if (sec.needs_key) warn.push(msg('warn', ['URLhaus and ThreatFox aren’t checked until a free abuse.ch key is added. ', can('lists.manage') ? h('a', { href: '#/risk?card=abusech' }, 'Add it in Risk scoring') : null]));
   if (sec.failed && sec.failed.length) warn.push(msg('warn', 'Couldn’t download ' + sec.failed.join(', ') + ', so those aren’t checked.'));
