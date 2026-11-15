@@ -6,7 +6,7 @@ feeds and a few checks on the name itself, and gives it a risk score from
 Dashboard, the Security page and the Query log point out, so you can decide what
 to block.
 
-<p align="center"><img src="images/security.png" alt="Security card on the Dashboard" width="800"></p>
+<p align="center"><img src="images/security-page.png" alt="Security page" width="800"></p>
 
 ## What you see
 
@@ -18,6 +18,8 @@ to block.
 - **Dashboard → Security.** A verdict for the period: "All clear: nothing
   risky got through", or how many high-risk domains your devices got
   answers for, who reached them, and how many threats were blocked anyway.
+
+  <img src="images/security.png" alt="Security card on the Dashboard" width="500">
   **Needs attention** lists each one with why it's risky, the devices
   (each opens its Query log) and when, and three buttons:
   - **Block** blocks it and its subdomains for every device.
