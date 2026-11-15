@@ -77,6 +77,9 @@ jobs:
           fi
           sed -i "s/DATABASE_ID/$id/" wrangler.toml
           if [ -n "$STATS_DOMAIN" ]; then
+            # Only the custom name: a workers.dev name needs registering
+            # by hand first, and nothing should use it.
+            sed -i 's/^workers_dev = true/workers_dev = false/' wrangler.toml
             printf '\n[[routes]]\npattern = "%s"\ncustom_domain = true\n' "$STATS_DOMAIN" >> wrangler.toml
           fi
       - name: Update the tables
