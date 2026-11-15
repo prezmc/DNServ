@@ -335,7 +335,7 @@ const PROVIDERS = {
 const providerFor = (servers) => Object.keys(PROVIDERS).find(k => JSON.stringify(PROVIDERS[k].servers) === JSON.stringify(servers || [])) || 'custom';
 
 const MODES = {
-  forward: { title: 'Encrypted forwarding (recommended)', note: "Lookups go encrypted to a public resolver you pick, so your ISP can't see or change them." },
+  forward: { title: 'Forwarding (recommended)', note: "Lookups go to a resolver you pick. The public resolvers on the list are encrypted, so your ISP can't see or change them." },
   recursive: { title: 'Full recursion', note: 'DNServ asks the domain servers itself and checks DNSSEC. No single company sees all your lookups, but your ISP can see them.' },
   tunnel: { title: 'Recursion through a VPN', note: 'Full recursion with every lookup sent through a WireGuard VPN, hidden from your ISP.' },
 };
@@ -849,7 +849,7 @@ const SETTINGS_PAGES = {
   blocklists: ['filtering'],
   services: ['services'],
   rules: ['rules'],
-  upstream: ['upstream', 'cache', 'router'],
+  upstream: ['upstream', 'cache'],
   risk: ['risk', 'abusech', 'virustotal'],
   general: ['timezone', 'networks', 'history', 'https', 'usage'],
 };
@@ -867,7 +867,7 @@ const ROUTES = [
   { path: 'rules', title: 'Custom rules', page: settingsPage('rules'), show: () => can('rules.edit'), group: 'Filtering' },
   { path: 'devices', title: 'Devices & groups', page: devices, show: () => true, group: 'Network' },
   { path: 'names', title: 'Local names', page: localNames, show: () => can('network.manage'), group: 'Network' },
-  { path: 'upstream', title: 'Upstream & cache', page: settingsPage('upstream'), show: () => can('upstream.manage') || can('network.manage'), group: 'Network' },
+  { path: 'upstream', title: 'Upstream & cache', page: settingsPage('upstream'), show: () => can('upstream.manage'), group: 'Network' },
   { path: 'cluster', title: 'Servers', page: clusterPage, show: () => can('cluster.manage'), group: 'System' },
   { path: 'users', title: 'Users', page: users, show: () => can('users.manage'), group: 'System' },
   { path: 'backups', title: 'Backups & restore', page: backupsPage, show: () => can('backups.manage'), group: 'System' },
@@ -1413,12 +1413,11 @@ async function dashboard(main) {
     dashArrange(dash, arrangeBar, () => { arranging = false; arrangeBtn.disabled = false; });
   } }, 'Arrange');
   const head = h('div', { class: 'page-head' }, h('h1', {}, 'Dashboard'), status, pauseBtn, h('span', { class: 'grow' }), arrangeBtn,
-    can('dashboard.view') ? h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, DASH_RANGES.map(k =>
-      h('button', { type: 'button', 'aria-pressed': String(k === range), onclick: () => {
-        history.replaceState(null, '', '#/' + (k === '24h' ? '' : '?range=' + k));
-        shownHash = location.hash;
-        route();
-      } }, k))) : null);
+    can('dashboard.view') ? rangeSeg(DASH_RANGES, range, (k) => {
+      history.replaceState(null, '', '#/' + (k === '24h' ? '' : '?range=' + k));
+      shownHash = location.hash;
+      route();
+    }) : null);
   const dash = h('div', { class: 'dash' }, arrangeBar, pauseBox, body, secBox, chartBox, flowBox, extraBox, devBox, beaconBox, checkDomainCard(), ver);
   const layout = dashLayout(ME && ME.dashboard);
   applyDashLayout(layout, false);
@@ -1476,7 +1475,7 @@ async function dashboard(main) {
       h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), sub ? h('div', { class: 'sub muted' }, sub) : null,
       values && values.length > 1 ? sparkline(values) : null);
     const health = [];
-    health.push(h('p', {}, 'Lookups: ', h('b', {}, { forward: 'encrypted forwarding', recursive: 'full recursion', tunnel: 'recursion through a VPN' }[s.upstream_mode] || s.upstream_mode)));
+    health.push(h('p', {}, 'Lookups: ', h('b', {}, { forward: 'forwarding', recursive: 'full recursion', tunnel: 'recursion through a VPN' }[s.upstream_mode] || s.upstream_mode)));
     if (s.unbound) health.push(h('p', {}, h('span', { class: 'dot ' + (s.unbound.ready ? 'ok' : 'bad') }), 'Unbound ', s.unbound.ready ? 'running' : 'not answering', s.unbound.restarts ? ' (restarted ' + s.unbound.restarts + '×)' : ''));
     if (s.tunnel) health.push(h('p', {}, h('span', { class: 'dot ' + (s.tunnel.up ? 'ok' : 'bad') }), 'VPN tunnel ', s.tunnel.up ? 'up' : 'down', s.tunnel.detail ? ' — ' + s.tunnel.detail : ''));
     if (s.filter && !s.filter.ready) health.push(msg('warn', 'Blocklists are still loading.'));
@@ -1823,7 +1822,7 @@ async function devices(main) {
   }
   if (list.some(d => !d.name) && !list.some(d => d.hostname) && can('network.manage')) {
     settingsHint = msg('warn', '');
-    fill(settingsHint, 'Devices show as numbers because DNServ doesn’t know your router. Add your router’s address under ', h('a', { href: '#/upstream?card=router' }, 'Upstream & cache → Names from your router'), ' to see their names.');
+    fill(settingsHint, 'Devices show as numbers because DNServ doesn’t know your router. Add your router’s address under ', h('a', { href: '#/names?card=router' }, 'Local names → Names from your router'), ' to see their names.');
   }
   const gnames = {};
   groups.forEach(g => { gnames[g.id] = g.name; });
@@ -2155,7 +2154,7 @@ async function queries(main) {
   let devs = [];
   try { devs = await api('GET', '/devices'); } catch (_) { /* filter still works by IP */ }
   const names = {};
-  devs.forEach(d => d.addrs.forEach(a => { names[a] = deviceLabel(d); }));
+  devs.forEach(d => d.addrs.forEach(a => { if (deviceLabel(d) !== a) names[a] = deviceLabel(d); }));
 
   const setHash = () => {
     const q = new URLSearchParams();
@@ -2200,7 +2199,7 @@ async function queries(main) {
       const r = await api('GET', '/analytics/queries?' + qs(extra));
       if (r.detail) {
         multi = (r.nodes || []).length > 1;
-        r.device_names && Object.entries(r.device_names).forEach(([k, v]) => { if (v && !names[k]) names[k] = v; });
+        r.device_names && Object.entries(r.device_names).forEach(([k, v]) => { if (v && v !== k && !names[k]) names[k] = v; });
         fill(nodesNote, coverage(r.nodes));
         Object.assign(risk, r.risk || {});
         return r;
@@ -2315,8 +2314,7 @@ async function queries(main) {
     h('option', { value: 'low', selected: filter.risk === 'low' }, 'Low risk and above'),
     h('option', { value: 'medium', selected: filter.risk === 'medium' }, 'Medium risk and above'),
     h('option', { value: 'high', selected: filter.risk === 'high' }, 'High risk only')) : null;
-  const rangeSel = h('select', { name: 'range', 'aria-label': 'Period', onchange: (ev) => { filter.range = ev.target.value; setHash(); load(); } },
-    Object.entries(RANGES).map(([k, v]) => h('option', { value: k, selected: filter.range === k }, v)));
+  const rangeSel = rangeSeg(Object.keys(RANGES), filter.range, (k) => { filter.range = k; setHash(); load(); });
   const exportBtn = can('data.export') ? h('button', { type: 'button', onclick: async () => {
     try { await fetchFile('GET', '/analytics/export?' + qs({ limit: '50000' })); } catch (e) { toast(e.message, 'err'); }
   } }, 'Export CSV') : null;
@@ -2336,6 +2334,17 @@ async function queries(main) {
 // ---------- analytics ----------
 
 const RANGES = { '1h': 'Last hour', '24h': 'Last 24 hours', '7d': 'Last 7 days', '30d': 'Last 30 days', '90d': 'Last 90 days' };
+
+// rangeSeg is the one period picker every page uses: short buttons
+// (24h, 7d) with the long name as a tooltip. pick gets the chosen key.
+function rangeSeg(keys, current, pick) {
+  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, keys.map(k =>
+    h('button', { type: 'button', title: RANGES[k], 'aria-pressed': String(k === current), onclick: (ev) => {
+      seg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.currentTarget)));
+      pick(k);
+    } }, k)));
+  return seg;
+}
 
 function svg(tag, attrs, ...kids) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
@@ -2688,11 +2697,7 @@ async function analyticsPage(main) {
     if (st.client) q.set('client', st.client);
     history.replaceState(null, '', '#/analytics' + (q.toString() ? '?' + q : ''));
   };
-  const rangeBtns = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, Object.keys(RANGES).map(k =>
-    h('button', { type: 'button', 'aria-pressed': String(k === st.range), onclick: (ev) => {
-      st.range = k; rangeBtns.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.target)));
-      setHash(); load();
-    } }, k)));
+  const rangeBtns = rangeSeg(Object.keys(RANGES), st.range, (k) => { st.range = k; setHash(); load(); });
   const devSel = perDevice ? combo({ label: 'Device', placeholder: 'All devices', options: deviceOptions(devs, 'All devices'), value: st.client, class: 'dev',
     onchange: (v) => { st.client = v; setHash(); load(); } }) : null;
   page(main, 'Analytics', h('div', { class: 'row' }, rangeBtns, devSel), body);
@@ -3104,14 +3109,13 @@ async function trafficPage(main) {
   const box = h('div', { class: 'traffic-page' }, h('p', { class: 'muted' }, 'Loading…'));
   const dev = p.get('device');
   box.flowState = { group: flowGroup(), open: '', kinds: { internet: true, internal: true, blocked: true }, sel: '', device: dev ? { key: dev, label: dev } : null };
-  const seg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, DASH_RANGES.map(k =>
-    h('button', { type: 'button', 'aria-pressed': String(k === range), onclick: () => {
-      const d = box.flowState.device;
-      const q = new URLSearchParams({ ...(d ? { device: d.key } : {}), ...(k === '24h' ? {} : { range: k }) }).toString();
-      history.replaceState(null, '', '#/traffic' + (q ? '?' + q : ''));
-      shownHash = location.hash;
-      route();
-    } }, k)));
+  const seg = rangeSeg(DASH_RANGES, range, (k) => {
+    const d = box.flowState.device;
+    const q = new URLSearchParams({ ...(d ? { device: d.key } : {}), ...(k === '24h' ? {} : { range: k }) }).toString();
+    history.replaceState(null, '', '#/traffic' + (q ? '?' + q : ''));
+    shownHash = location.hash;
+    route();
+  });
   fill(main, h('div', { class: 'page-head' }, h('h1', {}, 'Traffic map'), h('span', { class: 'grow' }), seg), box);
   await dashboardFlow(box, range, { page: true });
   timer = setInterval(() => { if (!document.hidden && box.isConnected) dashboardFlow(box, range, { page: true }); }, 60000);
@@ -3199,7 +3203,8 @@ async function deviceProfile(box, device, label, range) {
 
 // upstreamLabel names an upstream server the way people know it.
 function upstreamLabel(u) {
-  return /^udp:\/\/127\.0\.0\.1:/.test(u) ? 'Unbound (built in)' : u.replace(/^https:\/\/([^/]+).*/, '$1 (HTTPS)').replace(/^tls:\/\/([^:]+).*/, '$1 (TLS)');
+  if (/^udp:\/\/127\.0\.0\.1:5335$/.test(u)) return 'Unbound (built in)';
+  return u.replace(/^https:\/\/([^/]+).*/, '$1 (HTTPS)').replace(/^tls:\/\/([^:/]+).*/, '$1 (TLS)').replace(/^(?:udp|tcp):\/\/(.+)$/, '$1 (plain DNS)');
 }
 
 function fmtMs(ms) {
@@ -3468,12 +3473,11 @@ async function performancePage(main) {
   const params = hashParams();
   const st = { range: RANGES[params.get('range')] ? params.get('range') : '24h' };
   const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
-  const rangeBtns = h('div', { class: 'seg', role: 'group', 'aria-label': 'Period' }, Object.keys(RANGES).map(k =>
-    h('button', { type: 'button', 'aria-pressed': String(k === st.range), onclick: (ev) => {
-      st.range = k; rangeBtns.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === ev.target)));
-      history.replaceState(null, '', '#/performance' + (k !== '24h' ? '?range=' + k : ''));
-      load();
-    } }, k)));
+  const rangeBtns = rangeSeg(Object.keys(RANGES), st.range, (k) => {
+    st.range = k;
+    history.replaceState(null, '', '#/performance' + (k !== '24h' ? '?range=' + k : ''));
+    load();
+  });
   const clearBtn = clearHistoryButton('performance', 'Clear performance stats',
     'Clear performance stats on every server? Response times, upstream timings and the warnings based on them start again from now. The query history is kept, and so are the slowest domains and device tables, which come from it.', () => load());
   page(main, 'Performance', h('p', { class: 'muted' }, 'How quickly DNServ answers, how your upstream servers are doing, and anything out of the ordinary.'), h('div', { class: 'row spread' }, rangeBtns, clearBtn), body);
@@ -3651,9 +3655,18 @@ async function settings(main, key) {
     try { const st = await api('GET', '/status'); tunnelOK = st.tunnel_interface_present !== false || u.Mode === 'tunnel'; } catch (_) { /* keep enabled */ }
     const prov = providerFor(u.Servers);
     const servers = h('textarea', { id: 'servers', name: 'servers', spellcheck: 'false', class: 'short' }, (u.Servers || []).join('\n'));
+    // Plain servers are fine on your own network (your own Unbound, say),
+    // but the mode no longer promises encryption, so say which aren't.
+    const plainNote = h('p', { class: 'small warn-text' });
+    const showPlain = () => {
+      const plain = lines(servers.value).filter(x => !/^(https|tls|quic):\/\//.test(x));
+      plainNote.textContent = plain.length ? 'Not encrypted: ' + plain.join(', ') + '. Fine for a resolver on your own network; anywhere else your ISP can see and change these lookups.' : '';
+    };
+    servers.addEventListener('input', showPlain);
+    showPlain();
     const custom = h('div', { hidden: prov !== 'custom' },
       h('label', { for: 'servers' }, 'Your servers, one per line'), servers,
-      h('p', { class: 'muted small' }, 'https://\u2026/dns-query for DNS over HTTPS, tls://name for DNS over TLS.'));
+      h('p', { class: 'muted small' }, 'https://\u2026/dns-query for DNS over HTTPS (encrypted), tls://name for DNS over TLS (encrypted), or udp://192.168.1.2 for plain DNS to a resolver on your network.'), plainNote);
     const picker = h('select', { id: 'provider', name: 'provider', onchange: (ev) => {
       custom.hidden = ev.target.value !== 'custom';
       if (PROVIDERS[ev.target.value]) servers.value = PROVIDERS[ev.target.value].servers.join('\n');
@@ -3677,7 +3690,7 @@ async function settings(main, key) {
       h('textarea', { id: 'egress', name: 'egress', spellcheck: 'false', class: 'short' }, (u.Tunnel.ExpectedEgress || []).join('\n')),
       h('label', { for: 'ondown' }, 'If the VPN goes down'),
       h('select', { id: 'ondown', name: 'ondown' },
-        h('option', { value: 'forward', selected: u.Tunnel.OnDown === 'forward' }, 'Keep working with encrypted forwarding until it is back'),
+        h('option', { value: 'forward', selected: u.Tunnel.OnDown === 'forward' }, 'Keep working by forwarding to the resolver above until it is back'),
         h('option', { value: 'block', selected: u.Tunnel.OnDown === 'block' }, 'Stop answering (never send a lookup outside the VPN)')));
     const modeChoice = (m) => {
       const disabled = m === 'tunnel' && !tunnelOK;
@@ -4658,10 +4671,23 @@ async function localNames(main) {
     h('div', { class: 'card' }, h('h2', {}, 'Your names'), list,
       h('p', { class: 'muted small' }, 'Pick names under a domain you control, or under .home.arpa, .home, .lan or .internal. A name here overrides the real one on the internet for your devices.')),
     add,
-    h('div', { class: 'card' }, h('h2', {}, 'Names from your router'),
-      router
-        ? h('p', {}, 'Other local names (like a device’s own name) are looked up at your router, ', h('code', {}, router), '. Names on this page win over the router’s.')
-        : h('p', {}, 'DNServ can also answer the names your router knows for each device. Add your router’s address under ', h('a', { href: '#/upstream?card=router' }, 'Upstream & cache → Names from your router'), '.')));
+    h('div', { class: 'card', id: 'card-router' }, h('h2', {}, 'Names from your router'),
+      h('p', { class: 'muted' }, 'DNServ can ask your router what each device is called, so Devices and the Query log show names instead of numbers, and it sends lookups for other local names (like printer.lan) there. Names on this page win over the router’s.'),
+      form({ 'data-track': true }, [
+        h('label', { for: 'localdns' }, 'Your router\u2019s address'),
+        h('input', { id: 'localdns', name: 'localdns', type: 'text', value: router || '', placeholder: '192.168.1.1', spellcheck: 'false' }),
+        h('p', { class: 'muted small' }, 'Usually the address you type to open your router\u2019s settings. Leave empty to turn this off.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], async (f) => {
+        const v = val(f, 'localdns').trim();
+        if (v === (router || '')) return 'Nothing changed.';
+        await api('PATCH', '/settings', { local_dns: v });
+        setTimeout(route, 900);
+        return 'Saved. Changes apply right away.';
+      })));
+  const card = hashParams().get('card');
+  const el = card && document.getElementById('card-' + card);
+  if (el) { el.scrollIntoView({ block: 'start' }); el.classList.add('flash'); }
 }
 
 // ---------- backups & history ----------

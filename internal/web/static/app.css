@@ -574,3 +574,13 @@ pre.code { white-space: pre-wrap; word-break: break-word; background: var(--bg);
 /* a card opened by a link (#/upstream?card=cache) glows briefly */
 .card.flash { animation: flash 1.8s ease-out; }
 @keyframes flash { from { box-shadow: 0 0 0 3px var(--brand); } to { box-shadow: 0 0 0 3px transparent; } }
+
+/* On a phone the dashboard header fits in two rows: title and status,
+   then pause, arrange and the period picker together. */
+@media (max-width: 520px) {
+  .page-head { gap: .4rem; }
+  .page-head .grow { display: none; }
+  .page-head button { padding: .3rem .55rem; font-size: .84rem; }
+  .page-head .seg { margin-left: auto; }
+  .page-head .seg button { padding: .22rem .5rem; }
+}
