@@ -81,6 +81,9 @@ type FlowName struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 	N    int64  `json:"n"`
+	// CC is the country the domain's answers pointed to (with By
+	// "countries" and location data on).
+	CC string `json:"cc,omitempty"`
 }
 
 func (s *Store) flow(ctx context.Context, q *Query, res *Result) error {
@@ -218,6 +221,11 @@ func (s *Store) flow(ctx context.Context, q *Query, res *Result) error {
 		}
 	}
 	f.Paths = topRows(paths, 0)
+	if q.By == TopCountries {
+		if err := s.flowCountries(ctx, &f); err != nil {
+			return err
+		}
+	}
 	res.Flows = []Flow{f}
 	return nil
 }

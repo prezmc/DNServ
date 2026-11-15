@@ -974,6 +974,10 @@ func clearField(s *Settings, f string) error {
 		s.StatsDays = nil
 	case "threat_feeds":
 		s.ThreatFeeds = nil
+	case "geo_data":
+		s.GeoData = nil
+	case "flag_countries":
+		s.FlagCountries = nil
 	case "trusted_domains":
 		s.TrustedDomains = nil
 	default:

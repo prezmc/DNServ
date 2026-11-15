@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -153,6 +154,9 @@ type Intel struct {
 	trusted atomic.Pointer[[]string]
 	abuseCH atomic.Pointer[string] // abuse.ch Auth-Key, "" for none
 	scoring atomic.Pointer[config.RiskScoring]
+	// Countries to flag in answers, and how to find an address's country.
+	flagCC  atomic.Pointer[[]string]
+	country atomic.Pointer[func(netip.Addr) string]
 	mu      sync.Mutex // one refresh at a time
 	kick    chan struct{}
 }
@@ -166,10 +170,19 @@ func New(dir string, client *http.Client, log *slog.Logger) *Intel {
 	in.cur.Store(&db{})
 	in.status.Store(&[]SourceStatus{})
 	in.trusted.Store(&[]string{})
+	in.flagCC.Store(&[]string{})
 	in.abuseCH.Store(new(string))
 	d := config.DefaultRiskScoring()
 	in.scoring.Store(&d)
 	return in
+}
+
+// SetCountries sets the countries whose answers are flagged and how an
+// address's country is found (nil: not known).
+func (in *Intel) SetCountries(codes []string, country func(netip.Addr) string) {
+	c := config.CountryCodes(codes)
+	in.flagCC.Store(&c)
+	in.country.Store(&country)
 }
 
 // SetAbuseCHKey sets the abuse.ch Auth-Key used for the URLhaus and
@@ -507,6 +520,16 @@ func (in *Intel) CheckAnswer(name string, ips []netip.Addr, cnames []string) (in
 		for i, f := range IPFeeds {
 			if pts := sc.Feeds[f.ID]; i < 8 && m&(1<<i) != 0 && pts > best {
 				best, why = pts, "Answered with "+a.String()+", "+f.Reason
+			}
+		}
+	}
+	if cc := *in.flagCC.Load(); len(cc) > 0 && sc.CountryPoints > best {
+		if fn := in.country.Load(); fn != nil && *fn != nil {
+			for _, a := range ips {
+				if c := (*fn)(a); c != "" && slices.Contains(cc, c) {
+					best, why = sc.CountryPoints, "Answered with "+a.String()+", in a country you flag ("+c+")"
+					break
+				}
 			}
 		}
 	}

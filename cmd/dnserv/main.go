@@ -34,6 +34,7 @@ import (
 	"github.com/prezmc/dnserv/internal/cluster"
 	"github.com/prezmc/dnserv/internal/config"
 	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/geo"
 	"github.com/prezmc/dnserv/internal/policy"
 	"github.com/prezmc/dnserv/internal/querylog"
 	"github.com/prezmc/dnserv/internal/recursive"
@@ -349,9 +350,18 @@ func run() error {
 	intel.SetAbuseCHKey(boot.AbuseCHKey)
 	go intel.Run(ctx)
 	adm.Intel = intel
+	// Optional location data: which country answers point to (analytics
+	// only, never on the query path).
+	geoDB := geo.New(filepath.Join(cfg.DataDir, "geo"), nil, log.With("component", "geo"))
+	geoDB.SetEnabled(cfg.Analytics.GeoData)
+	intel.SetCountries(cfg.Analytics.FlagCountries, geoDB.Country)
+	adm.Geo = geoDB
 	if hist != nil {
 		hist.SetChecker(intel.CheckAnswer) // runs on the history writer, not the query path
+		hist.SetCountry(geoDB.Country)
+		geoDB.SetOnLoad(hist.BackfillCountries)
 	}
+	go geoDB.Run(ctx)
 	cl.Handle(api.PeerAnalytics, adm.PeerHandler)
 	adm.CheckDomain = engine.Lookup
 	adm.AlsoOn = engine.AlsoOn
@@ -588,6 +598,16 @@ func run() error {
 			intel.SetTrusted(ac.TrustedDomains)
 			intel.SetScoring(ac.Scoring)
 			intel.SetEnabled(ac.ThreatFeeds)
+		}
+		if !reflect.DeepEqual(old.Settings.GeoData, new.Settings.GeoData) || !reflect.DeepEqual(old.Settings.FlagCountries, new.Settings.FlagCountries) {
+			ac := new.Settings.Overlay(base).Analytics
+			geoDB.SetEnabled(ac.GeoData)
+			intel.SetCountries(ac.FlagCountries, geoDB.Country)
+			if !ac.GeoData && hist != nil {
+				if err := hist.ClearCountries(); err != nil {
+					log.Warn("clearing countries failed", "err", err)
+				}
+			}
 		}
 		if old.AbuseCHKey != new.AbuseCHKey {
 			intel.SetAbuseCHKey(new.AbuseCHKey)

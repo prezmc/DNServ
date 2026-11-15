@@ -276,3 +276,29 @@ func TestBlockedServicesForEveryone(t *testing.T) {
 		t.Fatal("a custom allow must override a blocked service")
 	}
 }
+
+func TestTLDServices(t *testing.T) {
+	s, ok := ServiceByID(TLDServiceID("ru"))
+	if !ok || s.Domains[0] != "ru" || s.Category != "Top-level domains" {
+		t.Fatalf("tld:ru = %+v %v", s, ok)
+	}
+	for _, bad := range []string{"tld:", "tld:r", "tld:RU", "tld:r.u", "tld:xn--", "tld:ru1"} {
+		if _, ok := ServiceByID(bad); ok {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	if _, ok := ServiceByID("tld:xn--p1ai"); !ok {
+		t.Error("international TLD refused")
+	}
+	b := NewBuilder()
+	AddServices(b, []string{"tld:zip", "youtube"})
+	idx := b.Build()
+	for name, want := range map[string]bool{"evil.zip": true, "a.b.zip": true, "zip": true, "zip.example.com": false, "youtube.com": true} {
+		if got := idx.Lookup(name).Blocked; got != want {
+			t.Errorf("%s: blocked %v, want %v", name, got, want)
+		}
+	}
+	if m := idx.Lookup("evil.zip"); m.Source != "Blocked ending: .zip" {
+		t.Errorf("source %q", m.Source)
+	}
+}

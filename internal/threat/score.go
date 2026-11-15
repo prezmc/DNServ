@@ -139,11 +139,13 @@ func feedPoints(f Feed, s *config.RiskScoring) int {
 
 // riskyTLDs are top-level domains that host a large share of abuse
 // relative to legitimate use.
-var riskyTLDs = map[string]bool{
-	"zip": true, "mov": true, "top": true, "xyz": true, "tk": true, "ml": true, "ga": true, "cf": true, "gq": true,
-	"click": true, "country": true, "work": true, "rest": true, "cam": true, "loan": true, "men": true, "buzz": true,
-	"icu": true, "cyou": true, "sbs": true, "bond": true, "monster": true, "quest": true, "su": true,
-}
+var riskyTLDs = func() map[string]bool {
+	m := map[string]bool{}
+	for _, t := range filter.AbusedTLDs {
+		m[t] = true
+	}
+	return m
+}()
 
 // NameCheck describes one name check for the guide.
 type NameCheck struct {

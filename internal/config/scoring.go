@@ -1,5 +1,10 @@
 package config
 
+import (
+	"slices"
+	"strings"
+)
+
 // RiskScoring is how domains are scored for risk (0-100). It never
 // blocks anything; it only decides what the dashboard marks.
 type RiskScoring struct {
@@ -17,7 +22,14 @@ type RiskScoring struct {
 	// Medium and High are where those levels start (Low is anything above 0).
 	Medium int `yaml:"medium" json:"medium"`
 	High   int `yaml:"high" json:"high"`
+	// CountryPoints is given to an answer that points into one of the
+	// countries to flag (AnalyticsConfig.FlagCountries).
+	CountryPoints int `yaml:"country_points" json:"country_points"`
 }
+
+// DefaultCountryPoints is a flagged country's weight: Medium, so it shows
+// as worth a look.
+const DefaultCountryPoints = 40
 
 // Name check IDs.
 const (
@@ -36,6 +48,7 @@ func DefaultRiskScoring() RiskScoring {
 		Names:         map[string]int{CheckTLD: 15, CheckGenerated: 25, CheckLookalike: 15, CheckDigits: 10, CheckLong: 10},
 		NameCap:       45, NameCapListed: 10,
 		Medium: 40, High: 70,
+		CountryPoints: DefaultCountryPoints,
 	}
 }
 
@@ -67,5 +80,23 @@ func (s RiskScoring) Normalized() RiskScoring {
 	out.NameCapListed = clamp(s.NameCapListed, 0, 50)
 	out.Medium = clamp(s.Medium, 2, 98)
 	out.High = clamp(s.High, out.Medium+1, 100)
+	// Saved before country points existed: the default.
+	out.CountryPoints = DefaultCountryPoints
+	if s.CountryPoints != 0 {
+		out.CountryPoints = clamp(s.CountryPoints, 0, 100)
+	}
+	return out
+}
+
+// CountryCodes keeps valid two-letter codes, upper case, once each.
+func CountryCodes(in []string) []string {
+	var out []string
+	for _, c := range in {
+		c = strings.ToUpper(strings.TrimSpace(c))
+		if len(c) != 2 || c[0] < 'A' || c[0] > 'Z' || c[1] < 'A' || c[1] > 'Z' || slices.Contains(out, c) {
+			continue
+		}
+		out = append(out, c)
+	}
 	return out
 }

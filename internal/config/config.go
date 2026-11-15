@@ -219,6 +219,13 @@ type AnalyticsConfig struct {
 	TrustedDomains []string `yaml:"trusted_domains"`
 	// Scoring is how risk is scored (the defaults when left out).
 	Scoring RiskScoring `yaml:"risk_scoring"`
+	// GeoData downloads a free country database (DB-IP Lite) so analytics
+	// can show which country each answer's address is in. Off by default;
+	// it never blocks anything.
+	GeoData bool `yaml:"geo_data"`
+	// FlagCountries are country codes (RU, KP) whose answers risk scoring
+	// flags, with RiskScoring.CountryPoints. Needs GeoData.
+	FlagCountries []string `yaml:"flag_countries"`
 }
 
 // History limits.
@@ -348,6 +355,7 @@ func (c *Config) ApplyEnv(getenv func(string) string) error {
 	set("DNSERV_CLUSTER_ADVERTISE", func(v string) error { c.Cluster.Advertise = v; return nil })
 	set("DNSERV_BLOCK_MODE", func(v string) error { c.Filtering.BlockMode = v; return nil })
 	set("DNSERV_THREAT_FEEDS", func(v string) (err error) { c.Analytics.ThreatFeeds, err = strconv.ParseBool(v); return })
+	set("DNSERV_GEO_DATA", func(v string) (err error) { c.Analytics.GeoData, err = strconv.ParseBool(v); return })
 	set("DNSERV_HISTORY_DAYS", func(v string) (err error) { c.History.Days, err = strconv.Atoi(v); return })
 	set("DNSERV_STATS_DAYS", func(v string) (err error) { c.History.StatsDays, err = strconv.Atoi(v); return })
 	return errors.Join(errs...)

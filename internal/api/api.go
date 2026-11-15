@@ -25,6 +25,7 @@ import (
 	"github.com/prezmc/dnserv/internal/cluster"
 	"github.com/prezmc/dnserv/internal/config"
 	"github.com/prezmc/dnserv/internal/filter"
+	"github.com/prezmc/dnserv/internal/geo"
 	"github.com/prezmc/dnserv/internal/querylog"
 	"github.com/prezmc/dnserv/internal/store"
 	"github.com/prezmc/dnserv/internal/threat"
@@ -86,6 +87,8 @@ type API struct {
 	Analytics *analytics.Store
 	// Intel scores domains for risk and names their type (nil: off).
 	Intel *threat.Intel
+	// Geo is the optional location data (nil or off: no countries).
+	Geo *geo.DB
 	// VirusTotal looks up domains on request with the owner's key (nil:
 	// unavailable).
 	VirusTotal *virustotal.Client
@@ -205,7 +208,8 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("GET /api/v1/queries", a.authed(store.PermQueryLog, a.queries))
 	m.HandleFunc("GET /api/v1/groups", a.authed(store.PermDashboard, a.listGroups))
 	m.HandleFunc("GET /api/v1/services", a.authed(store.PermDashboard, func(w http.ResponseWriter, r *http.Request, p *Principal) {
-		writeJSON(w, http.StatusOK, map[string]any{"services": filter.Services})
+		writeJSON(w, http.StatusOK, map[string]any{"services": filter.Services,
+			"tlds": map[string]any{"abused": filter.AbusedTLDs, "country": filter.CountryTLDs, "generic": filter.GenericCountryTLDs}})
 	}))
 	m.HandleFunc("POST /api/v1/groups", a.authed(store.PermDevices, a.saveGroup))
 	m.HandleFunc("PUT /api/v1/groups/{id}", a.authed(store.PermDevices, a.saveGroup))

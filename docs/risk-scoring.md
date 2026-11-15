@@ -120,6 +120,28 @@ analytics:
 
 Values left out keep their defaults; a feed at 0 is ignored.
 
+## Location data
+
+**Risk scoring → Location data** (off by default) downloads DB-IP's free
+IP to Country Lite database ([db-ip.com](https://db-ip.com), CC BY 4.0) on
+each server, a few MB, refreshed monthly. With it on:
+
+- Analytics shows **Where answers point**: answered lookups by the country
+  of the domain's address. Click a country for its busiest domains.
+- The Query log shows each answer's country and can be filtered by one;
+  the CSV export gets a country column.
+- Domain details say which countries a domain's addresses are in.
+- The traffic map gets a **By country** view.
+- **Countries to mark as risky**: an answer pointing to one of them adds
+  risk points (40 by default, Medium; change it in Tune scoring). Like the
+  address lists, it applies to new lookups.
+
+It never blocks anything, and lookups happen when history is written, never
+while answering. Big sites usually answer from servers near you (CDNs), so
+countries show where servers are, not who runs a site. Existing history is
+kept: countries are noted in a separate table, filled in for the history
+you already have when the data first loads, and cleared if you turn it off.
+
 ## Also
 
 - **On your lists.** A domain's details list every enabled blocklist with
