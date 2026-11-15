@@ -102,10 +102,23 @@ container and run the same command again. The data volume keeps everything.
 
 ## The dashboard
 
-The dashboard has pages for status, checking and blocking domains,
-devices, recent queries, settings,
-users (admins), the audit log (admins), and your own password, sessions
-and API tokens. It is a small built-in page with no external scripts or
+The menu starts with the **Dashboard**, then four groups:
+
+| Group | Pages |
+|---|---|
+| Activity | Query log, Analytics, Traffic map, Security, Performance |
+| Filtering | Blocklists, Blocked services, Custom rules |
+| Network | Devices & groups, Local names, Upstream & cache |
+| System | Servers, Users, Backups & restore, Updates, Risk scoring, Audit log, General |
+
+Each person sees only the pages their permissions allow. The search box at
+the top of the menu finds a device (forgiving typos) or tells you whether a
+domain is blocked, by what, and who looked it up. Clicking your name opens
+your own password, two-factor, passkeys, sessions and API tokens.
+
+<p align="center"><img src="images/menu-search.png" alt="Finding a device from the menu" width="700"></p>
+
+The dashboard is a small built-in page with no external scripts or
 fonts, so it works without internet access. Port 8080 is plain HTTP until
 you turn on HTTPS under System → General → Dashboard HTTPS (see
 [Dashboard HTTPS](https.md)), or put it behind a reverse proxy with HTTPS
