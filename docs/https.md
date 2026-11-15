@@ -1,7 +1,7 @@
 # Dashboard HTTPS
 
 The dashboard is plain HTTP on port 8080 until you turn HTTPS on. An admin
-does that under **Settings → Dashboard HTTPS**, and the choice applies to
+does that under **System → General → Dashboard HTTPS**, and the choice applies to
 every server in the cluster.
 
 Once it's on, open `https://<name>/` (port 443, published by the included
@@ -142,7 +142,7 @@ DNSERV_HTTPS=off
 ```
 
 and run `docker compose up -d`. Open `http://<address>:8080`, fix the
-setting under **Settings > Dashboard HTTPS**, then remove the line and run
+setting under **System → General → Dashboard HTTPS**, then remove the line and run
 `docker compose up -d` again.
 
 For password or two-factor trouble, see [Locked out](sign-in.md#locked-out).

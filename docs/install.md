@@ -107,7 +107,7 @@ devices, recent queries, settings,
 users (admins), the audit log (admins), and your own password, sessions
 and API tokens. It is a small built-in page with no external scripts or
 fonts, so it works without internet access. Port 8080 is plain HTTP until
-you turn on HTTPS under Settings → Dashboard HTTPS (see
+you turn on HTTPS under System → General → Dashboard HTTPS (see
 [Dashboard HTTPS](https.md)), or put it behind a reverse proxy with HTTPS
 (set `DNSERV_ALLOWED_ORIGINS` to the proxy's host name).
 

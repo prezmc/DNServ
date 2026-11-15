@@ -3,7 +3,7 @@
 DNServ can send its developers a short anonymous summary once a week, so
 we can see how many people run it and how well it works. **It is off until
 an admin says yes.** The setup wizard asks with two equal choices, neither
-picked, and you can change your answer any time under **Settings > Weekly
+picked, and you can change your answer any time under **System → General → Weekly
 usage summary**.
 
 ![Weekly usage summary in Settings](images/usage-card.png)
@@ -13,7 +13,7 @@ The totals are public at [dnserv.dev/stats.html](https://dnserv.dev/stats.html).
 ## What is sent
 
 One summary a week per cluster, sent by the leader. This is everything in
-it. **Settings > Weekly usage summary > See exactly what would be sent**
+it. **System → General → Weekly usage summary > See exactly what would be sent**
 shows your own, and the last one sent is kept there too.
 
 | Field | Example | What it is |
@@ -57,7 +57,7 @@ repository. It:
 
 ## Turning it off
 
-- **Settings > Weekly usage summary > Turn off.** Nothing more is sent.
+- **System → General → Weekly usage summary > Turn off.** Nothing more is sent.
 - Or set `DNSERV_USAGE_REPORT=off` in a server's `.env`: that server never
   sends it, whatever the setting says.
 

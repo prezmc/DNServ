@@ -44,13 +44,13 @@ to block.
 
 URLhaus and ThreatFox need a free abuse.ch Auth-Key: sign in at
 [auth.abuse.ch](https://auth.abuse.ch/), copy the key from your profile,
-and paste it under **Settings → abuse.ch key**. The key is shared with
+and paste it under **System → Risk scoring → abuse.ch key**. The key is shared with
 your other servers, never shown again and not part of backups.
 
 Each server downloads the sources itself, keeps them in `/data/threat`,
 and refreshes them twice a day (about 30 MB of memory). The lists are
 matched on your own servers, so your lookups are never sent anywhere.
-Turn the feeds off, or list trusted domains, under **Settings → Risk
+Turn the feeds off, or list trusted domains, under **System → Risk scoring
 scoring**.
 
 ## How a score adds up
@@ -72,14 +72,14 @@ answers with an address on Feodo Tracker or Spamhaus DROP, or is an alias
 **Levels:** Low is 1 to 39, Medium 40 to 69, High 70 and up. High-risk
 domains that get an answer go under Needs attention.
 
-**Settings → Risk scoring → How risk scores work** shows all of this from
+**System → Risk scoring → How risk scores work** shows all of this from
 the numbers in force, so it stays right after you change them.
 
 ## Tuning
 
 <p align="center"><img src="images/scoring.png" alt="Tune scoring" width="600"></p>
 
-**Settings → Risk scoring → Tune scoring** (needs "Manage blocklists")
+**System → Risk scoring → Tune scoring** (needs "Manage blocklists")
 starts from a preset and lets you change every number:
 
 | Preset | What it does |
@@ -117,7 +117,7 @@ Values left out keep their defaults; a feed at 0 is ignored.
 
 - **On your lists.** A domain's details list every enabled blocklist with
   a rule for it.
-- **VirusTotal.** Add your own free API key under Settings → VirusTotal to
+- **VirusTotal.** Add your own free API key under System → Risk scoring → VirusTotal to
   get a **Check on VirusTotal** button in domain details. Only the domain
   you click is sent, at most 4 a minute, and results are kept for a day.
 - **Domain types.** Each domain's type and owner (Advertising · Google)

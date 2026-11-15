@@ -91,7 +91,7 @@ wizard.
 
 ### 3. Join the second server
 
-1. On the first server's dashboard, open **Cluster** and choose **Make a
+1. On the first server's dashboard, open **Servers** and choose **Make a
    join code**. Check that "Other nodes reach this one at" is the first
    server's address (and port, if you changed it).
 
@@ -135,7 +135,7 @@ name, a trusted certificate (a padlock in the browser) and passkey sign-in.
    They're shared, so both servers answer for both names.
 
    <img src="images/setup/local-names.webp" alt="Local names for both servers" width="700">
-2. **Certificate.** Under **Settings > Dashboard HTTPS**, choose **Let's
+2. **Certificate.** Under **System → General → Dashboard HTTPS**, choose **Let's
    Encrypt (built in)** and list both names. Pick your DNS host and paste
    its API token (for Cloudflare, one token). The leader asks for one
    certificate covering both names, usually within a minute, and both
@@ -187,10 +187,10 @@ make the switch instant, see
 ### A server is lost for good
 
 With a witness, nothing is urgent: changes keep working. Remove the lost
-server under **Cluster** and add a replacement with a new join code.
+server under **Servers** and add a replacement with a new join code.
 
 Without a witness, changes are paused until you tell the surviving server
-it's on its own: open **Cluster** on it and choose **Recover with this node
+it's on its own: open **Servers** on it and choose **Recover with this node
 only**. It asks you to confirm, because it can't tell a server that is
 switched off from a broken link. If the other server is in fact still
 running, recovering both would leave two separate DNServs with different

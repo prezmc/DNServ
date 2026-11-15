@@ -473,7 +473,7 @@ function setupJoin(code) {
   render(centered(
     h('h1', {}, 'Add this server to your DNServ'),
     h('ol', { class: 'steps-list' },
-      h('li', {}, 'On your other DNServ, open ', h('b', {}, 'Cluster'), ' and choose ', h('b', {}, 'Make a join code'), '.'),
+      h('li', {}, 'On your other DNServ, open ', h('b', {}, 'Servers'), ' and choose ', h('b', {}, 'Make a join code'), '.'),
       h('li', {}, 'Copy the join code it shows and paste it here.')),
     form({}, [
       h('label', { for: 'join' }, 'Join code'),
@@ -540,7 +540,7 @@ const isIPHost = (n) => /^[0-9.]+$/.test(n) || n.includes(':') || n.startsWith('
 const passkeysWork = () => !!(window.PublicKeyCredential && window.isSecureContext && !isIPHost(location.hostname));
 const passkeyWhyNot = () => !window.PublicKeyCredential ? "This browser doesn't support passkeys."
   : isIPHost(location.hostname) ? 'Passkeys need the dashboard opened by its name (like dns.example.com) over HTTPS, not by IP address.'
-  : 'Passkeys need the dashboard opened over HTTPS. Turn on HTTPS in Settings, then open it by its name.';
+  : 'Passkeys need the dashboard opened over HTTPS. Turn on HTTPS under System → General, then open it by its name.';
 
 const b64u = {
   enc: (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),
@@ -722,7 +722,7 @@ async function setupBasics() {
   render(h('div', { class: 'center' }, h('div', { class: 'card wide' },
     wizardSteps(4),
     h('h1', {}, 'Choose how DNServ protects you'),
-    h('p', { class: 'muted' }, 'The defaults suit most homes. You can change all of this later in Settings.'),
+    h('p', { class: 'muted' }, 'The defaults suit most homes. You can change all of this later from the menu (Blocklists, Upstream & cache).'),
     form({}, [
       h('h2', {}, 'Blocking'),
       h('div', { class: 'choices' }, LEVELS.map(l => h('label', { class: 'choice' },
@@ -790,7 +790,7 @@ function usageAsk() {
     h('div', { class: 'choices', role: 'radiogroup', 'aria-label': 'Weekly usage summary' },
       opt('yes', 'Send a weekly summary', 'Helps us see how many people run DNServ and how well it works.'),
       opt('no', 'No thanks', 'Nothing is sent.')),
-    h('p', { class: 'muted small' }, 'Pick one to continue. You can change it any time in Settings.'),
+    h('p', { class: 'muted small' }, 'Pick one to continue. You can change it any time under System → General.'),
     usagePreview());
 }
 
@@ -842,22 +842,42 @@ function setupDone() {
 
 // ---------- app shell ----------
 
+// Settings cards, by the address of the page that shows them. Each menu
+// entry under Filtering, Network and System that edits settings is the
+// Settings page narrowed to its cards; #/settings still shows them all.
+const SETTINGS_PAGES = {
+  blocklists: ['filtering'],
+  services: ['services'],
+  rules: ['rules'],
+  upstream: ['upstream', 'cache', 'router'],
+  risk: ['risk', 'abusech', 'virustotal'],
+  general: ['timezone', 'networks', 'history', 'https', 'usage'],
+};
+const settingsPage = (key) => (main) => settings(main, key);
+
+// ROUTES is the menu, in order. group starts a heading in the menu.
 const ROUTES = [
   { path: '', title: 'Dashboard', page: dashboard, show: () => true },
-  { path: 'devices', title: 'Devices', page: devices, show: () => true },
-  { path: 'analytics', title: 'Analytics', page: analyticsPage, show: () => can('dashboard.view') },
-  { path: 'performance', title: 'Performance', page: performancePage, show: () => can('dashboard.view') },
-  { path: 'traffic', title: 'Traffic map', page: trafficPage, show: () => can('dashboard.view') },
-  { path: 'queries', title: 'Query log', page: queries, show: () => can('querylog.view') },
-  { path: 'names', title: 'Local names', page: localNames, show: () => can('network.manage') },
-  { path: 'settings', title: 'Settings', page: settings, show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) },
-  { path: 'users', title: 'Users', page: users, show: () => can('users.manage') },
-  { path: 'cluster', title: 'Cluster', page: clusterPage, show: () => can('cluster.manage') },
-  { path: 'backups', title: 'Backups & history', page: backupsPage, show: () => can('backups.manage') },
-  { path: 'updates', title: 'Updates', page: updatesPage, show: () => can('cluster.manage') },
+  { path: 'queries', title: 'Query log', page: queries, show: () => can('querylog.view'), group: 'Activity' },
+  { path: 'analytics', title: 'Analytics', page: analyticsPage, show: () => can('dashboard.view'), group: 'Activity' },
+  { path: 'traffic', title: 'Traffic map', page: trafficPage, show: () => can('dashboard.view'), group: 'Activity' },
+  { path: 'performance', title: 'Performance', page: performancePage, show: () => can('dashboard.view'), group: 'Activity' },
+  { path: 'blocklists', title: 'Blocklists', page: settingsPage('blocklists'), show: () => can('lists.manage'), group: 'Filtering' },
+  { path: 'services', title: 'Blocked services', page: settingsPage('services'), show: () => can('lists.manage'), group: 'Filtering' },
+  { path: 'rules', title: 'Custom rules', page: settingsPage('rules'), show: () => can('rules.edit'), group: 'Filtering' },
+  { path: 'devices', title: 'Devices & groups', page: devices, show: () => true, group: 'Network' },
+  { path: 'names', title: 'Local names', page: localNames, show: () => can('network.manage'), group: 'Network' },
+  { path: 'upstream', title: 'Upstream & cache', page: settingsPage('upstream'), show: () => can('upstream.manage') || can('network.manage'), group: 'Network' },
+  { path: 'cluster', title: 'Servers', page: clusterPage, show: () => can('cluster.manage'), group: 'System' },
+  { path: 'users', title: 'Users', page: users, show: () => can('users.manage'), group: 'System' },
+  { path: 'backups', title: 'Backups & restore', page: backupsPage, show: () => can('backups.manage'), group: 'System' },
+  { path: 'updates', title: 'Updates', page: updatesPage, show: () => can('cluster.manage'), group: 'System' },
+  { path: 'risk', title: 'Risk scoring', page: settingsPage('risk'), show: () => can('lists.manage'), group: 'System' },
+  { path: 'audit', title: 'Audit log', page: audit, show: () => can('audit.view'), group: 'System' },
+  { path: 'general', title: 'General', page: settingsPage('general'), show: () => can('network.manage') || isAdmin() || can('cluster.manage'), group: 'System' },
+  { path: 'settings', title: 'Settings', page: settingsPage(''), show: () => ['upstream.manage', 'network.manage', 'lists.manage', 'rules.edit'].some(can) || isAdmin(), hidden: true },
   { path: 'import', title: 'Import from AdGuard Home', page: importPage, show: isAdmin, hidden: true },
-  { path: 'audit', title: 'Audit log', page: audit, show: () => can('audit.view') },
-  { path: 'account', title: 'Your account', page: account, show: () => true },
+  { path: 'account', title: 'Your account', page: account, show: () => true, hidden: true },
 ];
 
 // hashParams reads ?a=b from the hash (#/queries?client=x).
@@ -876,10 +896,13 @@ function route() {
   const nav = h('nav', { class: 'side', 'aria-label': 'Main' },
     h('div', { class: 'brand' }, h('a', { href: '#/', class: 'logo' }, h('img', { src: 'logo.svg', alt: '', width: 26, height: 26 }), h('span', {}, 'DN', h('b', {}, 'Serv'))), menu),
     h('div', { id: 'navlinks', class: 'links' },
-      ROUTES.filter(x => x.show() && !x.hidden).map(x => h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, navIcon(x.path), x.title,
-        x.path === 'updates' ? h('span', { class: 'nav-new', id: 'nav-update', hidden: true, title: 'A new version is available' }, 'new') : null))),
+      ROUTES.filter(x => x.show() && !x.hidden).map((x, i, shown) => [
+        x.group && (i === 0 || shown[i - 1].group !== x.group) ? h('div', { class: 'nav-group' }, x.group) : null,
+        h('a', { href: '#/' + x.path, class: x === r ? 'active' : '', 'aria-current': x === r ? 'page' : null }, navIcon(x.path), x.title,
+          x.path === 'updates' ? h('span', { class: 'nav-new', id: 'nav-update', hidden: true, title: 'A new version is available' }, 'new') : null)])),
     h('div', { class: 'spacer' }),
-    h('div', { class: 'who' }, h('span', { class: 'avatar', 'aria-hidden': 'true' }, (ME.user.username || '?').slice(0, 1).toUpperCase()), h('span', {}, ME.user.username, h('span', { class: 'role' }, ME.user.role))),
+    h('a', { href: '#/account', class: 'who' + (r.path === 'account' ? ' active' : ''), title: 'Your account: password, two-factor, passkeys, API tokens', 'aria-current': r.path === 'account' ? 'page' : null },
+      h('span', { class: 'avatar', 'aria-hidden': 'true' }, (ME.user.username || '?').slice(0, 1).toUpperCase()), h('span', {}, ME.user.username, h('span', { class: 'role' }, ME.user.role + ' \u00b7 your account'))),
     h('button', { class: 'link', onclick: async () => { try { await api('POST', '/auth/logout'); } catch (_) { /* ignore */ } csrf = ''; ME = null; boot(); } }, 'Sign out'));
   const main = h('main', {});
   shownHash = location.hash;
@@ -919,6 +942,12 @@ const NAV_ICONS = {
   backups: 'M4 7c0-2 16-2 16 0v10c0 2-16 2-16 0zM4 7c0 2 16 2 16 0M4 12c0 2 16 2 16 0',
   audit: 'M9 4h6v3H9zM6 6H5v15h14V6h-1M9 12h6M9 16h4',
   updates: 'M12 4v11M7 10l5 5 5-5M5 20h14',
+  blocklists: 'M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6zM8.5 12l2.5 2.5 4.5-5',
+  services: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+  rules: 'M8 6l-5 6 5 6M16 6l5 6-5 6M14 4l-4 16',
+  upstream: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3c2.5 2.5 3.5 5.5 3.5 9s-1 6.5-3.5 9c-2.5-2.5-3.5-5.5-3.5-9s1-6.5 3.5-9',
+  risk: 'M12 4l9 16H3zM12 10v4M12 17v.5',
+  general: 'M4 7h10M18 7h2M4 17h4M12 17h8M14 4v6M8 14v6',
   account: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM4 21c0-4 4-6 8-6s8 2 8 6',
 };
 function navIcon(path) {
@@ -954,7 +983,7 @@ function serversCard(sum, s) {
   const self = s.cluster && s.cluster.name;
   const pct = (a, b) => (b ? fmtPct(a / b) : '—');
   return h('div', { class: 'card d-servers' },
-    h('div', { class: 'row spread' }, h('h2', {}, nodes.length > 1 ? 'Servers' : 'Server'), can('cluster.manage') ? h('a', { href: '#/cluster', class: 'small' }, 'Cluster') : null),
+    h('div', { class: 'row spread' }, h('h2', {}, nodes.length > 1 ? 'Servers' : 'Server'), can('cluster.manage') ? h('a', { href: '#/cluster', class: 'small' }, 'Details') : null),
     // One block per server (name, then its numbers), so it fits the
     // narrow dashboard column at any width.
     h('div', { class: 'servers' }, nodes.map(n => {
@@ -1476,7 +1505,7 @@ async function dashboard(main) {
           can('dashboard.view') ? '#/performance' + (rq ? '?' + rq : '') : null, series.map(p => { const n = p.total - (p.blocked || 0) - (p.local || 0); return n > 0 ? p.cached / n : 0; }),
           'Allowed lookups only: blocked ones and local names never need the cache. Counting every query, ' + pct(cached) + ' came from the cache.'),
         tile('Blocking rules', fmtNum(s.filter ? s.filter.rules : 0), s.filter && s.filter.lists ? s.filter.lists.filter(l => !l.allowlist).length + ' lists' : null,
-          ['lists.manage', 'rules.edit'].some(can) ? '#/settings' : null)),
+          can('lists.manage') ? '#/blocklists' : can('rules.edit') ? '#/rules' : null)),
       fromHist ? serversCard(hist.sum, s) : null,
       h('div', { class: 'card d-health' }, h('h2', {}, 'Health'), health,
         (s.upstreams && s.upstreams.length) ? h('div', { class: 'scroll' }, h('table', {},
@@ -1785,16 +1814,16 @@ function editDevice(d, groups) {
 let deviceSearch = ''; // kept while you rename devices, which redraws the page
 
 async function devices(main) {
-  page(main, 'Devices', h('p', { class: 'muted' }, 'Loading…'));
+  page(main, 'Devices & groups', h('p', { class: 'muted' }, 'Loading…'));
   let list, gs, settingsHint = null;
-  try { [list, gs] = await Promise.all([api('GET', '/devices'), api('GET', '/groups')]); } catch (e) { return page(main, 'Devices', msg('err', e.message)); }
+  try { [list, gs] = await Promise.all([api('GET', '/devices'), api('GET', '/groups')]); } catch (e) { return page(main, 'Devices & groups', msg('err', e.message)); }
   const groups = gs.groups;
   if (!list.length && !groups.length) {
-    return page(main, 'Devices', h('div', { class: 'card highlight' }, h('h2', {}, 'No devices yet'), routerHelp()));
+    return page(main, 'Devices & groups', h('div', { class: 'card highlight' }, h('h2', {}, 'No devices yet'), routerHelp()));
   }
   if (list.some(d => !d.name) && !list.some(d => d.hostname) && can('network.manage')) {
     settingsHint = msg('warn', '');
-    fill(settingsHint, 'Devices show as numbers because DNServ doesn’t know your router. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), ' to see their names.');
+    fill(settingsHint, 'Devices show as numbers because DNServ doesn’t know your router. Add your router’s address under ', h('a', { href: '#/upstream?card=router' }, 'Upstream & cache → Names from your router'), ' to see their names.');
   }
   const gnames = {};
   groups.forEach(g => { gnames[g.id] = g.name; });
@@ -1815,7 +1844,7 @@ async function devices(main) {
   search.addEventListener('input', draw);
   search.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && search.value) { ev.preventDefault(); search.value = ''; draw(); } });
   draw();
-  page(main, 'Devices',
+  page(main, 'Devices & groups',
     h('p', { class: 'muted' }, 'Every device that has used DNServ since it started, most recent first.'),
     settingsHint,
     h('div', { class: 'card' }, h('div', { class: 'row spread dev-search-row' }, search, count), tableBox),
@@ -1873,7 +1902,7 @@ function groupListPicker(g, choices) {
       h('input', { type: 'checkbox', 'data-url': l.url, checked: picked.has(l.url), onchange: (ev) => { if (ev.target.checked) picked.add(l.url); else picked.delete(l.url); syncBundles(); } }),
       l.name || l.url, l.allowlist ? h('span', { class: 'badge ok' }, 'allow') : null,
       !l.enabled ? h('span', { class: 'muted small' }, added.has(l.url) ? ' (new, groups only)' : ' (off for the household)') : null)));
-    if (!choices.length) rows.append(h('p', { class: 'muted small' }, 'No lists yet. Add some under Settings, Filtering.'));
+    if (!choices.length) rows.append(h('p', { class: 'muted small' }, 'No lists yet. Add some under Filtering → Blocklists.'));
   };
   const bundleBox = h('div', { class: 'perms' }, h('span', { class: 'muted small' }, 'Loading categories…'));
   let bundles = [];
@@ -1935,7 +1964,7 @@ function groupsCard(groups, devs, gs) {
             if (!(await ask('Delete the group "' + g.name + '"? Its devices go back to the household settings.', 'Delete group'))) return;
             try { await api('DELETE', '/groups/' + g.id); route(); } catch (e) { toast(e.message, 'err'); }
           } }, 'Delete')) : null))))) : null,
-    h('p', { class: 'muted small' }, 'Schedules follow ', h('b', {}, gs.time_zone), ' time (now ', gs.now, ').', can('network.manage') ? [' ', h('a', { href: '#/settings' }, 'Change')] : null),
+    h('p', { class: 'muted small' }, 'Schedules follow ', h('b', {}, gs.time_zone), ' time (now ', gs.now, ').', can('network.manage') ? [' ', h('a', { href: '#/general?card=timezone' }, 'Change')] : null),
     manage ? h('div', { class: 'actions' },
       named.length ? h('button', { onclick: () => editGroup(null, named, gs) }, 'Add a group')
         : h('p', { class: 'muted small' }, 'Name a device first (Name it, above), then you can put it in a group.')) : null);
@@ -2075,7 +2104,7 @@ function editGroup(g, named, gs) {
     targeted.length ? h('div', { class: 'small' }, h('p', { class: 'muted' }, 'Also for this group, from your custom rules:'),
       h('ul', { class: 'plain' }, targeted.map(r => h('li', {}, h('code', {}, r))))) : null,
     h('p', { class: 'muted small' }, 'A custom rule ending in ', h('code', {}, '$client=' + (/^[\w.-]+$/.test(g.name || 'Kids') ? g.name || 'Kids' : "'" + g.name + "'")),
-      ' applies to this group only', can('rules.edit') ? [' (', h('a', { href: '#/settings' }, 'Custom rules'), ')'] : null, '.'),
+      ' applies to this group only', can('rules.edit') ? [' (', h('a', { href: '#/rules' }, 'Custom rules'), ')'] : null, '.'),
     h('h3', {}, 'Blocked services'),
     h('p', { class: 'muted small' }, 'Blocked all the time for this group, on top of the ones blocked for everyone. Use a schedule below to block them only at some times.'),
     gsvc,
@@ -2470,7 +2499,7 @@ async function scoringGuide() {
     h('tbody', {}, rows.map(x => h('tr', {}, h('td', {}, x.name), h('td', {}, sc.feeds[x.id] ? sc.feeds[x.id] : h('span', { class: 'muted' }, 'ignored')), h('td', {}, x.ok ? fmtNum(x.entries) : h('span', { class: 'muted' }, 'not loaded')))))));
   fill(body,
     g.tuned ? msg('warn', ['Your own scoring is in use; the numbers below are yours. ', can('lists.manage') ? h('button', { class: 'link', type: 'button', onclick: () => { d.close(); scoringTune(); } }, 'Change or reset it') : null]) : null,
-    !g.enabled ? msg('warn', 'Threat feeds are off (Settings → Risk scoring), so only the name checks count.') : null,
+    !g.enabled ? msg('warn', 'Threat feeds are off (System → Risk scoring), so only the name checks count.') : null,
     h('p', {}, 'Every domain your devices look up gets a score from 0 to 100, from public threat lists and a few checks on the name itself. The lists are downloaded and matched on your own servers, so your lookups are never sent to them. ',
       h('b', {}, 'Scores never block anything'), '; they decide what the Dashboard, Analytics and the Query log point out.'),
     h('p', { class: 'muted' }, 'There is no standard formula for this. The points are DNServ’s judgment of how much each source can be trusted, and you can change them.'),
@@ -2698,7 +2727,7 @@ async function analyticsPage(main) {
     const pct = (n) => (c.total ? (100 * n / c.total).toFixed(1) + '%' : '—');
     const tile = (label, value, note) => h('div', { class: 'tile' }, h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), note ? h('div', { class: 'muted small' }, note) : null);
     fill(body,
-      !sum.stats && !sum.detail ? msg('warn', 'Query history is turned off, so there is nothing to show. ' + (isAdmin() ? 'Turn it on under Settings → Query history.' : 'An admin can turn it on.')) : null,
+      !sum.stats && !sum.detail ? msg('warn', 'Query history is turned off, so there is nothing to show. ' + (isAdmin() ? 'Turn it on under System → General → Query history.' : 'An admin can turn it on.')) : null,
       coverage(sum.nodes),
       h('div', { class: 'grid' },
         tile('Queries', fmtNum(c.total)),
@@ -2731,7 +2760,7 @@ function securityCard(box, range, sec, reload) {
   if (!sec.feeds) {
     steady(() => box.replaceChildren(h('div', { class: 'card d-security' }, h('h2', {}, 'Security'),
       h('p', { class: 'muted' }, 'Risk scoring is off, so lookups aren’t checked against malware and phishing feeds. ',
-        can('lists.manage') ? h('a', { href: '#/settings' }, 'Turn it on in Settings') : 'An admin can turn it on.'))));
+        can('lists.manage') ? h('a', { href: '#/risk' }, 'Turn it on in Risk scoring') : 'An admin can turn it on.'))));
     return;
   }
   const active = sec.through.filter(x => !x.dismissed), dismissed = sec.through.length - active.length;
@@ -2749,7 +2778,7 @@ function securityCard(box, range, sec, reload) {
       h('div', { class: 'muted small' }, meta.join(' · '),
         wt.domains ? [' · ', h('a', { href: '#/analytics' + (range === '24h' ? '' : '?range=' + range) }, plural(wt.domains, 'medium-risk domain', 'medium-risk domains'), ' worth a look')] : null)));
   const warn = [];
-  if (sec.needs_key) warn.push(msg('warn', ['URLhaus and ThreatFox aren’t checked until a free abuse.ch key is added. ', can('lists.manage') ? h('a', { href: '#/settings' }, 'Add it in Settings') : null]));
+  if (sec.needs_key) warn.push(msg('warn', ['URLhaus and ThreatFox aren’t checked until a free abuse.ch key is added. ', can('lists.manage') ? h('a', { href: '#/risk?card=abusech' }, 'Add it in Risk scoring') : null]));
   if (sec.failed && sec.failed.length) warn.push(msg('warn', 'Couldn’t download ' + sec.failed.join(', ') + ', so those aren’t checked.'));
   const act = async (fn) => { try { await fn(); reload(); } catch (e) { toast(e.message, 'err'); } };
   const dismiss = (name, undo) => act(() => api('POST', '/analytics/dismiss', { name, undo }));
@@ -2906,7 +2935,7 @@ async function dashboardFlow(box, range, opts) {
     h('div', { class: 'row flow-kinds' }, kindBoxes, picker ? h('span', { class: 'grow' }) : null, picker),
     wrap, detail);
 
-  const byId = Object.fromEntries(data.nodes.map(n => [n.id, n]));
+  const byId = Object.fromEntries((data.nodes || []).map(n => [n.id, n]));
   function draw() {
     if (!data.total) { fill(area, h('p', { class: 'muted' }, st.device ? 'No lookups from this device in this period.' : 'No lookups in this period yet.')); fill(detail); return; }
     const links = data.links.filter(l => st.kinds[l.kind]);
@@ -3394,7 +3423,7 @@ function cacheFillCard(fills, cfg) {
     h('p', { class: 'legend small' }, h('span', {}, h('span', { class: 'key cached' }), 'Fresh'), h('span', {}, h('span', { class: 'key fill-stale' }), 'Expired, kept for when upstream is down'),
       h('span', {}, h('span', { class: 'key fill-old' }), 'Expired, waiting to be replaced')),
     evicting ? msg('warn', ['The cache is full and has been pushing out answers that were still good. A bigger cache would answer more from memory.',
-      can('upstream.manage') ? [' Raise the cache size under ', h('a', { href: '#/settings' }, 'Settings \u2192 Cache'), '.'] : ''])
+      can('upstream.manage') ? [' Raise the cache size under ', h('a', { href: '#/upstream?card=cache' }, 'Upstream & cache'), '.'] : ''])
       : h('p', { class: 'muted small' }, 'Each server has its own cache', cfg && cfg.max_entries ? ', holding up to ' + fmtNum(cfg.max_entries) + ' answers' : '', '. When it is full, the least recently used answers make room for new ones. As of when you opened this page.'));
 }
 
@@ -3431,7 +3460,7 @@ async function cacheReport(box, range, multi) {
           h('td', { class: 'num' }, fmtNum(m.n)))))) : null);
     })),
     h('p', { class: 'muted small' }, 'Each lookup that went upstream is compared with the same name’s earlier lookups on the same server. ',
-      isAdmin() ? ['Cache settings are under ', h('a', { href: '#/settings' }, 'Settings'), '.'] : '')), fillCard);
+      isAdmin() ? ['Cache settings are under ', h('a', { href: '#/upstream?card=cache' }, 'Upstream & cache'), '.'] : '')), fillCard);
   box.querySelectorAll('.cache-reasons summary .dot').forEach((dot, i) => { dot.style.background = colors[reasons[i].reason]; });
 }
 
@@ -3461,7 +3490,7 @@ async function performancePage(main) {
     if (r.detail) cacheReport(cacheBox, st.range, multiNode);
     const usualWhat = v.usual_from === 'before' ? 'Compared with the 7 days before.' : v.usual_from === 'period' ? 'Compared with a typical ' + (r.step >= 86400 ? 'day' : r.step >= 3600 ? (r.step > 3600 ? r.step / 3600 + ' hours' : 'hour') : (r.step / 60) + ' minutes') + ' in this period.' : 'Not enough history yet to say what is usual.';
     fill(body,
-      !r.stats && !r.detail ? msg('warn', 'Query history is turned off, so there is nothing to show. ' + (isAdmin() ? 'Turn it on under Settings → Query history.' : 'An admin can turn it on.')) : null,
+      !r.stats && !r.detail ? msg('warn', 'Query history is turned off, so there is nothing to show. ' + (isAdmin() ? 'Turn it on under System → General → Query history.' : 'An admin can turn it on.')) : null,
       coverage(r.nodes),
       v.anomalies.length ? h('div', { class: 'card' }, h('h2', {}, 'Unusual ', h('span', { class: 'muted small' }, v.anomalies.length === 1 ? '1 thing' : v.anomalies.length + ' things')),
         h('ul', { class: 'plain anomalies' }, v.anomalies.slice(0, 20).map(a => h('li', {},
@@ -3502,7 +3531,7 @@ async function performancePage(main) {
           h('thead', {}, h('tr', {}, h('th', {}, 'Type'), h('th', { class: 'num' }, 'Queries'), h('th', { class: 'num' }, 'Average'), h('th', { class: 'num' }, '95%'))),
           h('tbody', {}, v.types.slice(0, 12).map(t => h('tr', {}, h('td', { class: 'mono' }, t.type), h('td', { class: 'num' }, fmtNum(t.queries)), h('td', { class: 'num' }, fmtMs(t.avg_ms)), h('td', { class: 'num' }, fmtMs(t.p95_ms)))))))),
       h('div', { class: 'cols' },
-        h('div', { class: 'card' }, h('h2', {}, 'Slowest domains to look up'), !r.domains.length ? h('p', { class: 'muted' }, r.stats ? 'Nothing yet.' : 'Needs hourly history (Settings → Query history).') : h('table', { class: 'top' },
+        h('div', { class: 'card' }, h('h2', {}, 'Slowest domains to look up'), !r.domains.length ? h('p', { class: 'muted' }, r.stats ? 'Nothing yet.' : 'Needs hourly history (System → General → Query history).') : h('table', { class: 'top' },
           h('thead', {}, h('tr', {}, h('th', {}, 'Domain'), h('th', { class: 'num' }, 'Average'), h('th', { class: 'num' }, 'Lookups'))),
           h('tbody', {}, r.domains.map(d => h('tr', {}, h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(d.key, st.range) }, d.key)),
             h('td', { class: 'num' }, fmtMs(d.lookup_avg_ms)), h('td', { class: 'num' }, fmtNum(d.lookups)))))),
@@ -3580,10 +3609,15 @@ async function dashboardExtras(box, range) {
 
 // ---------- settings ----------
 
-async function settings(main) {
-  page(main, 'Settings', h('p', { class: 'muted' }, 'Loading…'));
+async function settings(main, key) {
+  const title = key ? ROUTES.find(r => r.path === key).title : 'Settings';
+  // want says whether this page shows a card; add tags it so links can
+  // point at it (#/upstream?card=cache).
+  const want = (k) => !key || SETTINGS_PAGES[key].includes(k);
+  const add = (k, el) => { if (want(k) && el) { el.id = 'card-' + k; sections.push(el); } };
+  page(main, title, h('p', { class: 'muted' }, 'Loading…'));
   let s;
-  try { s = await api('GET', '/settings'); } catch (e) { return page(main, 'Settings', msg('err', e.message)); }
+  try { s = await api('GET', '/settings'); } catch (e) { return page(main, title, msg('err', e.message)); }
   const eff = s.effective, saved = s.saved || {};
   const sections = [];
 
@@ -3611,14 +3645,7 @@ async function settings(main) {
   };
   const norm = (a) => (a || []);
 
-  if (isAdmin()) {
-    sections.push(h('div', { class: 'card' }, h('div', { class: 'row spread' },
-      h('div', {}, h('h2', { class: 'm0' }, 'Moving from AdGuard Home?'),
-        h('p', { class: 'muted small m0' }, 'Bring across its blocklists, rules, DNS rewrites, devices and upstream servers.')),
-      h('a', { href: '#/import' }, 'Import from AdGuard Home'))));
-  }
-
-  if (can('upstream.manage')) {
+  if (can('upstream.manage') && want('upstream')) {
     const u = eff.Upstream;
     let tunnelOK = true;
     try { const st = await api('GET', '/status'); tunnelOK = st.tunnel_interface_present !== false || u.Mode === 'tunnel'; } catch (_) { /* keep enabled */ }
@@ -3661,8 +3688,8 @@ async function settings(main) {
         h('span', {}, h('b', {}, MODES[m].title.replace(' (recommended)', '')), h('span', { class: 'muted small' }, ' ' + MODES[m].note),
           disabled ? h('span', { class: 'small warn-text' }, ' Needs the VPN setup in deploy/docker-compose.tunnel.yml; no VPN connection was found.') : null));
     };
-    sections.push(h('div', { class: 'card' },
-      h('h2', {}, 'Privacy ', origin('upstream_mode', 'upstream_servers', 'upstream_strategy', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
+    add('upstream', h('div', { class: 'card' },
+      h('h2', {}, 'Upstream ', origin('upstream_mode', 'upstream_servers', 'upstream_strategy', 'tunnel_interface', 'tunnel_expected_egress', 'tunnel_on_down')),
       h('p', { class: 'muted' }, 'How DNServ looks up the domains it doesn\u2019t block.'),
       form({ 'data-track': true }, [
         h('div', { class: 'choices' }, ['forward', 'recursive', 'tunnel'].map(modeChoice)),
@@ -3679,7 +3706,7 @@ async function settings(main) {
 
   if (can('upstream.manage') && eff.Cache && eff.Cache.Enabled) {
     const cc = eff.Cache;
-    sections.push(h('div', { class: 'card' },
+    add('cache', h('div', { class: 'card' },
       h('h2', {}, 'Cache ', origin('cache_size')),
       form({ 'data-track': true }, [
         h('label', { for: 'csize' }, 'Answers each server keeps in its cache'),
@@ -3731,7 +3758,7 @@ async function settings(main) {
       return el;
     };
     const block = listEditor('lists', fl.Lists), allow = listEditor('allowlists', fl.Allowlists);
-    sections.push(h('div', { class: 'card' },
+    add('filtering', h('div', { class: 'card' },
       h('h2', {}, 'Filtering ', origin('filtering_enabled', 'block_mode', 'block_bypass', 'lists', 'allowlists')),
       form({ 'data-track': true }, [
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'enabled', checked: fl.Enabled }), 'Filtering on'),
@@ -3741,8 +3768,16 @@ async function settings(main) {
           h('option', { value: 'null_ip', selected: fl.BlockMode === 'null_ip' }, '0.0.0.0 / :: (fastest for apps)'),
           h('option', { value: 'nxdomain', selected: fl.BlockMode === 'nxdomain' }, 'Domain does not exist (NXDOMAIN)'),
           h('option', { value: 'refused', selected: fl.BlockMode === 'refused' }, 'Refused')),
+        h('h3', { class: 'mt' }, 'Protection level'),
+        h('p', { class: 'muted small' }, 'The main blocklist, the same choice as in setup. Picking one swaps it in the blocklists below; click Save to use it.'),
+        h('div', { class: 'choices' }, LEVELS.map(l => h('label', { class: 'choice' },
+          h('input', { type: 'radio', name: 'level', value: l.id, checked: levelOf(fl.Lists) === l.id, onchange: () => {
+            LEVELS.forEach(x => { if (x.list) block.drop(x.list.url); });
+            if (l.list) block.add(l.list);
+          } }),
+          h('span', {}, h('b', {}, l.id === 'off' ? 'None' : l.name), h('span', { class: 'muted small' }, ' ' + (l.id === 'off' ? 'No built-in list. Only the lists you add below, and your own rules.' : l.note)))))),
         h('h3', { class: 'mt' }, 'Categories'),
-        h('p', { class: 'muted small' }, 'Tick a category to add its lists to the blocklists below, then Save. Categories stack on top of your protection level, and each list can still be switched off on its own.'),
+        h('p', { class: 'muted small' }, 'Tick a category to add its lists to the blocklists below, then Save. Categories stack on top of the protection level, and each list can still be switched off on its own.'),
         bundlePicker(block),
         h('div', { class: 'row spread mt' }, h('h3', {}, 'Blocklists'), updateListsButton()), block,
         h('p', { class: 'muted small' }, '“On” is for devices that follow the household settings. A device group can choose its own lists on the ', h('a', { href: '#/devices' }, 'Devices'),
@@ -3761,7 +3796,7 @@ async function settings(main) {
   if (can('lists.manage')) {
     const fl = eff.Filtering;
     const svc = servicePicker(fl.BlockedServices);
-    sections.push(h('div', { class: 'card' },
+    add('services', h('div', { class: 'card' },
       h('h2', {}, 'Blocked services and safe search ', origin('blocked_services', 'safe_search')),
       form({ 'data-track': true }, [
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'safe', checked: fl.SafeSearch }),
@@ -3775,7 +3810,7 @@ async function settings(main) {
   }
 
   if (can('rules.edit')) {
-    sections.push(h('div', { class: 'card' },
+    add('rules', h('div', { class: 'card' },
       h('h2', {}, 'Custom rules ', origin('rules')),
       form({ 'data-track': true }, [
         h('textarea', { name: 'rules', spellcheck: 'false', 'aria-label': 'Custom rules', class: 'tall' }, (eff.Filtering.Rules || []).join('\n')),
@@ -3790,8 +3825,8 @@ async function settings(main) {
   }
 
   if (can('network.manage')) {
-    sections.push(h('div', { class: 'card' },
-      h('h2', {}, 'Device names ', origin('local_dns')),
+    add('router', h('div', { class: 'card' },
+      h('h2', {}, 'Names from your router ', origin('local_dns')),
       form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'DNServ can ask your router what each device is called, and sends lookups for local names (like printer.lan) to it.'),
         h('label', { for: 'localdns' }, 'Your router\u2019s address'),
@@ -3804,7 +3839,7 @@ async function settings(main) {
     let zones = [];
     try { zones = Intl.supportedValuesOf('timeZone'); } catch (_) { /* old browser */ }
     const tz = h('input', { id: 'tz', name: 'tz', type: 'text', value: eff.TimeZone || '', placeholder: 'Container time zone (UTC unless TZ is set)', list: 'tzlist', spellcheck: 'false' });
-    sections.push(h('div', { class: 'card' },
+    add('timezone', h('div', { class: 'card' },
       h('h2', {}, 'Time zone ', origin('time_zone')),
       form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'Group schedules, such as bedtimes, follow this time zone.'),
@@ -3813,7 +3848,7 @@ async function settings(main) {
         browserTZ && browserTZ !== eff.TimeZone ? h('p', { class: 'small' }, h('button', { type: 'button', class: 'link', onclick: () => { tz.value = browserTZ; } }, 'Use ' + browserTZ + ' (this browser’s)')) : null,
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ time_zone: val(f, 'tz').trim() }, { time_zone: eff.TimeZone || '' }))));
-    sections.push(h('div', { class: 'card' },
+    add('networks', h('div', { class: 'card' },
       h('h2', {}, 'Allowed networks ', origin('allowed_nets')),
       form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'Only devices in these networks may use this DNS server. Leave empty to allow private networks only (the safe default).'),
@@ -3826,7 +3861,7 @@ async function settings(main) {
     const ac = eff.Analytics;
     let intel = { sources: [] };
     try { intel = await api('GET', '/analytics/intel'); } catch (_) { /* status unknown */ }
-    sections.push(h('div', { class: 'card' },
+    add('risk', h('div', { class: 'card' },
       h('h2', {}, 'Risk scoring ', origin('threat_feeds', 'trusted_domains', 'risk_scoring')),
       h('div', { class: 'row' }, h('button', { type: 'button', onclick: () => scoringGuide() }, 'How risk scores work'),
         h('button', { type: 'button', onclick: () => scoringTune() }, 'Tune scoring')),
@@ -3849,7 +3884,7 @@ async function settings(main) {
     };
     let ik = false;
     try { ik = (await api('GET', '/analytics/intel')).abusech_key; } catch (_) { /* unknown */ }
-    sections.push(h('div', { class: 'card' },
+    add('abusech', h('div', { class: 'card' },
       h('h2', {}, 'abuse.ch key'),
       form({}, [
         h('p', { class: 'muted' }, 'The URLhaus and ThreatFox malware feeds need a free abuse.ch Auth-Key. Sign in at ', h('a', { href: 'https://auth.abuse.ch/', target: '_blank', rel: 'noopener' }, 'auth.abuse.ch'), ' (a GitHub, Google or Microsoft account works) and copy the Auth-Key from your profile. The free key is for non-commercial use.'),
@@ -3867,7 +3902,7 @@ async function settings(main) {
     const set = async (key) => {
       try { await api('PUT', '/virustotal', { key }); toast(key ? 'VirusTotal key saved.' : 'VirusTotal key removed.'); route(); } catch (e) { toast(e.message, 'err'); }
     };
-    sections.push(h('div', { class: 'card' },
+    add('virustotal', h('div', { class: 'card' },
       h('h2', {}, 'VirusTotal'),
       form({}, [
         h('p', { class: 'muted' }, 'Optional. With your own free VirusTotal API key, a domain\u2019s details get a \u201cCheck on VirusTotal\u201d button. Only the domain you check is sent, only when you click, at most 4 a minute. Results are kept for a day.'),
@@ -3879,11 +3914,11 @@ async function settings(main) {
       ], (f) => { const k = val(f, 'vtkey').trim(); if (k) return set(k); })));
   }
 
-  if (isAdmin()) {
+  if (isAdmin() && want('history')) {
     const hc = eff.History;
     let hs = null;
     try { hs = (await api('GET', '/status')).history; } catch (_) { /* size unknown */ }
-    sections.push(h('div', { class: 'card' },
+    add('history', h('div', { class: 'card' },
       h('h2', {}, 'Query history ', origin('history_days', 'stats_days')),
       form({ 'data-track': true }, [
         h('p', { class: 'muted' }, 'Each server keeps its own history for Analytics and the Query log. Nothing leaves your servers. Set a number to 0 to keep none.'),
@@ -3903,15 +3938,15 @@ async function settings(main) {
         clearHistoryButton('history', 'Delete all query history', 'Delete all query history on every server? Every saved query, the Analytics totals and the performance stats are deleted, and everything starts again from now.'))));
   }
 
-  if (isAdmin()) {
+  if (isAdmin() && want('https')) {
     let hs = null;
     try { hs = await api('GET', '/https'); } catch (_) { /* unavailable */ }
-    if (hs) sections.push(httpsCard(hs));
+    if (hs) add('https', httpsCard(hs));
   }
 
-  if (can('cluster.manage')) {
+  if (can('cluster.manage') && want('usage')) {
     const uc = await usageCard();
-    if (uc) sections.push(uc);
+    if (uc) add('usage', uc);
   }
 
   // A row of section chips at the top, so a long settings page is one
@@ -3921,7 +3956,12 @@ async function settings(main) {
     const t = sec.querySelector('h2');
     return t ? h('button', { type: 'button', onclick: () => sec.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, t.firstChild ? t.firstChild.textContent : t.textContent) : null;
   })) : null;
-  page(main, 'Settings', jump, sections);
+  if (!sections.length) sections.push(msg('warn', 'Nothing here you can change. An admin can give you access.'));
+  page(main, title, jump, sections);
+  // #/upstream?card=cache opens the page at that card.
+  const card = hashParams().get('card');
+  const el = card && document.getElementById('card-' + card);
+  if (el) { el.scrollIntoView({ block: 'start' }); el.classList.add('flash'); }
 }
 
 // ---------- dashboard HTTPS ----------
@@ -4217,7 +4257,7 @@ function importPreview(box, id, plan) {
         h('h2', {}, 'Imported from AdGuard Home'),
         h('p', {}, r.summary ? 'Added ' + r.summary + '.' : 'Everything was already in DNServ.'),
         r.lists ? h('p', { class: 'muted small' }, 'New lists download in the background and start blocking within a minute.') : null,
-        h('p', {}, 'Next: check ', h('a', { href: '#/settings' }, 'Settings'), ', ', h('a', { href: '#/names' }, 'Local names'), ' and ', h('a', { href: '#/devices' }, 'Devices'),
+        h('p', {}, 'Next: check ', h('a', { href: '#/blocklists' }, 'Blocklists'), ', ', h('a', { href: '#/names' }, 'Local names'), ' and ', h('a', { href: '#/devices' }, 'Devices'),
           ', then point your router’s DNS at DNServ. Keep AdGuard Home running until devices have moved across.')));
     } catch (e) {
       fill(done, msg('err', e.message));
@@ -4364,9 +4404,9 @@ const ROLES = {
 };
 
 async function clusterPage(main) {
-  page(main, 'Cluster', h('p', { class: 'muted' }, 'Loading…'));
+  page(main, 'Servers', h('p', { class: 'muted' }, 'Loading…'));
   let data;
-  try { data = await api('GET', '/cluster'); } catch (e) { return page(main, 'Cluster', msg('err', e.message)); }
+  try { data = await api('GET', '/cluster'); } catch (e) { return page(main, 'Servers', msg('err', e.message)); }
   const c = data.cluster;
   const nodes = c.nodes || [];
   const self = nodes.find(n => n.self) || {};
@@ -4477,7 +4517,7 @@ async function clusterPage(main) {
       joinWaiting();
     })) : null;
 
-  page(main, 'Cluster',
+  page(main, 'Servers',
     h('div', { class: 'card' }, status),
     h('div', { class: 'card scroll' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Node'), h('th', {}, 'Role'), h('th', {}, 'Status'), h('th', {}, 'Address'), h('th', {}, 'Version'), h('th', {}))),
@@ -4621,7 +4661,7 @@ async function localNames(main) {
     h('div', { class: 'card' }, h('h2', {}, 'Names from your router'),
       router
         ? h('p', {}, 'Other local names (like a device’s own name) are looked up at your router, ', h('code', {}, router), '. Names on this page win over the router’s.')
-        : h('p', {}, 'DNServ can also answer the names your router knows for each device. Add your router’s address under ', h('a', { href: '#/settings' }, 'Settings → Device names'), '.')));
+        : h('p', {}, 'DNServ can also answer the names your router knows for each device. Add your router’s address under ', h('a', { href: '#/upstream?card=router' }, 'Upstream & cache → Names from your router'), '.')));
 }
 
 // ---------- backups & history ----------
@@ -4693,7 +4733,7 @@ const SETUP_CMD = 'sudo docker run --rm --pull always -u 0 -v /var/run/docker.so
 async function updatesPage(main) {
   page(main, 'Updates', h('p', { class: 'muted' }, 'Loading…'));
   let v;
-  const backupNote = (x) => x.backups_on ? 'A backup of your settings and accounts is saved first.' : 'Backups aren\u2019t set up, so no backup is made first (see Backups & history).';
+  const backupNote = (x) => x.backups_on ? 'A backup of your settings and accounts is saved first.' : 'Backups aren\u2019t set up, so no backup is made first (see Backups & restore).';
   let lost = 0;
   const load = async () => {
     try { v = await api('GET', '/updates'); lost = 0; } catch (e) {
@@ -4758,13 +4798,13 @@ async function updatesPage(main) {
         h('p', { class: 'muted small' }, (ro.rollback ? 'Back from build ' : 'Build ') + shortRev(ro.revision) + ', started ' + fmtTime(ro.started) + ' by ' + ro.by),
         ro.message ? msg(ro.state === 'failed' ? 'err' : 'ok', ro.message) : null,
         h('p', { class: 'small' }, ro.backup
-          ? ['Backup made first: ', h('code', {}, ro.backup), ro.backup_on ? ' on ' + ro.backup_on : '', ' (', h('a', { href: '#/backups' }, 'Backups & history'), ').']
+          ? ['Backup made first: ', h('code', {}, ro.backup), ro.backup_on ? ' on ' + ro.backup_on : '', ' (', h('a', { href: '#/backups' }, 'Backups & restore'), ').']
           : h('span', { class: 'muted' }, 'No backup was made first: backups aren\u2019t set up.')),
         v.can_rollback && !running ? h('div', { class: 'row' }, h('button', { onclick: async () => {
           const n = ro.steps.filter(x => x.state === 'done').length;
           const text = 'Put ' + (n > 1 ? 'the ' + n + ' updated servers' : 'this server') + ' back on the version ' + (n > 1 ? 'they' : 'it') + ' ran before (build ' + shortRev((ro.steps.find(x => x.state === 'done') || {}).from) + ')? ' +
             (n > 1 ? 'They go back one at a time, so DNS keeps working. ' : '') + 'Build ' + shortRev(ro.revision) + ' won\u2019t be offered or installed automatically again; the next newer version will. ' +
-            'Settings, accounts and history stay as they are now.' + (ro.backup ? ' To also put settings back as they were before the update, restore ' + ro.backup + ' under Backups & history afterwards.' : '') + ' ' + backupNote(v);
+            'Settings, accounts and history stay as they are now.' + (ro.backup ? ' To also put settings back as they were before the update, restore ' + ro.backup + ' under Backups & restore afterwards.' : '') + ' ' + backupNote(v);
           if (await ask(text, 'Roll back')) act(() => api('POST', '/updates/rollback'), 'Rolling back');
         } }, 'Roll back this update')) : null,
         h('table', {}, h('tbody', {}, ro.steps.map(s => h('tr', {},
@@ -4810,7 +4850,7 @@ async function updatesPage(main) {
         h('p', { class: 'muted small' }, 'Releases are versions marked ready, with release notes. Every change gets fixes sooner but has had less time in use.'),
         h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'auto', checked: !!p.auto }), ' Install new versions automatically, at'),
         h('select', { name: 'hour', 'aria-label': 'Hour' }, hours),
-        h('p', { class: 'muted small' }, 'Servers that have the updater update one at a time, the same as the button above, in your time zone (Settings). Pick an hour when the network is quiet.'),
+        h('p', { class: 'muted small' }, 'Servers that have the updater update one at a time, the same as the button above, in your time zone (System → General). Pick an hour when the network is quiet.'),
         h('button', { class: 'primary', type: 'submit' }, 'Save'),
       ], async (f) => {
         const np = { no_check: !f.elements.check.checked, auto: f.elements.auto.checked, auto_hour: Number(f.elements.hour.value), channel: f.elements.channel.value === 'latest' ? 'latest' : '' };
@@ -4829,7 +4869,7 @@ async function updatesPage(main) {
 }
 
 async function backupsPage(main) {
-  const title = 'Backups & history';
+  const title = 'Backups & restore';
   page(main, title, h('p', { class: 'muted' }, 'Loading…'));
   let vers, bk;
   try { [vers, bk] = await Promise.all([api('GET', '/config/versions'), api('GET', '/backups')]); } catch (e) { return page(main, title, msg('err', e.message)); }
@@ -4898,7 +4938,7 @@ async function backupsPage(main) {
           h('option', { value: 'weekly', selected: bk.every === 'weekly' }, 'Every week, on Sunday')),
         h('label', { for: 'at' }, 'At'),
         h('input', { id: 'at', name: 'at', type: 'time', value: bk.at || '03:00' }),
-        h('p', { class: 'muted small' }, 'In ', h('b', {}, bk.time_zone), ' time, the same as group schedules.', can('network.manage') ? [' ', h('a', { href: '#/settings' }, 'Change')] : null),
+        h('p', { class: 'muted small' }, 'In ', h('b', {}, bk.time_zone), ' time, the same as group schedules.', can('network.manage') ? [' ', h('a', { href: '#/general?card=timezone' }, 'Change')] : null),
         h('label', { for: 'keep' }, 'Keep the last'),
         h('div', { class: 'row' }, h('input', { id: 'keep', name: 'keep', type: 'number', min: 1, max: 365, value: bk.keep || bk.default_keep }), h('span', { class: 'muted' }, 'backups, in each place they go')),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save schedule')),
@@ -5075,7 +5115,13 @@ async function backupsPage(main) {
       route();
     }));
 
-  page(main, title, backupCard, history, restoreCard);
+  // Moving in from AdGuard Home lives with restoring, as another way to
+  // bring settings in.
+  const importCard = isAdmin() ? h('div', { class: 'card' }, h('div', { class: 'row spread' },
+    h('div', {}, h('h2', { class: 'm0' }, 'Moving from AdGuard Home?'),
+      h('p', { class: 'muted small m0' }, 'Bring across its blocklists, rules, DNS rewrites, devices and upstream servers.')),
+    h('a', { href: '#/import' }, 'Import from AdGuard Home'))) : null;
+  page(main, title, backupCard, history, restoreCard, importCard);
 }
 
 // setupRestore: first run from a backup file.

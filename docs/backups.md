@@ -1,7 +1,7 @@
 # Backups and settings history
 
 **Settings history.** Every change to settings, devices or groups is kept
-as a version (the last 50, on every node). Under **Backups & history** you
+as a version (the last 50, on every node). Under **Backups & restore** you
 can compare any version with now and go back to it. Going back is itself a
 new version, so it can be undone. Accounts aren't part of the history, so
 going back never brings back an old password or a deleted user.
@@ -44,7 +44,7 @@ nobody can open one. Keep it in a password manager.
   secret key is stored on your servers, never shown again, and isn't in
   backups. Files are encrypted before upload, so the storage provider can't
   read them.
-- **Restore** from a file under Backups & history (replaces the accounts and
+- **Restore** from a file under Backups & restore (replaces the accounts and
   configuration on every node; the cluster's nodes stay as they are), or on
   a brand-new node choose **Restore from a backup** in the setup wizard.
 

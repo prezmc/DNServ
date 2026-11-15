@@ -27,7 +27,7 @@ Everything DNServ does today, in more detail than the README.
 - **Encrypted upstreams by default.** DNS over HTTPS to Cloudflare
   (`1.1.1.1`), with DNS over TLS as a fallback. Plain UDP/TCP upstreams are
   also supported. With several servers, choose how they are used under
-  Settings → Privacy: fastest first (the default; the others are timed in
+  Network → Upstream & cache: fastest first (the default; the others are timed in
   the background now and then so a server that was slow once can win
   again), in order, round robin, or all at once with the first answer
   used. A server that fails is skipped for 30 seconds. Except in "all at
@@ -52,7 +52,7 @@ Everything DNServ does today, in more detail than the README.
   Optional per-client rate limit.
 - **Weekly usage summary, only if you say yes.** The setup wizard asks
   with two equal choices and nothing picked; change it any time under
-  Settings > Weekly usage summary, where you can also see exactly what
+  System → General → Weekly usage summary, where you can also see exactly what
   would be sent. If yes, the leading server sends one short anonymous
   summary a week (version, server count, rough ranges of devices and
   lookups, answer speed, which features are on), never a domain, address
@@ -115,7 +115,7 @@ Everything DNServ does today, in more detail than the README.
   `printer.lan` through it.
 - **Analytics and query history.** Each node keeps its own query history
   in SQLite (`/data/history.db`): every query for 30 days and hourly
-  totals for 90 by default (Settings → Query history, admins only; 0
+  totals for 90 by default (System → General → Query history, admins only; 0
   keeps none). **Analytics** shows queries over time, blocked share,
   cache hits, response time, top domains, top blocked domains with what
   caught them, and the busiest devices, for the last hour up to 90 days,
@@ -164,7 +164,7 @@ Everything DNServ does today, in more detail than the README.
   query path. Kept as long as the hourly totals. On first start after
   updating, response times are rebuilt from the existing query history.
   Admins can clear the performance stats (Performance page) or all query
-  history (Settings → Query history) on every server.
+  history (System → General → Query history) on every server.
 - **Arrange the Dashboard.** **Arrange** lets each user drag the cards
   into their own order (or use the arrow buttons), set each card's size
   (small, medium, large or full width, so cards can sit side by side), or
@@ -188,7 +188,7 @@ Everything DNServ does today, in more detail than the README.
   **How full the cache is** shows each server's cache: answers held out of
   its size, how many are fresh or kept for when upstream is down, and
   whether answers still good had to be pushed out for room. The size is a
-  setting (Settings → Cache) that applies without a restart. Each server
+  setting (Network → Upstream & cache → Cache) that applies without a restart. Each server
   also shows how many answers it reloaded from disk at start and when it
   last saved.
 - **Repeating lookups.** A Dashboard card lists names a device asks for on
@@ -244,7 +244,7 @@ Everything DNServ does today, in more detail than the README.
   anything. Turn the feeds off, or list trusted domains, under Settings →
   Risk scoring. URLhaus and ThreatFox need a free abuse.ch Auth-Key
   (from [auth.abuse.ch](https://auth.abuse.ch/), non-commercial use),
-  entered under Settings → abuse.ch key; it is shared with your other
+  entered under System → Risk scoring → abuse.ch key; it is shared with your other
   servers, never shown again and not part of backups. Each node downloads the sources itself, keeps them in
   `/data/threat` and refreshes them twice a day (about 30 MB of memory).
   History also keeps each answer's addresses and aliases (about 33 MB a
@@ -265,7 +265,7 @@ Everything DNServ does today, in more detail than the README.
   The Query log filters by risk (low and above, medium and above, high
   only), for one device or all, and shows low-risk badges too; the CSV
   export follows the filter.
-- **How scores work, and tuning.** Settings → Risk scoring → **How risk
+- **How scores work, and tuning.** System → Risk scoring → **How risk
   scores work** explains the scoring from the numbers in force: the risk
   levels, how points add up, each list's points and entries, the answer
   checks and the name checks. Each domain's details show its own
@@ -279,7 +279,7 @@ Everything DNServ does today, in more detail than the README.
 - **Also on, and VirusTotal.** A domain's details list every enabled list
   with a rule for it ("on your lists"), read from the saved list files
   only when you open it, so it costs no memory. Add your own free
-  VirusTotal API key under Settings → VirusTotal to get a **Check on
+  VirusTotal API key under System → Risk scoring → VirusTotal to get a **Check on
   VirusTotal** button: only the domain you click is sent, at most 4 a
   minute, and results are kept for a day. The key is shared with your
   other nodes, never shown again, and not part of backups.
