@@ -132,7 +132,7 @@ step('DNS answers through the fake upstream', async () => {
 });
 
 step('every page opens without errors', async () => {
-  const pages = [['', 'Dashboard'], ['devices', 'Devices & groups'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['traffic', 'Traffic map'], ['queries', 'Query log'],
+  const pages = [['', 'Dashboard'], ['devices', 'Devices & groups'], ['analytics', 'Analytics'], ['performance', 'Performance'], ['traffic', 'Traffic map'], ['security', 'Security'], ['queries', 'Query log'],
     ['blocklists', 'Blocklists'], ['services', 'Blocked services'], ['rules', 'Custom rules'], ['upstream', 'Upstream & cache'], ['risk', 'Risk scoring'], ['general', 'General'],
     ['names', 'Local names'], ['settings', 'Settings'], ['users', 'Users'], ['cluster', 'Servers'], ['backups', 'Backups & restore'], ['updates', 'Updates'],
     ['import', 'Import from AdGuard Home'], ['audit', 'Audit log'], ['account', 'Your account']];
@@ -172,6 +172,26 @@ step('block a domain from the dashboard, then remove the rule', async () => {
   await card.getByRole('button', { name: 'Remove rule' }).click();
   await card.getByText(/Removed your rule/).waitFor();
   await until('the rule to go', async () => (await lookup(node.dnsPort, 'y.ads.blockme.test')).a[0] === '203.0.113.7');
+});
+
+step('the menu search finds a device and checks, blocks and allows a domain', async () => {
+  await go('');
+  const box = page.locator('nav .nav-search input');
+  await box.fill('127.0.0.1');
+  await box.press('Enter');
+  const dlg = page.locator('dialog[open]');
+  await dlg.getByRole('button', { name: 'Lookups', exact: true }).click();
+  await heading('Query log').waitFor();
+  assert.match(page.url(), /#\/queries\?client=/);
+  await box.fill('ads.searchme.test');
+  await box.press('Enter');
+  await dlg.getByText(/is not blocked/).waitFor();
+  await dlg.getByRole('button', { name: 'Block', exact: true }).click();
+  await dlg.getByText(/is blocked/).waitFor();
+  await until('the block', async () => (await lookup(node.dnsPort, 'x.ads.searchme.test')).a[0] === '0.0.0.0');
+  await dlg.getByRole('button', { name: 'Remove rule' }).click();
+  await dlg.getByText(/is not blocked/).waitFor();
+  await dlg.getByRole('button', { name: 'Close' }).click();
 });
 
 step('a blocklist added in Settings downloads and blocks', async () => {

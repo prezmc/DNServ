@@ -3,13 +3,18 @@
 DNServ checks every domain your devices look up against public threat
 feeds and a few checks on the name itself, and gives it a risk score from
 0 to 100. **Scores never block anything.** They decide what the
-Dashboard, Analytics and the Query log point out, so you can decide what
+Dashboard, the Security page and the Query log point out, so you can decide what
 to block.
 
 <p align="center"><img src="images/security.png" alt="Security card on the Dashboard" width="800"></p>
 
 ## What you see
 
+- **Activity → Security** puts it all on one page: the same verdict and
+  Needs attention list as the Dashboard card below, every risky domain in
+  the period (up to 50, each with its reasons, lookups and a Block
+  button), and for admins the scoring guide, Tune scoring and a link to
+  the feeds and keys (System → Risk scoring).
 - **Dashboard → Security.** A verdict for the period: "All clear: nothing
   risky got through", or how many high-risk domains your devices got
   answers for, who reached them, and how many threats were blocked anyway.
