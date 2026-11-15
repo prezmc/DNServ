@@ -6,6 +6,8 @@ an admin says yes.** The setup wizard asks with two equal choices, neither
 picked, and you can change your answer any time under **Settings > Weekly
 usage summary**.
 
+![Weekly usage summary in Settings](images/usage-card.png)
+
 The totals are public at [dnserv.dev/stats.html](https://dnserv.dev/stats.html).
 
 ## What is sent
