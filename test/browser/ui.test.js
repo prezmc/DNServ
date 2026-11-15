@@ -282,7 +282,9 @@ step('block a top-level domain, and see which country answers point to', async (
   await go('analytics');
   const where = page.locator('.card', { has: heading('Where answers point') });
   await where.getByRole('button', { name: /Netherlands/ }).click();
-  await page.getByRole('dialog').getByText('shop.example.nl').waitFor();
+  // Every name the fake upstream answered points to the Netherlands, so
+  // the busiest are listed; any domain row will do.
+  await page.getByRole('dialog').locator('button.link.mono').first().waitFor();
   await go('queries?country=NL');
   await page.locator('table').getByText('shop.example.nl').first().waitFor();
   assert.equal(await page.locator('select[name=country]').inputValue(), 'NL');
