@@ -39,7 +39,7 @@ docker compose logs | grep setup_code
 
 Anything different on your server, such as a port that's already taken, goes in `.env` (see [Installing](docs/install.md#the-env-file)). Prefer `docker run`? See [Without compose](docs/install.md#without-compose).
 
-**Installing on a NAS or from a GUI** (Synology, Unraid, Portainer, TrueNAS)? Follow the **[GUI install guide](docs/install-gui.md)**. It lists every port, folder and setting to fill in. The image is [`prezmcmahon/dnserv:stable`](https://hub.docker.com/r/prezmcmahon/dnserv) on Docker Hub.
+**Installing on a NAS or from a GUI** (Synology, Unraid, Portainer, TrueNAS)? Follow the **[GUI install guide](docs/install-gui.md)**, or the step-by-step **[Synology guide](docs/install-synology.md)**. It lists every port, folder and setting to fill in. The image is [`prezmcmahon/dnserv:stable`](https://hub.docker.com/r/prezmcmahon/dnserv) on Docker Hub.
 
 Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 
@@ -78,6 +78,7 @@ Then add the second server as your router's second DNS server. For a trusted cer
 |---|---|
 | [Features](docs/features.md) | Everything DNServ does, in detail |
 | [Installing and configuring](docs/install.md) | Install, update, the `.env` file, ports and environment variables |
+| [Installing on Synology](docs/install-synology.md) | Container Manager, step by step |
 | [Installing from a GUI](docs/install-gui.md) | Portainer, Unraid, Synology, TrueNAS: what to fill in (also the Docker Hub page) |
 | [Signing in](docs/sign-in.md) | Two-factor, passkeys on one or more servers, getting back in |
 | [Updates](docs/updates.md) | Update from the dashboard, one server at a time; releases and the updater container |

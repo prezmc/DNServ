@@ -6,7 +6,8 @@ your server. You never edit `docker-compose.yml`, so updating is always the
 same two commands.
 
 Installing on a NAS or from a GUI (Synology, Unraid, Portainer, TrueNAS)
-instead? Follow [Installing from a GUI](install-gui.md).
+instead? Follow [Installing from a GUI](install-gui.md), or
+[Installing on Synology](install-synology.md).
 
 ## Install
 
