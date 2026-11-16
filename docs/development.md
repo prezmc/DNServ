@@ -22,7 +22,8 @@ installed (`apt install unbound` or `apk add unbound dnssec-root`).
 Images: `.github/workflows/publish.yml` builds amd64 and arm64 images and
 pushes `ghcr.io/prezmc/dnserv` on every push to `main` and on version tags.
 Adding `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets also
-pushes `prezmcmahon/dnserv` to Docker Hub.
+pushes `<DOCKERHUB_USERNAME>/dnserv` to Docker Hub (a `DOCKERHUB_IMAGE`
+repository variable picks another name).
 
 ## Roadmap
 
