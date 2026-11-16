@@ -593,3 +593,13 @@ nav.side .nav-search input::placeholder { color: var(--nav-text); opacity: .8; }
 a.tile.link-tile { color: inherit; text-decoration: none; }
 a.tile.link-tile:hover { box-shadow: var(--shadow); outline: 1px solid var(--line); }
 .choice .level-src { display: block; margin-top: .15rem; }
+
+/* Top-level domain picker: one line per country, list scrolls in place. */
+.tld-scroll { max-height: 24rem; overflow-y: auto; margin-top: .5rem; padding: 0 .25rem; border: 1px solid var(--line); border-radius: 8px; }
+.tld-group { padding: .5rem 0 .25rem; }
+.tld-group + .tld-group { border-top: 1px solid var(--line); }
+.tld-head { color: var(--muted); padding: .1rem 0 .2rem; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.services .perms.tld-list, .perms.tld-list { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0 1rem; }
+.tld-list label.inline { margin: .2rem 0; min-width: 0; white-space: nowrap; }
+.tld-code { font-family: var(--mono, ui-monospace, monospace); min-width: 3.4ch; }
+.tld-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; min-width: 0; }

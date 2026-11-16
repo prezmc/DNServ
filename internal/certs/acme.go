@@ -251,7 +251,10 @@ func Obtain(ctx context.Context, r ACMERequest) (certPEM, keyPEM []byte, err err
 	cfg.UserAgent = "dnserv"
 	cfg.Certificate.KeyType = certcrypto.EC256
 	if r.HTTPClient != nil {
-		cfg.HTTPClient = r.HTTPClient
+		// lego wraps the client's transport in place, so each request
+		// gets its own copy (two at once would race on a shared one).
+		hc := *r.HTTPClient
+		cfg.HTTPClient = &hc
 	}
 	type result struct {
 		res *certificate.Resource
