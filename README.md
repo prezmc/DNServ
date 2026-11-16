@@ -39,7 +39,7 @@ docker compose logs | grep setup_code
 
 Anything different on your server, such as a port that's already taken, goes in `.env` (see [Installing](docs/install.md#the-env-file)). Prefer `docker run`? See [Without compose](docs/install.md#without-compose).
 
-**Installing on a NAS or from a GUI** (Synology, Unraid, Portainer, TrueNAS)? Follow the **[GUI install guide](docs/install-gui.md)**, or the step-by-step **[Synology guide](docs/install-synology.md)**. It lists every port, folder and setting to fill in. The image is [`prezmcmahon/dnserv:stable`](https://hub.docker.com/r/prezmcmahon/dnserv) on Docker Hub.
+**Installing on a NAS or from a GUI** (Synology, Unraid, Portainer, TrueNAS)? Follow the **[GUI install guide](docs/install-gui.md)**, or the step-by-step **[Synology guide](docs/install-synology.md)**. Both list every port, folder and setting to fill in. The image is [`prezmcmahon/dnserv:stable`](https://hub.docker.com/r/prezmcmahon/dnserv) on Docker Hub.
 
 Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 
