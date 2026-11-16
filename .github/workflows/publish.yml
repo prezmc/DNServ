@@ -9,8 +9,9 @@ name: Publish image
 #
 # Releases are made with the Release workflow (see docs/releasing.md), which
 # starts this one for the new tag.
-# Optional: also push to Docker Hub by adding repository secrets
-# DOCKERHUB_USERNAME and DOCKERHUB_TOKEN.
+# Optional: also push to Docker Hub as <DOCKERHUB_USERNAME>/dnserv by adding
+# repository secrets DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (see
+# docs/releasing.md). A DOCKERHUB_IMAGE repository variable overrides the name.
 
 on:
   push:
@@ -51,10 +52,15 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Image names
         id: names
+        env:
+          # Docker Hub image goes under the account that owns the token,
+          # unless a DOCKERHUB_IMAGE repository variable names another
+          # (for example an organization: myorg/dnserv).
+          DOCKERHUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE || format('{0}/dnserv', secrets.DOCKERHUB_USERNAME) }}
         run: |
           echo "images<<EOF" >> "$GITHUB_OUTPUT"
           echo "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/dnserv" >> "$GITHUB_OUTPUT"
-          if [ "$HAS_DOCKERHUB" = "true" ]; then echo "prezmcmahon/dnserv" >> "$GITHUB_OUTPUT"; fi
+          if [ "$HAS_DOCKERHUB" = "true" ]; then echo "${DOCKERHUB_IMAGE,,}" >> "$GITHUB_OUTPUT"; fi
           echo "EOF" >> "$GITHUB_OUTPUT"
       - name: Image tags
         id: meta

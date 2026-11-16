@@ -38,3 +38,21 @@ edit up at the next check.
   on to it, including servers that rolled back.
 - Don't delete a published tag: servers may be running it, and rollback
   uses each version's `sha-` image tag, which stays.
+
+## Also publishing to Docker Hub
+
+Images always go to `ghcr.io/prezmc/dnserv`. To push the same tags to
+Docker Hub as well:
+
+1. On hub.docker.com, sign in and open **Account settings > Personal access
+   tokens > Generate new token**. Give it **Read & Write** access.
+2. In this GitHub repository, open **Settings > Secrets and variables >
+   Actions** and add two repository secrets:
+   - `DOCKERHUB_USERNAME`: your Docker Hub username
+   - `DOCKERHUB_TOKEN`: the token from step 1
+3. Run **Actions > Publish image > Run workflow** on `main` (or cut a
+   release). The image appears as `<username>/dnserv` with the same tags
+   (`latest`, `stable`, version numbers).
+
+To publish under an organization instead, add a repository *variable*
+(not a secret) `DOCKERHUB_IMAGE`, for example `myorg/dnserv`.
