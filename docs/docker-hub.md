@@ -59,10 +59,10 @@ devices always ask for DNS on port 53.
 |---|---|---|
 | `/data` | a folder such as `/mnt/user/appdata/dnserv` or a named volume `dnserv-data` | **Yes.** Settings, users, lists and history live here. Without it, you start from scratch on every update |
 
-If you use a host folder, the container runs as user and group ID
-**65532**. Give that ID write access to the folder, for example
-`sudo chown -R 65532:65532 /mnt/user/appdata/dnserv`. A named volume needs
-nothing.
+Any folder works, whoever owns it: at start DNServ gives the folder to its
+own user (ID 65532) and then stops running as root. If your system starts
+containers as a fixed user instead (a "PUID" or "User" field), leave that
+empty, or set it to `65532` and make sure that ID can write to the folder.
 
 ### 4. Environment variables
 
