@@ -98,9 +98,9 @@ Only `TZ` is worth setting for most people. All of these are optional.
 - **Unraid:** Unraid's own web page uses ports 80/443, so map container
   443 to e.g. 8443, or give the container its own IP on the `br0` network
   (then all ports stay as they are). Use `/mnt/user/appdata/dnserv` for `/data`.
-- **Synology (Container Manager):** port 53 is taken if the Synology "DNS
-  Server" package is installed; uninstall it first. DSM uses 443, so map
-  443 to another port. Put `/data` in a folder under `/volume1/docker/dnserv`.
+- **Synology:** follow the step-by-step
+  [Synology guide](https://github.com/prezmc/DNServ/blob/main/docs/install-synology.md)
+  (Container Manager project, ports, folders, HTTPS with DSM's reverse proxy).
 - **Portainer:** use **Stacks > Add stack** and paste the compose file
   linked above. That also gives you one-click updates.
 - **TrueNAS SCALE:** use **Apps > Discover > Custom App** (or Install via

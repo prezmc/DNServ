@@ -99,7 +99,7 @@ jobs:
           no-cache-filters: runtime
           cache-from: type=gha,scope=publish
           cache-to: type=gha,mode=max,scope=publish
-      # Keep the Docker Hub page in step with docs/docker-hub.md. Needs the
+      # Keep the Docker Hub page in step with docs/install-gui.md. Needs the
       # token to have Read, Write & Delete access; if it doesn't, the image
       # is still published and only this step is marked as failed.
       - name: Update Docker Hub description
@@ -111,4 +111,4 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: ${{ steps.names.outputs.dockerhub }}
           short-description: Ad, tracker and malware blocking DNS server for homes and small businesses, with clustering and a web dashboard.
-          readme-filepath: docs/docker-hub.md
+          readme-filepath: docs/install-gui.md
