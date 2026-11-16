@@ -100,6 +100,10 @@ docker run -d --name dnserv --restart unless-stopped \
 To update, `docker pull ghcr.io/prezmc/dnserv:stable`, then remove the
 container and run the same command again. The data volume keeps everything.
 
+The same image is on Docker Hub as `prezmcmahon/dnserv` (same tags). For
+installing from Portainer, Unraid, Synology or TrueNAS, see
+[Installing from a GUI](docker-hub.md).
+
 ## The dashboard
 
 The menu starts with the **Dashboard**, then four groups:

@@ -37,7 +37,7 @@ docker compose up -d
 docker compose logs | grep setup_code
 ```
 
-Anything different on your server, such as a port that's already taken, goes in `.env` (see [Installing](docs/install.md#the-env-file)). Prefer `docker run`? See [Without compose](docs/install.md#without-compose).
+Anything different on your server, such as a port that's already taken, goes in `.env` (see [Installing](docs/install.md#the-env-file)). Prefer `docker run`? See [Without compose](docs/install.md#without-compose). Installing from Portainer, Unraid, Synology or TrueNAS? The image is also on Docker Hub as [`prezmcmahon/dnserv`](https://hub.docker.com/r/prezmcmahon/dnserv), and the [GUI install guide](docs/docker-hub.md) lists every port, folder and setting to fill in.
 
 Open `http://<server>:8080`, enter the setup code, and follow the wizard:
 
@@ -76,6 +76,7 @@ Then add the second server as your router's second DNS server. For a trusted cer
 |---|---|
 | [Features](docs/features.md) | Everything DNServ does, in detail |
 | [Installing and configuring](docs/install.md) | Install, update, the `.env` file, ports and environment variables |
+| [Installing from a GUI](docs/docker-hub.md) | Portainer, Unraid, Synology, TrueNAS: what to fill in (also the Docker Hub page) |
 | [Signing in](docs/sign-in.md) | Two-factor, passkeys on one or more servers, getting back in |
 | [Updates](docs/updates.md) | Update from the dashboard, one server at a time; releases and the updater container |
 | [Making a release](docs/releasing.md) | For the maintainer: cut a numbered release with one button |
