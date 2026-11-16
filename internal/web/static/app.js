@@ -2009,14 +2009,24 @@ function tldPicker(selected, tlds) {
     h('input', { type: 'checkbox', 'data-service': 'tld:' + t, checked: ids.has('tld:' + t) }), text);
   const abused = tlds.abused.slice().sort();
   const countries = tlds.country.map(t => ({ t, name: countryName(t) })).sort((a, b) => a.name.localeCompare(b.name));
-  const list = h('div', { class: 'perms tld-list' }, countries.map(c => {
-    const el = cb(c.t, ['.' + c.t + ' ', h('span', { class: 'muted' }, c.name), generic.has(c.t) ? h('span', { class: 'badge warn', title: 'Used worldwide, not just in ' + c.name }, 'used worldwide') : null]);
+  // Country endings used worldwide (.io, .tv) sit apart, so the long list
+  // needs no badges; each row is one line: ending, then country.
+  const row = (c) => {
+    const el = cb(c.t, [h('span', { class: 'tld-code' }, '.' + c.t), h('span', { class: 'tld-name' }, c.name)],
+      (generic.has(c.t) ? c.name + ': used worldwide, not just there. ' : c.name + '. ') + 'Blocks every name ending in .' + c.t);
     el.dataset.search = ('.' + c.t + ' ' + c.name).toLowerCase();
     return el;
-  }));
+  };
+  const worldwide = countries.filter(c => generic.has(c.t));
+  const list = h('div', { class: 'tld-scroll' },
+    worldwide.length ? h('div', { class: 'tld-group' }, h('div', { class: 'small tld-head' }, 'Used worldwide (blocking these blocks many ordinary sites)'),
+      h('div', { class: 'perms tld-list' }, worldwide.map(row))) : null,
+    h('div', { class: 'tld-group' }, h('div', { class: 'small tld-head' }, 'Mostly used in their country'),
+      h('div', { class: 'perms tld-list' }, countries.filter(c => !generic.has(c.t)).map(row))));
   const search = h('input', { type: 'search', placeholder: 'Find a country or ending', 'aria-label': 'Find a country ending', class: 'mt-s', oninput: () => {
     const q = search.value.trim().toLowerCase().replace(/^\./, '');
     list.querySelectorAll('label').forEach(l => { l.hidden = !!q && !l.dataset.search.includes(q); });
+    list.querySelectorAll('.tld-group').forEach(g => { g.hidden = !g.querySelector('label:not([hidden])'); });
   } });
   const countTicked = () => list.querySelectorAll('input:checked').length;
   const sum = h('summary', {});
@@ -2032,7 +2042,6 @@ function tldPicker(selected, tlds) {
       h('button', { type: 'button', class: 'link small', onclick: () => { const all = abused.every(t => box.querySelector('[data-service="tld:' + t + '"]').checked); abused.forEach(t => { box.querySelector('[data-service="tld:' + t + '"]').checked = !all; }); box.dispatchEvent(new Event('change', { bubbles: true })); } }, 'Tick or untick all')),
     h('div', { class: 'perms' }, abused.map(t => cb(t, '.' + t, 'Cheap or free names that host a lot of scams and malware. Blocks every name ending in .' + t))),
     h('details', { class: 'mt-s' }, sum,
-      h('p', { class: 'muted small' }, 'Endings marked “used worldwide” are popular well beyond their country (.io, .me, .tv), so blocking one blocks many ordinary sites.'),
       search, list),
     h('label', { class: 'small mt-s' }, 'Other endings'), other);
   box.readOther = () => other.value.split(/[\s,]+/).map(x => x.trim().toLowerCase().replace(/^\.+/, '')).filter(x => /^([a-z]{2,63}|xn--[a-z0-9-]{1,59})$/.test(x)).map(x => 'tld:' + x);
