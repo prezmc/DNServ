@@ -5,6 +5,9 @@ repository, plus an optional `.env` file for anything that's different on
 your server. You never edit `docker-compose.yml`, so updating is always the
 same two commands.
 
+Installing on a NAS or from a GUI (Synology, Unraid, Portainer, TrueNAS)
+instead? Follow [Installing from a GUI](install-gui.md).
+
 ## Install
 
 On a Linux server with Docker and Docker Compose:
@@ -102,7 +105,7 @@ container and run the same command again. The data volume keeps everything.
 
 The same image is on Docker Hub as `prezmcmahon/dnserv` (same tags). For
 installing from Portainer, Unraid, Synology or TrueNAS, see
-[Installing from a GUI](docker-hub.md).
+[Installing from a GUI](install-gui.md).
 
 ## The dashboard
 
