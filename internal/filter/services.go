@@ -1,6 +1,9 @@
 package filter
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // Service is a well-known app or site that can be blocked with one switch.
 // Domains are blocked with everything under them.
@@ -70,8 +73,12 @@ var Services = []Service{
 	{"bumble", "Bumble", "Dating", []string{"bumble.com", "bumble.app", "bumbcdn.com"}},
 }
 
-// ServiceByID returns a service from the catalog.
+// ServiceByID returns a service from the catalog, or the service for a
+// top-level domain ("tld:ru", see TLDServiceID).
 func ServiceByID(id string) (Service, bool) {
+	if strings.HasPrefix(id, tldPrefix) {
+		return tldService(id)
+	}
 	i := slices.IndexFunc(Services, func(s Service) bool { return s.ID == id })
 	if i < 0 {
 		return Service{}, false
@@ -101,7 +108,11 @@ func AddServices(b *Builder, ids []string) {
 		if !ok {
 			continue
 		}
-		src := b.AddSourceKey("Blocked service: "+s.Name, TierCustom, "service:"+id, true)
+		name := "Blocked service: " + s.Name
+		if strings.HasPrefix(id, tldPrefix) {
+			name = "Blocked ending: ." + s.Domains[0]
+		}
+		src := b.AddSourceKey(name, TierCustom, "service:"+id, true)
 		for _, d := range s.Domains {
 			b.Add(src, Rule{Domain: d, Kind: Suffix})
 		}

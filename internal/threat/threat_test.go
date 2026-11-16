@@ -255,3 +255,29 @@ func TestScoringTuned(t *testing.T) {
 		t.Fatalf("normalized = %+v", n)
 	}
 }
+
+func TestCheckAnswerCountry(t *testing.T) {
+	in := seeded(t)
+	ru := func(a netip.Addr) string {
+		if a.Is4() && a.As4()[0] == 5 {
+			return "RU"
+		}
+		return "AU"
+	}
+	addr := []netip.Addr{netip.MustParseAddr("5.1.2.3")}
+	if s, _ := in.CheckAnswer("shop.example.org", addr, nil); s != 0 {
+		t.Fatalf("flagged with no countries set: %d", s)
+	}
+	in.SetCountries([]string{"ru", "xx1"}, ru)
+	s, why := in.CheckAnswer("shop.example.org", addr, nil)
+	if s != config.DefaultCountryPoints || !strings.Contains(why, "(RU)") {
+		t.Fatalf("got %d %q", s, why)
+	}
+	// A threat list still wins with more points.
+	if s, _ := in.CheckAnswer("shop.example.org", []netip.Addr{netip.MustParseAddr("203.0.113.66"), addr[0]}, nil); s != 90 {
+		t.Fatalf("got %d", s)
+	}
+	if s, _ := in.CheckAnswer("shop.example.org", []netip.Addr{netip.MustParseAddr("1.1.1.1")}, nil); s != 0 {
+		t.Fatalf("other country flagged: %d", s)
+	}
+}

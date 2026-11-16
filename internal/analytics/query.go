@@ -63,6 +63,9 @@ type Query struct {
 	Devices bool `json:"devices,omitempty"`
 	// Names are the domains a reach query asks about.
 	Names []string `json:"names,omitempty"`
+	// Country limits to domains whose answers pointed to this country
+	// (a two-letter code; needs location data).
+	Country string `json:"country,omitempty"`
 }
 
 // MaxNames is how many domains one reach query may name.
@@ -142,6 +145,9 @@ type Entry struct {
 	CNAMEs []string `json:"cnames,omitempty"`
 	// Upstream is the server that answered (answers from upstream).
 	Upstream string `json:"upstream,omitempty"`
+	// Country is where the first answer address is (filled in by the API
+	// with location data on).
+	Country string `json:"country,omitempty"`
 }
 
 // Answer is one distinct answer a domain got.
@@ -207,6 +213,9 @@ func (q *Query) Validate() error {
 	if len(q.Names) > MaxNames {
 		return fmt.Errorf("%w: too many names", ErrBadQuery)
 	}
+	if q.Country != "" && !validCountry(q.Country) {
+		return fmt.Errorf("%w: country must be a two-letter code", ErrBadQuery)
+	}
 	if len(q.Clients) > 256 {
 		return fmt.Errorf("%w: too many clients", ErrBadQuery)
 	}
@@ -221,8 +230,8 @@ func (q *Query) Validate() error {
 			return fmt.Errorf("%w: reach needs 1 to %d names", ErrBadQuery, MaxNames)
 		}
 	case KindTop:
-		if q.By != TopDomains && q.By != TopBlocked && q.By != TopAllowed && q.By != TopClients && q.By != TopLists {
-			return fmt.Errorf("%w: by must be domains, allowed, blocked, clients or lists", ErrBadQuery)
+		if q.By != TopDomains && q.By != TopBlocked && q.By != TopAllowed && q.By != TopClients && q.By != TopLists && q.By != TopCountries {
+			return fmt.Errorf("%w: by must be domains, allowed, blocked, clients, lists or countries", ErrBadQuery)
 		}
 	case KindDomain:
 		if q.Name == "" {
@@ -266,6 +275,10 @@ func where(q *Query, args []any) (string, []any) {
 	if q.Kind == KindDomain {
 		conds = append(conds, "name = ?")
 		args = append(args, q.Name)
+	}
+	if q.Country != "" {
+		conds = append(conds, "name IN (SELECT name FROM name_cc WHERE cc = ?)")
+		args = append(args, q.Country)
 	}
 	if len(conds) == 0 {
 		return "", args
@@ -362,6 +375,9 @@ func (s *Store) top(ctx context.Context, q *Query, res *Result) error {
 	if q.By == TopLists {
 		return s.topLists(ctx, q, res)
 	}
+	if q.By == TopCountries {
+		return s.topCountries(ctx, q, res)
+	}
 	src, args, ok := s.source(q)
 	if !ok {
 		return nil
@@ -457,6 +473,10 @@ func (s *Store) search(ctx context.Context, q *Query, res *Result) error {
 		for _, n := range q.Names {
 			args = append(args, n)
 		}
+	}
+	if q.Country != "" {
+		conds = append(conds, "name IN (SELECT name FROM name_cc WHERE cc = ?)")
+		args = append(args, q.Country)
 	}
 	// Every word must appear somewhere in the name, in any order, so
 	// "google ads" finds googleads.g.doubleclick.net.

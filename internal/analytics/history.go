@@ -141,6 +141,7 @@ type Store struct {
 	days, statsDays atomic.Int64
 
 	checker   atomic.Pointer[Checker]
+	country   atomic.Pointer[CountryFunc]
 	now       func() time.Time
 	pruneCh   chan struct{}
 	flushReq  chan chan struct{}
@@ -164,6 +165,10 @@ func Open(path string, node func() string, days, statsDays int, log *slog.Logger
 	}
 	db.SetMaxOpenConns(4)
 	if _, err := db.Exec(schema); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("history: %w", err)
+	}
+	if _, err := db.Exec(countrySchema); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("history: %w", err)
 	}
@@ -297,7 +302,7 @@ func (s *Store) Clear(ctx context.Context, what string) error {
 func (s *Store) clear(what string) error {
 	tables := []string{"perf", "upstream_perf"}
 	if what == ClearAll {
-		tables = append(tables, "queries", "hourly", "hourly_up", "flagged", "caught")
+		tables = append(tables, "queries", "hourly", "hourly_up", "flagged", "caught", "name_cc")
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -498,6 +503,9 @@ func (s *Store) write(batch []querylog.Entry) error {
 			}
 		}
 		if err := writePerf(tx, perf); err != nil {
+			return err
+		}
+		if err := s.writeCountries(tx, batch); err != nil {
 			return err
 		}
 	}
@@ -749,6 +757,12 @@ func (s *Store) prune() {
 	}
 	s.db.Exec(`DELETE FROM caught WHERE t < ?`, hcut*3600*1_000_000)
 	s.db.Exec(`DELETE FROM flagged WHERE t < ?`, hcut*3600*1_000_000)
+	// Countries go with the longest history kept.
+	ccut := hcut * 3600 * 1_000_000
+	if statsDays == 0 {
+		ccut = cut
+	}
+	s.db.Exec(`DELETE FROM name_cc WHERE t < ?`, ccut)
 	if removed > 0 {
 		s.db.Exec(`PRAGMA incremental_vacuum`)
 		s.db.Exec(`PRAGMA wal_checkpoint(TRUNCATE)`)

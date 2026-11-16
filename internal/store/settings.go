@@ -35,6 +35,8 @@ type Settings struct {
 	StatsDays   *int `json:"stats_days,omitempty"`
 
 	ThreatFeeds    *bool     `json:"threat_feeds,omitempty"`
+	GeoData        *bool     `json:"geo_data,omitempty"`
+	FlagCountries  *[]string `json:"flag_countries,omitempty"`
 	TrustedDomains *[]string `json:"trusted_domains,omitempty"`
 	// RiskScoring replaces the whole scoring when set.
 	RiskScoring *config.RiskScoring `json:"risk_scoring,omitempty"`
@@ -108,6 +110,12 @@ func (s Settings) Overlay(base config.Config) config.Config {
 	}
 	if s.ThreatFeeds != nil {
 		c.Analytics.ThreatFeeds = *s.ThreatFeeds
+	}
+	if s.GeoData != nil {
+		c.Analytics.GeoData = *s.GeoData
+	}
+	if s.FlagCountries != nil {
+		c.Analytics.FlagCountries = config.CountryCodes(*s.FlagCountries)
 	}
 	if s.TrustedDomains != nil {
 		c.Analytics.TrustedDomains = append([]string(nil), (*s.TrustedDomains)...)
@@ -186,6 +194,12 @@ func (s *Settings) Merge(p Settings) {
 	if p.ThreatFeeds != nil {
 		s.ThreatFeeds = p.ThreatFeeds
 	}
+	if p.GeoData != nil {
+		s.GeoData = p.GeoData
+	}
+	if p.FlagCountries != nil {
+		s.FlagCountries = p.FlagCountries
+	}
 	if p.TrustedDomains != nil {
 		s.TrustedDomains = p.TrustedDomains
 	}
@@ -200,7 +214,7 @@ func (p Settings) Touches() (upstream, network, lists, rules bool) {
 		p.TunnelExpectedEgress != nil || p.TunnelOnDown != nil || p.CacheSize != nil
 	network = p.AllowedNets != nil || p.LocalDNS != nil || p.TimeZone != nil || p.Records != nil
 	lists = p.Lists != nil || p.Allowlists != nil || p.BlockBypass != nil || p.BlockedServices != nil || p.SafeSearch != nil || p.FilteringEnabled != nil || p.BlockMode != nil ||
-		p.ThreatFeeds != nil || p.TrustedDomains != nil || p.RiskScoring != nil
+		p.ThreatFeeds != nil || p.GeoData != nil || p.FlagCountries != nil || p.TrustedDomains != nil || p.RiskScoring != nil
 	rules = p.Rules != nil
 	return
 }

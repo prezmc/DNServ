@@ -121,6 +121,9 @@ func (a *API) parseQuery(w http.ResponseWriter, r *http.Request, p *Principal, k
 	if n, err := strconv.Atoi(v.Get("limit")); err == nil && n > 0 {
 		q.Limit = n
 	}
+	if c := v.Get("country"); c != "" {
+		q.Country = strings.ToUpper(c)
+	}
 	return q, true
 }
 
@@ -406,7 +409,7 @@ func (a *API) analyticsTop(w http.ResponseWriter, r *http.Request, p *Principal)
 			out = append(out, &topRow{Row: row, Label: l.names[row.Key], Addrs: []string{row.Key}})
 		}
 		slices.SortStableFunc(out, func(x, y *topRow) int { return int(y.Total - x.Total) })
-	} else if q.By == analytics.TopLists {
+	} else if q.By == analytics.TopLists || q.By == analytics.TopCountries {
 		for _, row := range res.Rows {
 			out = append(out, &topRow{Row: row})
 		}
@@ -450,6 +453,19 @@ func (a *API) analyticsDomain(w http.ResponseWriter, r *http.Request, p *Princip
 		out["feeds"] = a.Intel.Enabled()
 	}
 	out["answers"] = orEmpty(res.Answers)
+	if a.Geo.Ready() {
+		var cc []string
+		for _, ans := range res.Answers {
+			for _, s := range ans.IPs {
+				if ip, err := netip.ParseAddr(s); err == nil {
+					if c := a.Geo.Country(ip); c != "" && !slices.Contains(cc, c) {
+						cc = append(cc, c)
+					}
+				}
+			}
+		}
+		out["countries"] = orEmpty(cc)
+	}
 	if res.Rule != "" || res.List != "" {
 		out["caught_by"] = map[string]string{"rule": res.Rule, "list": res.List}
 	}
@@ -638,6 +654,7 @@ func (a *API) analyticsQueries(w http.ResponseWriter, r *http.Request, p *Princi
 		addrs[i] = e.Client
 	}
 	l := a.newLabeler(r.Context(), addrs)
+	a.addCountries(res.Entries)
 	// Flag risky domains so the log can mark them.
 	risk := map[string]threat.Risk{}
 	if a.Intel != nil {
@@ -695,7 +712,8 @@ func (a *API) analyticsExport(w http.ResponseWriter, r *http.Request, p *Princip
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="dnserv-queries-`+a.now().Format("2006-01-02-1504")+`.csv"`)
 	cw := csv.NewWriter(w)
-	cw.Write([]string{"time", "server", "client", "device", "domain", "type", "result", "allowed_by_rule", "rcode", "answers", "ms", "rule", "list", "risk"})
+	a.addCountries(res.Entries)
+	cw.Write([]string{"time", "server", "client", "device", "domain", "type", "result", "allowed_by_rule", "rcode", "answers", "ms", "rule", "list", "risk", "country"})
 	scores := map[string]string{}
 	for _, e := range res.Entries {
 		sc, ok := scores[e.Name]
@@ -704,9 +722,27 @@ func (a *API) analyticsExport(w http.ResponseWriter, r *http.Request, p *Princip
 			scores[e.Name] = sc
 		}
 		cw.Write([]string{e.Time, e.Node, e.Client, csvSafe(l.names[e.Client]), e.Name, e.Type, e.Result, strconv.FormatBool(e.Allowed),
-			e.Rcode, strconv.Itoa(e.Answers), strconv.FormatFloat(e.Ms, 'f', 2, 64), csvSafe(e.Rule), csvSafe(e.List), sc})
+			e.Rcode, strconv.Itoa(e.Answers), strconv.FormatFloat(e.Ms, 'f', 2, 64), csvSafe(e.Rule), csvSafe(e.List), sc, e.Country})
 	}
 	cw.Flush()
+}
+
+// addCountries fills in where each entry's answer points (location data
+// on): the first address with a known country.
+func (a *API) addCountries(es []analytics.Entry) {
+	if !a.Geo.Ready() {
+		return
+	}
+	for i := range es {
+		for _, s := range es[i].IPs {
+			if ip, err := netip.ParseAddr(s); err == nil {
+				if c := a.Geo.Country(ip); c != "" {
+					es[i].Country = c
+					break
+				}
+			}
+		}
+	}
 }
 
 // csvSafe stops spreadsheet apps from running a cell as a formula.
@@ -772,8 +808,12 @@ func (a *API) intelStatus(w http.ResponseWriter, r *http.Request, p *Principal) 
 		writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "sources": []any{}})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": a.Intel.Enabled(), "sources": a.Intel.Status(),
-		"abusech_key": a.Store.State().AbuseCHKey != ""})
+	out := map[string]any{"enabled": a.Intel.Enabled(), "sources": a.Intel.Status(),
+		"abusech_key": a.Store.State().AbuseCHKey != ""}
+	if a.Geo != nil {
+		out["geo"] = a.Geo.Status()
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // abuseCHSetKey stores (or, empty, removes) the abuse.ch Auth-Key for the

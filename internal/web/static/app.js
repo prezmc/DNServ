@@ -856,7 +856,7 @@ const SETTINGS_PAGES = {
   services: ['services'],
   rules: ['rules'],
   upstream: ['upstream', 'cache'],
-  risk: ['risk', 'abusech', 'virustotal'],
+  risk: ['risk', 'geo', 'abusech', 'virustotal'],
   general: ['timezone', 'networks', 'history', 'https', 'usage'],
 };
 const settingsPage = (key) => (main) => settings(main, key);
@@ -1980,7 +1980,64 @@ function groupsCard(groups, devs, gs) {
 // ---------- blocked services ----------
 
 let servicesCache = null;
-const loadServices = () => (servicesCache = servicesCache || api('GET', '/services').then(r => r.services).catch((e) => { servicesCache = null; throw e; }));
+let tldsCache = null;
+const loadServices = () => (servicesCache = servicesCache || api('GET', '/services').then(r => { tldsCache = r.tlds || null; return r.services; }).catch((e) => { servicesCache = null; throw e; }));
+
+// countryName turns a code (AU, or a top-level domain such as uk) into a
+// name in the browser's language.
+let regionNames = null;
+function countryName(cc) {
+  if (!cc) return '';
+  const up = cc.toUpperCase(), code = { UK: 'GB', SU: 'SU', AC: 'AC', EU: 'EU' }[up] || up;
+  if (code === 'SU') return 'Soviet Union (old)';
+  if (code === 'EU') return 'European Union';
+  try {
+    regionNames = regionNames || new Intl.DisplayNames([navigator.language || 'en'], { type: 'region' });
+    return regionNames.of(code) || up;
+  } catch (_) { return up; }
+}
+
+// flag is a country's flag emoji (two regional indicator letters).
+const flag = (cc) => cc && /^[A-Za-z]{2}$/.test(cc) ? String.fromCodePoint(...[...cc.toUpperCase()].map(c => 0x1f1a5 + c.charCodeAt(0))) : '';
+
+// tldPicker lets top-level domains be blocked like services ("tld:ru").
+function tldPicker(selected, tlds) {
+  const ids = new Set(selected.filter(id => id.startsWith('tld:')));
+  const known = new Set([...tlds.abused, ...tlds.country].map(t => 'tld:' + t));
+  const generic = new Set(tlds.generic || []);
+  const cb = (t, text, title) => h('label', { class: 'inline', title: title || ('Blocks every name ending in .' + t) },
+    h('input', { type: 'checkbox', 'data-service': 'tld:' + t, checked: ids.has('tld:' + t) }), text);
+  const abused = tlds.abused.slice().sort();
+  const countries = tlds.country.map(t => ({ t, name: countryName(t) })).sort((a, b) => a.name.localeCompare(b.name));
+  const list = h('div', { class: 'perms tld-list' }, countries.map(c => {
+    const el = cb(c.t, ['.' + c.t + ' ', h('span', { class: 'muted' }, c.name), generic.has(c.t) ? h('span', { class: 'badge warn', title: 'Used worldwide, not just in ' + c.name }, 'used worldwide') : null]);
+    el.dataset.search = ('.' + c.t + ' ' + c.name).toLowerCase();
+    return el;
+  }));
+  const search = h('input', { type: 'search', placeholder: 'Find a country or ending', 'aria-label': 'Find a country ending', class: 'mt-s', oninput: () => {
+    const q = search.value.trim().toLowerCase().replace(/^\./, '');
+    list.querySelectorAll('label').forEach(l => { l.hidden = !!q && !l.dataset.search.includes(q); });
+  } });
+  const countTicked = () => list.querySelectorAll('input:checked').length;
+  const sum = h('summary', {});
+  const upd = () => { const n = countTicked(); sum.textContent = 'Country endings' + (n ? ' (' + n + ' blocked)' : ''); };
+  list.addEventListener('change', upd);
+  upd();
+  const other = h('input', { type: 'text', spellcheck: 'false', placeholder: '.example, .xn--p1ai', 'aria-label': 'Other endings to block',
+    value: [...ids].filter(id => !known.has(id)).map(id => '.' + id.slice(4)).join(', ') });
+  const box = h('div', { class: 'mt-s tld-pick' },
+    h('div', { class: 'muted small' }, 'Top-level domains'),
+    h('p', { class: 'muted small' }, 'Blocks every site whose name ends this way, such as all of .zip. It doesn’t depend on where a site is hosted.'),
+    h('div', { class: 'row spread' }, h('span', { class: 'small' }, 'Often abused'),
+      h('button', { type: 'button', class: 'link small', onclick: () => { const all = abused.every(t => box.querySelector('[data-service="tld:' + t + '"]').checked); abused.forEach(t => { box.querySelector('[data-service="tld:' + t + '"]').checked = !all; }); box.dispatchEvent(new Event('change', { bubbles: true })); } }, 'Tick or untick all')),
+    h('div', { class: 'perms' }, abused.map(t => cb(t, '.' + t, 'Cheap or free names that host a lot of scams and malware. Blocks every name ending in .' + t))),
+    h('details', { class: 'mt-s' }, sum,
+      h('p', { class: 'muted small' }, 'Endings marked “used worldwide” are popular well beyond their country (.io, .me, .tv), so blocking one blocks many ordinary sites.'),
+      search, list),
+    h('label', { class: 'small mt-s' }, 'Other endings'), other);
+  box.readOther = () => other.value.split(/[\s,]+/).map(x => x.trim().toLowerCase().replace(/^\.+/, '')).filter(x => /^([a-z]{2,63}|xn--[a-z0-9-]{1,59})$/.test(x)).map(x => 'tld:' + x);
+  return box;
+}
 
 let bundlesCache = null;
 const loadBundles = () => (bundlesCache = bundlesCache || api('GET', '/lists/bundles').then(r => r.bundles).catch((e) => { bundlesCache = null; throw e; }));
@@ -2026,16 +2083,24 @@ function servicePicker(selected, label, collapsed) {
   selected = selected || [];
   const box = h('div', { class: 'services', 'aria-label': label || 'Blocked services' }, h('p', { class: 'muted small' }, 'Loading services…'));
   let loaded = false;
+  let tld = null;
   loadServices().then((all) => {
     const cats = [];
     all.forEach(sv => { if (!cats.includes(sv.category)) cats.push(sv.category); });
+    tld = tldsCache ? tldPicker(selected, tldsCache) : null;
     box.replaceChildren(...cats.map(c => h('div', { class: 'mt-s' },
       h('div', { class: 'muted small' }, c),
       h('div', { class: 'perms' }, all.filter(sv => sv.category === c).map(sv => h('label', { class: 'inline', title: sv.domains.join(', ') },
-        h('input', { type: 'checkbox', 'data-service': sv.id, checked: selected.includes(sv.id) }), sv.name))))));
+        h('input', { type: 'checkbox', 'data-service': sv.id, checked: selected.includes(sv.id) }), sv.name))))), ...(tld ? [tld] : []));
     loaded = true;
   }).catch(e => fill(box, h('p', { class: 'muted small' }, "Couldn't load the services: " + e.message)));
-  box.read = () => loaded ? [...box.querySelectorAll('[data-service]')].filter(c => c.checked).map(c => c.dataset.service) : selected.slice();
+  box.read = () => {
+    if (!loaded) return selected.slice();
+    const out = [...box.querySelectorAll('[data-service]')].filter(c => c.checked).map(c => c.dataset.service);
+    if (tld) tld.readOther().forEach(id => { if (!out.includes(id)) out.push(id); });
+    else selected.filter(id => id.startsWith('tld:') && !out.includes(id)).forEach(id => out.push(id));
+    return out;
+  };
   if (!collapsed) return box;
   // In dialogs: folded away, with a summary of what's ticked.
   const sum = h('summary', {});
@@ -2043,7 +2108,7 @@ function servicePicker(selected, label, collapsed) {
     const ids = box.read();
     if (!ids.length) return 'None. Choose services';
     const byId = {}; (servicesCache && loaded ? [...box.querySelectorAll('[data-service]')] : []).forEach(c => { byId[c.dataset.service] = c.parentNode.textContent; });
-    return ids.map(id => byId[id] || id).join(', ');
+    return ids.map(id => byId[id] ? byId[id].replace(/used worldwide$/, '') : id.startsWith('tld:') ? '.' + id.slice(4) : id).join(', ');
   };
   const det = h('details', { class: 'services-pick' }, sum, box);
   const upd = () => { sum.textContent = names(); };
@@ -2154,7 +2219,7 @@ const RESULTS = {
 
 async function queries(main) {
   const params = hashParams();
-  const filter = { client: params.get('client') || '', search: params.get('search') || '', result: params.get('result') || '', risk: ['low', 'medium', 'high'].includes(params.get('risk')) ? params.get('risk') : '', range: RANGES[params.get('range')] ? params.get('range') : '24h' };
+  const filter = { client: params.get('client') || '', search: params.get('search') || '', result: params.get('result') || '', risk: ['low', 'medium', 'high'].includes(params.get('risk')) ? params.get('risk') : '', country: /^[A-Za-z]{2}$/.test(params.get('country') || '') ? params.get('country').toUpperCase() : '', range: RANGES[params.get('range')] ? params.get('range') : '24h' };
   const body = h('tbody');
   const more = h('button', { type: 'button', hidden: true }, 'Show older');
   const info = h('p', { class: 'muted small' });
@@ -2187,7 +2252,8 @@ async function queries(main) {
       h('td', {}, can('dashboard.view') && useHistory ? h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(e.name, filter.range === '1h' ? '24h' : filter.range) }, e.name) : h('span', { class: 'mono' }, e.name),
         ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name], true),
         (e.ips || []).length || (e.cnames || []).length ? h('div', { class: 'muted small mono', title: (e.cnames || []).concat(e.ips || []).join('\n') },
-          (e.cnames || []).length ? '\u2192 ' + e.cnames[e.cnames.length - 1] + ' ' : '', (e.ips || []).slice(0, 2).join(', '), (e.ips || []).length > 2 ? ' +' + ((e.ips.length) - 2) : '') : null),
+          (e.cnames || []).length ? '\u2192 ' + e.cnames[e.cnames.length - 1] + ' ' : '', (e.ips || []).slice(0, 2).join(', '), (e.ips || []).length > 2 ? ' +' + ((e.ips.length) - 2) : '',
+          e.country ? h('span', { class: 'ql-cc', title: 'Address in ' + countryName(e.country) + ' (location data by DB-IP)' }, ' · ', flag(e.country), ' ', e.country) : null) : null),
       h('td', {}, h('span', { class: 'badge ' + kind, title: why || (e.upstream ? 'Answered by ' + upstreamLabel(e.upstream) : null) }, label, e.allowed ? ' · allowed' : ''),
         why ? h('div', { class: 'muted small' }, why) : null),
       can('domains.allowblock') ? h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: async (ev) => {
@@ -2198,7 +2264,7 @@ async function queries(main) {
   };
   const qs = (extra) => {
     const u = new URLSearchParams({ limit: '100' });
-    for (const [k, v] of Object.entries(filter)) if (v && (useHistory || (k !== 'range' && k !== 'risk'))) u.set(k, v);
+    for (const [k, v] of Object.entries(filter)) if (v && (useHistory || (k !== 'range' && k !== 'risk' && k !== 'country'))) u.set(k, v);
     for (const [k, v] of Object.entries(extra || {})) u.set(k, v);
     return u;
   };
@@ -2215,6 +2281,7 @@ async function queries(main) {
       useHistory = false;
       rangeSel.hidden = true;
       if (riskSel) riskSel.hidden = true;
+      ccSel.hidden = true;
       if (exportBtn) exportBtn.hidden = true;
     }
     return api('GET', '/queries?' + qs(extra));
@@ -2232,7 +2299,7 @@ async function queries(main) {
     info.textContent = !r.queries.length ? '' : useHistory
       ? 'Newest first, from every server’s saved history.'
       : 'Newest first. Query history is off, so this shows the most recent ' + fmtNum(r.capacity) + ' queries this server has seen since it started.';
-    if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, ['client', 'search', 'result', 'risk'].some(k => filter[k]) ? 'Nothing matches.' : 'No queries yet.')));
+    if (!r.queries.length) body.append(h('tr', {}, h('td', { colspan: 5, class: 'muted' }, ['client', 'search', 'result', 'risk', 'country'].some(k => filter[k]) ? 'Nothing matches.' : 'No queries yet.')));
   };
   more.addEventListener('click', async () => {
     paused = true;
@@ -2322,6 +2389,18 @@ async function queries(main) {
     h('option', { value: 'low', selected: filter.risk === 'low' }, 'Low risk and above'),
     h('option', { value: 'medium', selected: filter.risk === 'medium' }, 'Medium risk and above'),
     h('option', { value: 'high', selected: filter.risk === 'high' }, 'High risk only')) : null;
+  // Countries answers pointed to, when location data is on: those seen in
+  // the period, busiest first.
+  const ccSel = h('select', { name: 'country', 'aria-label': 'Country', hidden: !filter.country, onchange: (ev) => { filter.country = ev.target.value; setHash(); load(); } },
+    h('option', { value: '' }, 'Any country'),
+    filter.country ? h('option', { value: filter.country, selected: true }, flag(filter.country) + ' ' + countryName(filter.country)) : null);
+  if (can('dashboard.view')) api('GET', '/analytics/top?by=countries&limit=250&range=' + (filter.range === '1h' ? '24h' : filter.range)).then(r => {
+    const rows = (r && r.rows) || [];
+    if (!rows.length) return;
+    rows.filter(x => x.key !== filter.country).map(x => ({ cc: x.key, name: countryName(x.key) })).sort((a, b) => a.name.localeCompare(b.name))
+      .forEach(x => ccSel.append(h('option', { value: x.cc }, flag(x.cc) + ' ' + x.name)));
+    ccSel.hidden = !useHistory;
+  }).catch(() => {});
   const rangeSel = rangeSeg(Object.keys(RANGES), filter.range, (k) => { filter.range = k; setHash(); load(); });
   const exportBtn = can('data.export') ? h('button', { type: 'button', onclick: async () => {
     try { await fetchFile('GET', '/analytics/export?' + qs({ limit: '50000' })); } catch (e) { toast(e.message, 'err'); }
@@ -2331,7 +2410,7 @@ async function queries(main) {
     h('thead', {}, h('tr', {}, h('th', {}, 'Time'), h('th', {}, 'Device'), h('th', {}, 'Domain'), h('th', {}, 'Result'), can('domains.allowblock') ? h('th', {}) : null)),
     body)));
   page(main, 'Query log',
-    h('div', { class: 'row' }, devSel, search, resSel, riskSel, rangeSel, exportBtn, h('div', { class: 'ql-ctl' }, livePill, pauseBtn)),
+    h('div', { class: 'row' }, devSel, search, resSel, riskSel, ccSel, rangeSel, exportBtn, h('div', { class: 'ql-ctl' }, livePill, pauseBtn)),
     nodesNote, info,
     h('div', { class: 'ql-new-wrap' }, newPill),
     card, h('div', { class: 'actions' }, more));
@@ -2611,7 +2690,9 @@ async function scoringTune() {
         num('Name checks add at most', () => draft.name_cap, v => { draft.name_cap = v; }, 0, 100),
         num('…on top of a list', () => draft.name_cap_listed, v => { draft.name_cap_listed = v; }, 0, 50),
         h('h3', {}, 'Name checks'),
-        g.names.map(n => num(n.name, () => draft.names[n.id] || 0, v => { draft.names[n.id] = v; }, 0, 50))),
+        g.names.map(n => num(n.name, () => draft.names[n.id] || 0, v => { draft.names[n.id] = v; }, 0, 50)),
+        h('h3', {}, 'Location'),
+        num('Answer in a country you mark', () => draft.country_points || 0, v => { draft.country_points = v; }, 0, 100, 'Set the countries under Risk scoring → Location data.')),
       h('div', {},
         h('h3', {}, 'Threat lists'),
         h('p', { class: 'muted small' }, 'Points when a list has the domain (or, for address lists, what it answered with). 0 ignores a list.'),
@@ -2682,6 +2763,8 @@ async function domainDialog(name, range) {
     c.total ? queryChart(r) : h('p', { class: 'muted' }, 'No queries for this domain in this period.'),
     r.answers && r.answers.length ? [h('h3', {}, 'Recent answers'), h('ul', { class: 'plain small' }, r.answers.map(a => h('li', { class: 'mono' },
       (a.cnames || []).length ? [(a.cnames || []).join(' \u2192 '), ' \u2192 '] : null, (a.ips || []).join(', ') || h('span', { class: 'muted' }, 'no addresses'))))] : null,
+    r.countries && r.countries.length ? h('p', { class: 'small' }, 'Addresses in ', r.countries.map((cc, i) => [i ? ', ' : '', flag(cc), ' ', countryName(cc)]),
+      h('span', { class: 'muted' }, '. Where the servers are, which for big sites is often near you. Location data by DB-IP.')) : null,
     alsoOn,
     vtBox,
     r.devices && r.devices.length ? [h('h3', {}, 'Devices that asked'), h('div', { class: 'scroll' }, h('table', {},
@@ -2690,6 +2773,32 @@ async function domainDialog(name, range) {
         h('td', {}, h('a', { href: '#/queries?' + new URLSearchParams({ client: x.device || x.key, search: name }), onclick: () => d.close() }, x.label || x.key)),
         h('td', {}, fmtNum(x.total)), h('td', {}, fmtNum(x.blocked)))))))] : null,
     coverage(r.nodes));
+}
+
+// countriesCard lists the countries answers pointed to (location data on).
+function countriesCard(rows, range, client) {
+  const top = rows[0].total, all = rows.reduce((a, r) => a + r.total, 0);
+  return h('div', { class: 'card' }, h('h2', {}, 'Where answers point'),
+    h('p', { class: 'muted small' }, 'The country of each answered domain’s address. Big sites usually answer from a server near you, so this is where the servers are, not who runs them. Location data by ',
+      h('a', { href: 'https://db-ip.com', target: '_blank', rel: 'noopener' }, 'DB-IP'), '.'),
+    h('table', { class: 'top' }, h('tbody', {}, rows.map(r => h('tr', {},
+      h('td', {}, h('button', { type: 'button', class: 'link', onclick: () => countryDialog(r.key, range, client) }, flag(r.key), ' ', countryName(r.key)), bar(r.total, top)),
+      h('td', { class: 'num' }, fmtNum(r.total), h('div', { class: 'muted small' }, fmtPct(r.total / all))))))));
+}
+
+// countryDialog shows a country's busiest domains.
+async function countryDialog(cc, range, client) {
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Loading…'));
+  const d = dialog((flag(cc) + ' ' + countryName(cc)).trim(), [body, h('div', { class: 'actions' },
+    can('querylog.view') ? h('button', { type: 'button', onclick: () => { d.close(); location.hash = '#/queries?' + new URLSearchParams({ country: cc, ...(client ? { client } : {}), ...(range === '24h' ? {} : { range }) }); } }, 'Query log') : null,
+    h('button', { type: 'button', onclick: () => d.close() }, 'Close'))]);
+  let r;
+  try { r = await api('GET', '/analytics/top?' + new URLSearchParams({ by: 'allowed', country: cc, range, limit: '25', ...(client ? { client } : {}) })); } catch (e) { fill(body, msg('err', e.message)); return; }
+  const top = r.rows.length ? r.rows[0].total : 0;
+  fill(body, h('p', { class: 'muted small' }, 'Busiest domains whose addresses are in ', countryName(cc), ', ', RANGES[range].toLowerCase(), '.'),
+    !r.rows.length ? h('p', { class: 'muted' }, 'None in this period.') : h('table', { class: 'top' }, h('tbody', {}, r.rows.map(x => h('tr', {},
+      h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => { d.close(); domainDialog(x.key, range); } }, x.key), ' ', riskBadge(x.risk), typeLine(x.type), bar(x.total, top)),
+      h('td', { class: 'num' }, fmtNum(x.total)))))));
 }
 
 async function analyticsPage(main) {
@@ -2731,10 +2840,11 @@ async function analyticsPage(main) {
     })))); };
 
   const load = async () => {
-    let sum, dom, blk, cli, risky, lists;
+    let sum, dom, blk, cli, risky, lists, ccs;
     try {
-      [sum, dom, blk, cli, risky, lists] = await Promise.all([q('summary'), q('top', { by: 'allowed', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
-        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '1' }), q('top', { by: 'lists', limit: '10' })]);
+      [sum, dom, blk, cli, risky, lists, ccs] = await Promise.all([q('summary'), q('top', { by: 'allowed', limit: '15' }), q('top', { by: 'blocked', limit: '15' }),
+        perDevice && !st.client ? q('top', { by: 'clients', limit: '15' }) : Promise.resolve(null), q('risky', { limit: '1' }), q('top', { by: 'lists', limit: '10' }),
+        q('top', { by: 'countries', limit: '12' }).catch(() => null)]);
     } catch (e) { fill(body, msg('err', e.message)); return; }
     const c = sum.counts;
     const pct = (n) => (c.total ? (100 * n / c.total).toFixed(1) + '%' : '—');
@@ -2753,6 +2863,7 @@ async function analyticsPage(main) {
       (sum.nodes || []).length > 1 ? serversCard(sum, {}) : null,
       h('div', { class: 'cols' }, topList('Top domains', dom.rows, 'domains'), topList('Top blocked', blk.rows, 'blocked')),
       h('div', { class: 'cols' }, cli ? topList('Busiest devices', cli.rows, 'clients') : null, topListsCard(lists.rows, st.range, false)),
+      ccs && ccs.rows && ccs.rows.length ? countriesCard(ccs.rows, st.range, st.client) : null,
       perDevice && st.client ? h('p', {}, h('a', { href: '#/queries?client=' + encodeURIComponent(st.client) }, 'See every query from this device')) : null);
   };
   await load();
@@ -2969,6 +3080,9 @@ async function dashboardFlow(box, range, opts) {
     [data, devs] = await Promise.all([api('GET', '/analytics/flow?range=' + range + '&group=' + st.group + only + (st.group === 'category' && st.open ? '&open=' + encodeURIComponent(st.open) : '')),
       can('querylog.view') ? flowDevices(box) : []]);
   } catch (_) { return; } // keep the map shown until the next try
+  // By country: boxes are named in the browser's language, with a flag.
+  (data.nodes || []).forEach(n => { if (n.country) n.label = (flag(n.country) + ' ' + countryName(n.country)).trim(); });
+  if (st.group === 'country' && data.group !== 'country') st.group = data.group; // location data off
   const options = deviceOptions(devs, 'All devices');
   if (st.device && st.device.label === st.device.key) {
     // Opened from a link, which carries only the device's id or address.
@@ -3003,7 +3117,8 @@ async function dashboardFlow(box, range, opts) {
   const kindBoxes = FLOW_KINDS.map(([k, label, tip]) => h('label', { class: 'chip', title: tip },
     h('input', { type: 'checkbox', checked: st.kinds[k], onchange: (e) => { st.kinds[k] = e.target.checked; draw(); } }),
     h('span', { class: 'dot flow-k-' + k }), label));
-  const groupSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Group sites by' }, [['company', 'By company', 'Sites grouped by the company that runs them'], ['category', 'By category', 'Sites grouped by what they are used for: social media, streaming, gaming and so on. Click a category to see its apps and sites.']].map(([k, label, title]) =>
+  const groupSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Group sites by' }, [['company', 'By company', 'Sites grouped by the company that runs them'], ['category', 'By category', 'Sites grouped by what they are used for: social media, streaming, gaming and so on. Click a category to see its apps and sites.'],
+    ...(data.geo ? [['country', 'By country', 'Sites grouped by the country their address is in (location data by DB-IP). Big sites often answer from a server near you, so this shows where the servers are, not who runs them.']] : [])].map(([k, label, title]) =>
     h('button', { type: 'button', title, 'aria-pressed': String(st.group === k), onclick: () => { if (st.group !== k) { st.group = k; st.open = ''; st.sel = ''; flowGroup(k); dashboardFlow(box, range, opts); } } }, label)));
   // openCat breaks a category into its apps and sites, or ('') puts it back.
   const openCat = (c) => { st.open = c; st.sel = ''; dashboardFlow(box, range, opts); };
@@ -3149,6 +3264,7 @@ async function dashboardFlow(box, range, opts) {
     if (n.col === 0 && n.device && ql) acts.push(h('a', { href: q({ client: n.device }) }, 'Query log for this device'));
     if (n.col === 2 && result && ql) acts.push(h('a', { href: q({ result }) }, 'Query log: ' + (RESULTS[result] || [n.label])[0].toLowerCase()));
     if (n.col === 2 && n.kind === 'upstream') acts.push(h('a', { href: '#/performance' + (rq ? '?' + rq : '') }, 'Upstream performance'));
+    if (n.col === 3 && n.country && ql) acts.push(h('a', { href: q({ country: n.country }) }, 'Query log for this country'));
     if (n.col === 3 && n.domains && n.domains.length) {
       acts.push(h('span', { class: 'muted' }, 'Busiest: '));
       n.domains.forEach(d => acts.push(ql ? h('a', { href: q({ search: d }), class: 'mono' }, d) : h('button', { type: 'button', class: 'link mono', onclick: () => domainDialog(d, range) }, d)));
@@ -3177,7 +3293,8 @@ async function dashboardFlow(box, range, opts) {
 function flowGroup(set) {
   try {
     if (set) localStorage.setItem('flow-group', set);
-    return localStorage.getItem('flow-group') === 'category' ? 'category' : 'company';
+    const g = localStorage.getItem('flow-group');
+    return g === 'category' || g === 'country' ? g : 'company';
   } catch (_) { return set || 'company'; }
 }
 
@@ -3980,6 +4097,29 @@ async function settings(main, key) {
         h('p', { class: 'muted small' }, 'Domain types and owners come from AdGuard\u2019s companies database (CC BY-SA 4.0).'),
         h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
       ], (f) => save({ threat_feeds: f.elements.feeds.checked, trusted_domains: lines(val(f, 'trusted')) }, { threat_feeds: ac.ThreatFeeds, trusted_domains: norm(ac.TrustedDomains) }))));
+
+    // Location data: which country answers point to. Analytics only.
+    const geo = intel.geo || {};
+    const codes = (s) => [...new Set(s.split(/[\s,;]+/).map(x => x.trim().toUpperCase()).filter(x => /^[A-Z]{2}$/.test(x)))];
+    const ccIn = h('input', { id: 'flagcc', name: 'flagcc', type: 'text', spellcheck: 'false', placeholder: 'RU, KP', value: (ac.FlagCountries || []).join(', '), oninput: () => showCC() });
+    const ccNames = h('p', { class: 'muted small' });
+    const showCC = () => { const c = codes(ccIn.value); fill(ccNames, c.length ? c.map((x, i) => [i ? ', ' : '', flag(x), ' ', countryName(x)]) : 'None. Two-letter country codes, separated by commas.'); };
+    showCC();
+    const geoState = !ac.GeoData ? null
+      : geo.loaded ? h('p', { class: 'small' }, h('span', { class: 'badge ' + (geo.error ? 'warn' : 'ok'), title: geo.error || '' }, geo.error ? 'update failed, using saved copy' : 'ok'), ' ', fmtNum(geo.ranges), ' address ranges · updated ', ago(geo.updated))
+      : geo.error ? msg('err', 'Couldn\u2019t download the location data: ' + geo.error + '. It retries daily.')
+      : h('p', { class: 'muted small' }, 'Downloading the location data. It takes a minute; reload to check.');
+    add('geo', h('div', { class: 'card' },
+      h('h2', {}, 'Location data ', origin('geo_data', 'flag_countries')),
+      form({ 'data-track': true }, [
+        h('p', { class: 'muted' }, 'Shows which country each answer\u2019s address is in: on the Analytics page, in the Query log and domain details, and as a traffic map view. It never blocks anything. To block sites by name ending (.ru, .zip), use ', h('a', { href: '#/services' }, 'Blocked services'), '.'),
+        h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'geo', checked: ac.GeoData }), 'Download location data (a few MB, updated monthly; each server downloads its own copy)'),
+        geoState,
+        h('label', { for: 'flagcc' }, 'Countries to mark as risky'), ccIn, ccNames,
+        h('p', { class: 'muted small' }, 'A domain whose answer points to one of these countries gets ', fmtNum((ac.Scoring || {}).country_points || 0), ' risk points (change it in Tune scoring). It applies to new lookups. Big sites answer from servers near you, so expect few matches from them; it mostly catches smaller sites hosted there.'),
+        h('p', { class: 'muted small' }, 'IP to Country Lite by ', h('a', { href: 'https://db-ip.com', target: '_blank', rel: 'noopener' }, 'DB-IP'), ', licensed CC BY 4.0. Country-level accuracy is high but not perfect.'),
+        h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save')),
+      ], (f) => save({ geo_data: f.elements.geo.checked, flag_countries: codes(ccIn.value) }, { geo_data: !!ac.GeoData, flag_countries: ac.FlagCountries || [] }))));
   }
 
   if (can('lists.manage') && eff.Analytics.ThreatFeeds) {

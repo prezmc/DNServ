@@ -38,6 +38,8 @@ type flowNode struct {
 	// can be opened), and Parent the opened category a site box is in.
 	Group  string `json:"group,omitempty"`
 	Parent string `json:"parent,omitempty"`
+	// Country is the country code a box stands for (by country).
+	Country string `json:"country,omitempty"`
 }
 
 // flowLink is a band between two boxes, for one kind of lookup
@@ -59,6 +61,11 @@ func (a *API) analyticsFlow(w http.ResponseWriter, r *http.Request, p *Principal
 		return
 	}
 	byCat := slices.Contains([]string{"category", "type"}, r.URL.Query().Get("group"))
+	// By country: where answers pointed, from location data.
+	byCC := r.URL.Query().Get("group") == "country" && a.Geo.Ready()
+	if byCC {
+		q.By = analytics.TopCountries
+	}
 	open := ""
 	if byCat {
 		open = r.URL.Query().Get("open")
@@ -155,6 +162,9 @@ func (a *API) analyticsFlow(w http.ResponseWriter, r *http.Request, p *Principal
 			label, kind := pathLabel(nm.Path)
 			path := "path:" + kind + ":" + label
 			svc := a.serviceOf(nm.Name, kind, byCat, open)
+			if byCC && kind != "local" && kind != "failed" && kind != "blocked" {
+				svc = svcCountry + nm.CC
+			}
 			svcTotal[svc] += nm.N
 			pathSvc[svcKey{path, svc, analytics.PathKind(nm.Path)}] += nm.N
 			if nm.Name != "" {
@@ -186,6 +196,9 @@ func (a *API) analyticsFlow(w http.ResponseWriter, r *http.Request, p *Principal
 	nAllowed, nBlocked := mapServices, mapBlocked
 	if byCat {
 		nAllowed, nBlocked = 20, 8
+	}
+	if byCC {
+		nAllowed = 15
 	}
 	keep := topKeys(allowed, nAllowed, "svc:other")
 	for k := range topKeys(blocked, nBlocked, "svc:blocked:") {
@@ -224,6 +237,8 @@ func (a *API) analyticsFlow(w http.ResponseWriter, r *http.Request, p *Principal
 			n.Label, n.Parent = "More blocked "+strings.ToLower(open), open
 		case strings.HasPrefix(svc, svcIn) || strings.HasPrefix(svc, svcBlockedIn):
 			n.Parent = open
+		case strings.HasPrefix(svc, svcCountry):
+			n.Country = strings.TrimPrefix(svc, svcCountry)
 		case byCat && strings.HasPrefix(svc, "svc:cat:"):
 			n.Group = n.Label
 		case byCat && strings.HasPrefix(svc, "svc:blocked:"):
@@ -238,13 +253,20 @@ func (a *API) analyticsFlow(w http.ResponseWriter, r *http.Request, p *Principal
 			}
 		}
 	}
+	group := "company"
+	switch {
+	case byCC:
+		group = "country"
+	case byCat:
+		group = "category"
+	}
 	nodesOut, links := g.result()
 	var total int64
 	for _, n := range devTotal {
 		total += n
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodesOut, "links": links, "total": total, "devices": devices,
-		"group": map[bool]string{true: "category", false: "company"}[byCat], "open": open, "servers": nodes})
+		"group": group, "open": open, "servers": nodes, "geo": a.Geo.Ready()})
 }
 
 // pathLabel names a traffic map path and says what kind it is.
@@ -287,6 +309,7 @@ func upstreamLabel(s string) string {
 // Node ids of the apps and sites in an opened category; these alone are
 // the remainder.
 const (
+	svcCountry   = "svc:cc:" // by country; "svc:cc:" alone: not known
 	svcIn        = "svc:in:"
 	svcBlockedIn = "svc:blocked:in:"
 	mapOpened    = 12
@@ -368,6 +391,10 @@ func serviceLabel(id string) (label, kind string) {
 		return "No answer", "failed"
 	case id == "svc:other":
 		return "Other sites", "other"
+	case id == svcCountry:
+		return "Other or not known", "other"
+	case strings.HasPrefix(id, svcCountry):
+		return strings.TrimPrefix(id, svcCountry), "service"
 	case id == "svc:blocked:":
 		return "Other blocked", "blocked"
 	case strings.HasPrefix(id, svcBlockedIn):

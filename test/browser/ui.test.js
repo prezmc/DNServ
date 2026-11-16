@@ -253,6 +253,51 @@ step('pause filtering lets blocked names through, and resume undoes it', async (
   await until('filtering back on', async () => (await lookup(node.dnsPort, 'tracker.listed.test')).a[0] === '0.0.0.0');
 });
 
+step('block a top-level domain, and see which country answers point to', async () => {
+  // Endings block like services: .zip from the "often abused" set.
+  await go('services');
+  await page.locator('[data-service="tld:zip"]').check();
+  await page.locator('.card', { has: heading('Blocked services and safe search') }).getByRole('button', { name: 'Save' }).click();
+  await until('.zip blocked', async () => (await lookup(node.dnsPort, 'prize.zip')).a[0] === '0.0.0.0');
+  assert.equal((await lookup(node.dnsPort, 'zip.example.com')).a[0], '203.0.113.7', 'only names ending in .zip');
+
+  // Location data: a saved copy is used as is (the test has no internet),
+  // with the fake upstream's answer address in the Netherlands.
+  const zlib = require('node:zlib');
+  const dir = path.join(node.dir, 'data', 'geo');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'dbip-country-lite.csv.gz'), zlib.gzipSync('1.0.0.0,1.0.0.255,AU\n203.0.113.0,203.0.113.255,NL\n'));
+  await go('risk');
+  const card = page.locator('.card', { has: page.getByRole('heading', { name: /^Location data/ }) });
+  await card.locator('input[name=geo]').check();
+  await card.locator('#flagcc').fill('nl');
+  await card.getByText('Netherlands').waitFor();
+  await card.getByRole('button', { name: 'Save' }).click();
+  await until('location data loaded', async () => { const r = await api('GET', '/analytics/intel'); return r.geo && r.geo.loaded; });
+  await lookup(node.dnsPort, 'shop.example.nl');
+  await until('the country noted', async () => {
+    const r = await api('GET', '/analytics/top?by=countries&range=1h');
+    return r.rows.some(x => x.key === 'NL');
+  });
+  await go('analytics');
+  const where = page.locator('.card', { has: heading('Where answers point') });
+  await where.getByRole('button', { name: /Netherlands/ }).click();
+  // Every name the fake upstream answered points to the Netherlands, so
+  // the busiest are listed; any domain row will do.
+  await page.getByRole('dialog').locator('button.link.mono').first().waitFor();
+  await go('queries?country=NL');
+  await page.locator('table').getByText('shop.example.nl').first().waitFor();
+  assert.equal(await page.locator('select[name=country]').inputValue(), 'NL');
+  const q = await api('GET', '/analytics/queries?country=NL&search=shop.example.nl');
+  assert.ok(q.queries.length && q.queries[0].country === 'NL', 'entries carry their country');
+  assert.ok(q.risk['shop.example.nl'] && q.risk['shop.example.nl'].score >= 40, 'a marked country raises the risk');
+  // Turning it off forgets the countries.
+  await go('risk');
+  await page.locator('.card', { has: page.getByRole('heading', { name: /^Location data/ }) }).locator('input[name=geo]').uncheck();
+  await page.locator('.card', { has: page.getByRole('heading', { name: /^Location data/ }) }).getByRole('button', { name: 'Save' }).click();
+  await until('countries cleared', async () => (await api('GET', '/analytics/top?by=countries&range=1h')).rows.length === 0);
+});
+
 step('the query log finds lookups and exports CSV', async () => {
   await go('queries');
   await page.getByRole('combobox', { name: 'Search domains' }).fill('ads.listed.test');

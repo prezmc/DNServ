@@ -99,6 +99,18 @@ Each service is a short, hand-checked list of the domains it needs, so
 blocking one doesn't take shared Google, Meta or Microsoft domains with it.
 An allow rule of your own still wins.
 
+**Top-level domains** are on the same page: tick an ending to block every
+name that ends with it, such as all of `.zip`. "Often abused" lists the
+endings that host a lot of scams for how much they are used (cheap or free
+names). "Country endings" lists every country code (`.ru`, `.cn`); the ones
+marked "used worldwide" (`.io`, `.me`, `.tv`, `.co`) are popular far beyond
+their country, so blocking one blocks many ordinary sites. "Other endings"
+takes any other, including international ones (`.xn--p1ai`). Groups and
+schedules can block endings too. Each ending is one rule, so it costs
+nothing extra per lookup. It goes by the name only, not where a site is
+hosted; to see where answers point, turn on location data (see
+[risk scoring](risk-scoring.md#location-data)).
+
 **Safe search** makes Google, Bing and DuckDuckGo show only safe results and
 puts YouTube in Restricted Mode (moderate), the way those companies ask
 networks to do it: the search site's name is answered as an alias for its

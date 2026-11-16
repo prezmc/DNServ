@@ -617,6 +617,13 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 		}
 		patch.BlockedServices = &ids
 	}
+	if patch.FlagCountries != nil {
+		cc := config.CountryCodes(*patch.FlagCountries)
+		if cc == nil {
+			cc = []string{}
+		}
+		patch.FlagCountries = &cc
+	}
 	if patch.TrustedDomains != nil {
 		out := []string{}
 		for _, d := range *patch.TrustedDomains {
