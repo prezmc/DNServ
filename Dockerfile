@@ -27,6 +27,8 @@ COPY dnserv.example.yaml /etc/dnserv/dnserv.example.yaml
 ENV DNSERV_CONFIG=/data/dnserv.yaml
 VOLUME /data
 EXPOSE 53/udp 53/tcp 853/tcp 443/tcp 8080/tcp 8081/tcp
-USER dnserv
+# Starts as root only long enough to give /data to the dnserv user (65532),
+# so a folder mounted from a NAS works as it is, then switches to that user
+# for good (cmd/dnserv/privdrop_linux.go). Run with --user 65532 to skip it.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD ["/usr/local/bin/dnserv", "-healthcheck", "127.0.0.1:8080"]
 ENTRYPOINT ["/usr/local/bin/dnserv"]

@@ -90,7 +90,6 @@ func run() error {
 	if *installUpdater {
 		return update.InstallUpdater(context.Background(), update.NewDocker(envOr("DOCKER_SOCKET", "/var/run/docker.sock")), *installTarget, os.Stdout, log.With("component", "install-updater"))
 	}
-
 	// Base config: built-in defaults, then the optional file, then
 	// DNSERV_* environment variables. Settings saved in the dashboard
 	// are layered on top, so a node needs no files to get started.
@@ -104,6 +103,9 @@ func run() error {
 	if err := base.Validate(); err != nil {
 		return err
 	}
+	// Everything below writes the data folder: fix its owner and stop
+	// being root before touching it.
+	dropRoot(log, base.DataDir, filepath.Dir(*cfgPath))
 	if *checkConfig {
 		fmt.Println("config OK")
 		return nil

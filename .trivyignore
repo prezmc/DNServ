@@ -1,0 +1,5 @@
+# DS002 "Image user should not be 'root'": the image starts as root only to
+# give the mounted /data folder to the dnserv user, then drops to 65532
+# before doing anything else (cmd/dnserv/privdrop_linux.go).
+DS002
+AVD-DS-0002
