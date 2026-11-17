@@ -14,7 +14,7 @@ Home Assistant and Python.
 | Enroll MFA | `POST /auth/totp/begin` (returns the secret and `otpauth://` URL), `POST /auth/totp/confirm` `{code}` |
 | You | `GET /auth/me` (includes your `dashboard` layout), `PUT /auth/dashboard` `{layout}` (card names in order; `-name` hides a card, `name:s\|m\|l\|f` sets its size: small, medium, large or full width; `[]` is the default), `POST /auth/password`, `GET`/`DELETE /auth/sessions`, `POST /auth/logout`, `POST /auth/recovery-codes` `{password}`, `POST /auth/authenticator/begin` `{password}` then `/confirm` `{code}` |
 | Users | `GET`/`POST /users`, `PATCH`/`DELETE /users/{id}`, `POST /users/{id}/password`, `POST /users/{id}/reset-mfa` |
-| Tokens | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
+| Tokens | `GET /tokens` (each with `last_used` and `last_addr`, recorded every few minutes while in use), `POST /tokens` `{name, perms, expires_days}`, `PATCH /tokens/{id}` `{name, perms}` (rename or change what it can do; the secret stays the same), `DELETE /tokens/{id}`. Making and editing tokens needs a signed-in person, not a token |
 | Settings | `GET`/`PATCH /settings`, `POST /settings/reset` `{fields}`. `cache_size` (1,000 to 5,000,000 answers, upstream.manage) resizes each server's cache at once |
 | Local names | `PATCH /settings` `{records: [{name, value, note}]}` (the whole list; `value` is an IP address or another name) |
 | Lists | `POST /lists/update` (download every list again now), `GET /lists/bundles` (category bundles and their lists) |

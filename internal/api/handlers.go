@@ -494,6 +494,8 @@ type tokenView struct {
 	Perms     []string  `json:"perms"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at,omitzero"`
+	LastUsed  time.Time `json:"last_used,omitzero"`
+	LastAddr  string    `json:"last_addr,omitempty"`
 }
 
 func (a *API) listTokens(w http.ResponseWriter, r *http.Request, p *Principal) {
@@ -501,7 +503,7 @@ func (a *API) listTokens(w http.ResponseWriter, r *http.Request, p *Principal) {
 	out := []tokenView{}
 	for _, t := range a.Store.State().Tokens {
 		if all || t.UserID == p.User.ID {
-			out = append(out, tokenView{t.ID, t.Name, t.UserID, t.Perms, t.CreatedAt, t.ExpiresAt})
+			out = append(out, tokenView{t.ID, t.Name, t.UserID, t.Perms, t.CreatedAt, t.ExpiresAt, t.LastUsed, t.LastAddr})
 		}
 	}
 	slices.SortFunc(out, func(x, y tokenView) int { return x.CreatedAt.Compare(y.CreatedAt) })
@@ -542,6 +544,53 @@ func (a *API) createToken(w http.ResponseWriter, r *http.Request, p *Principal) 
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "token": "dns_" + id + "." + secret, "note": "copy this token now; it won't be shown again"})
+}
+
+// updateToken renames a token or changes what it may do. Like making one,
+// it needs a person signed in, and the token can't be given anything the
+// editor or the token's owner can't do.
+func (a *API) updateToken(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if p.Session == nil {
+		writeErr(w, http.StatusForbidden, "API tokens can't change tokens")
+		return
+	}
+	st := a.Store.State()
+	t, ok := st.Tokens[r.PathValue("id")]
+	if !ok || (t.UserID != p.User.ID && !p.Can(store.PermUsers)) {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		Name  *string
+		Perms *[]string
+	}
+	if !readJSON(w, r, &req) {
+		return
+	}
+	up := store.TokenUpdate{ID: t.ID, Name: req.Name}
+	if req.Perms != nil {
+		if len(*req.Perms) == 0 {
+			writeErr(w, http.StatusBadRequest, "choose at least one permission")
+			return
+		}
+		owner := st.Users[t.UserID]
+		for _, pm := range *req.Perms {
+			if !p.Can(pm) || owner == nil || !owner.Has(pm) {
+				writeErr(w, http.StatusForbidden, "you can't grant "+pm)
+				return
+			}
+		}
+		up.Perms = *req.Perms
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpTokenUpdate, p.Actor(), up)); !ok {
+		return
+	}
+	n := a.Store.State().Tokens[t.ID]
+	if n == nil {
+		writeErr(w, http.StatusNotFound, "not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, tokenView{n.ID, n.Name, n.UserID, n.Perms, n.CreatedAt, n.ExpiresAt, n.LastUsed, n.LastAddr})
 }
 
 func (a *API) revokeToken(w http.ResponseWriter, r *http.Request, p *Principal) {

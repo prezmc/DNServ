@@ -270,6 +270,10 @@ type Token struct {
 	Hash      string    `json:"hash"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	// LastUsed and LastAddr are when and from where the token was last
+	// seen. They are recorded at most every few minutes (see TokenUsed).
+	LastUsed time.Time `json:"last_used,omitzero"`
+	LastAddr string    `json:"last_addr,omitempty"`
 }
 
 // AuditEntry records one change.
