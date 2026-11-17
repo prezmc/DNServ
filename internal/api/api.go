@@ -114,6 +114,11 @@ type API struct {
 	mfaMu    sync.Mutex
 	mfaSteps map[string]int64
 
+	// tokenMarks is when this node last recorded each token's use, so a
+	// busy script doesn't turn every request into a cluster write.
+	tokenMu    sync.Mutex
+	tokenMarks map[string]tokenMark
+
 	now       func() time.Time
 	setupOnce sync.Mutex
 	setupCode string
@@ -184,6 +189,7 @@ func (a *API) Handler() http.Handler {
 	// API tokens.
 	m.HandleFunc("GET /api/v1/tokens", a.authed("", a.listTokens))
 	m.HandleFunc("POST /api/v1/tokens", a.authed("", a.createToken))
+	m.HandleFunc("PATCH /api/v1/tokens/{id}", a.authed("", a.updateToken))
 	m.HandleFunc("DELETE /api/v1/tokens/{id}", a.authed("", a.revokeToken))
 
 	// Settings.
@@ -287,6 +293,7 @@ func (a *API) principal(r *http.Request) (*Principal, int, string) {
 		if t == nil {
 			return nil, http.StatusUnauthorized, "invalid or expired API token"
 		}
+		a.tokenUsed(t, clientIP(r))
 		return &Principal{User: u, Token: t}, 0, ""
 	}
 	s, u := a.session(r, st)
@@ -381,6 +388,51 @@ func (a *API) checkToken(st *store.State, raw string) (*store.Token, *store.User
 		return nil, nil
 	}
 	return t, u
+}
+
+// How often a token's use is recorded: every tokenUseEvery while it is in
+// use, and sooner (but not more than every tokenAddrEvery) when it comes
+// from a new address, so a token used from somewhere unexpected shows up
+// quickly.
+const (
+	tokenUseEvery  = 5 * time.Minute
+	tokenAddrEvery = time.Minute
+)
+
+type tokenMark struct {
+	at   time.Time
+	addr string
+}
+
+// tokenUsed records, in the background, when and from where t was used.
+// Like passkey sign-ins, a request still works when the cluster can't
+// take the change.
+func (a *API) tokenUsed(t *store.Token, addr string) {
+	now := a.now()
+	a.tokenMu.Lock()
+	if a.tokenMarks == nil {
+		a.tokenMarks = map[string]tokenMark{}
+	}
+	last, seen := a.tokenMarks[t.ID]
+	if !seen {
+		// After a restart, start from what the cluster already knows.
+		last = tokenMark{t.LastUsed, t.LastAddr}
+	}
+	since := now.Sub(last.at)
+	due := since >= tokenUseEvery || (addr != last.addr && since >= tokenAddrEvery)
+	if due {
+		a.tokenMarks[t.ID] = tokenMark{now, addr}
+	}
+	a.tokenMu.Unlock()
+	if !due {
+		return
+	}
+	go func() {
+		_, err := a.Store.Apply(store.NewCommand(store.OpTokenUsed, "system", store.TokenUsed{ID: t.ID, Addr: addr}))
+		if err != nil && !errors.Is(err, store.ErrUnavailable) && a.Log != nil {
+			a.Log.Warn("could not record API token use", "token", t.Name, "err", err)
+		}
+	}()
 }
 
 func unsafeMethod(m string) bool {

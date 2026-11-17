@@ -21,6 +21,9 @@ copy. For the full list of endpoints, see the [Admin API](api.md) reference.
 4. Click **Create token** and copy it. It is shown once. DNServ keeps only a
    hash, so a lost token can't be shown again. Revoke it and make a new one.
 
+To rename a token or change what it can do later, click **Edit** next to
+it. Scripts using it keep working with the same secret.
+
 A token can never do more than your own account. If an admin later lowers
 your role or disables your account, your tokens lose the same rights at
 once. Revoking a token works on every server in the cluster.
@@ -43,7 +46,7 @@ and the audit log. Think twice before you do: a token with
 those can add users or remove servers.
 
 Some things always need a person signed in to the dashboard, whatever the
-token can do: making tokens, changing a password, and changing two-factor
+token can do: making or editing tokens, changing a password, and changing two-factor
 or passkeys. A leaked token can't be used to take over an account.
 
 ## 2. Your first call
@@ -295,6 +298,10 @@ for line in open("block-these.txt"):
   a power user rather than an admin where you can.
 - Keep tokens in a secrets file or your CI's secret store, never in a git
   repository.
+- Glance at **Last used** under **Account > API tokens** now and then. It
+  shows when and from which address each token was last used (updated
+  every few minutes). A token that's never used can go; one used from an
+  address you don't recognise has probably leaked.
 - If a token leaks, revoke it under **Account > API tokens**. Admins can
   revoke anyone's token the same way (or delete the user).
 

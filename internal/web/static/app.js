@@ -4574,6 +4574,25 @@ function toast(text, kind) {
   setTimeout(() => t.remove(), kind === 'err' ? 8000 : 4000);
 }
 
+// editToken renames a token or changes what it can do. Scripts using it
+// keep working with the same secret.
+function editToken(t, perms) {
+  const have = new Set(t.perms || []);
+  const d = dialog('Edit token', form({}, [
+    h('label', { for: 'tok-name' }, 'Name'),
+    h('input', { id: 'tok-name', name: 'name', type: 'text', maxlength: 60, value: t.name, required: true, autofocus: true }),
+    h('p', { class: 'muted small' }, 'Can'),
+    h('div', { class: 'perms' }, perms.map(p => h('label', { class: 'inline' }, h('input', { type: 'checkbox', name: 'perm', value: p, checked: have.has(p) }), PERMS[p]))),
+    h('p', { class: 'muted small' }, 'Anything using this token keeps working with the new permissions straight away.'),
+    h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Save'), h('button', { type: 'button', onclick: () => d.close() }, 'Cancel')),
+  ], async (f) => {
+    const chosen = [...f.querySelectorAll('input[name=perm]:checked')].map(i => i.value);
+    if (!chosen.length) throw new Error('Choose at least one permission.');
+    await api('PATCH', '/tokens/' + t.id, { name: val(f, 'name').trim(), perms: chosen });
+    d.close(); route();
+  }));
+}
+
 async function users(main) {
   page(main, 'Users', h('p', { class: 'muted' }, 'Loading…'));
   let list;
@@ -5588,9 +5607,10 @@ async function account(main) {
     h('div', { class: 'card' }, h('h2', {}, 'API tokens'),
       h('p', { class: 'muted' }, 'For scripts and home automation. Send as ', h('code', {}, 'Authorization: Bearer <token>'), '. A token can do only what you pick, and never more than your own account.'),
       tokens.length ? h('div', { class: 'scroll' }, h('table', {},
-        h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Can'), h('th', {}, 'Created'), h('th', {}, 'Expires'), h('th', {}))),
+        h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Can'), h('th', {}, 'Created'), h('th', {}, 'Expires'), h('th', {}, 'Last used'), h('th', {}))),
         h('tbody', {}, tokens.map(t => h('tr', {}, h('td', {}, t.name), h('td', { class: 'small' }, (t.perms || []).map(p => PERMS[p] || p).join(', ')), h('td', {}, fmtTime(t.created_at)), h('td', {}, t.expires_at ? fmtTime(t.expires_at) : 'never'),
-          h('td', {}, h('button', { class: 'link danger', onclick: async () => { if (!(await ask('Revoke the token "' + t.name + '"? Anything using it stops working.', 'Revoke'))) return; try { await api('DELETE', '/tokens/' + t.id); route(); } catch (e) { toast(e.message, 'err'); } } }, 'Revoke'))))))) : null,
+          h('td', { title: t.last_used ? 'Recorded every few minutes while the token is in use' : null }, t.last_used ? [fmtTime(t.last_used), t.last_addr ? h('span', { class: 'muted small' }, ' from ' + t.last_addr) : null] : 'never'),
+          h('td', { class: 'nowrap' }, h('button', { class: 'link', onclick: () => editToken(t, myPerms) }, 'Edit'), ' ', h('button', { class: 'link danger', onclick: async () => { if (!(await ask('Revoke the token "' + t.name + '"? Anything using it stops working.', 'Revoke'))) return; try { await api('DELETE', '/tokens/' + t.id); route(); } catch (e) { toast(e.message, 'err'); } } }, 'Revoke'))))))) : null,
       h('h3', {}, 'New token'),
       form({}, [
         h('div', { class: 'row' },

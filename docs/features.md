@@ -95,7 +95,9 @@ Everything DNServ does today, in more detail than the README.
   and every change is in the audit log with who made it and what it was
   before.
 - **API tokens** for scripts and home automation, limited to the
-  permissions you pick.
+  permissions you pick. Each shows when and from where it was last used,
+  and you can rename it or change its permissions without replacing it.
+  See [Automating DNServ](automation.md).
 - **Pause filtering** from the Dashboard for 1, 5, 15 or 30 minutes, an
   hour, or until you turn it back on, on every server at once or just one.
   A banner counts down and turns it back on in one click. The pause goes

@@ -103,6 +103,8 @@ const (
 	OpUserDashboard  = "user.dashboard"      // UserDashboard
 	OpTokenCreate    = "token.create"        // Token
 	OpTokenRevoke    = "token.revoke"        // IDOnly
+	OpTokenUpdate    = "token.update"        // TokenUpdate
+	OpTokenUsed      = "token.used"          // TokenUsed
 	OpSettingsUpdate = "settings.update"     // Settings
 	OpSettingsReset  = "settings.reset"      // SettingsReset
 	OpDeviceSave     = "device.save"         // Device (creates or replaces)
@@ -226,6 +228,20 @@ type PasskeyUsed struct {
 	ID          []byte
 	SignCount   uint32
 	BackupState bool
+}
+
+// TokenUpdate renames an API token or changes what it may do. A nil
+// field is left as it is.
+type TokenUpdate struct {
+	ID    string   `json:"id"`
+	Name  *string  `json:"name,omitempty"`
+	Perms []string `json:"perms,omitempty"`
+}
+
+// TokenUsed records that a token was used, and from which address.
+type TokenUsed struct {
+	ID   string `json:"id"`
+	Addr string `json:"addr"`
 }
 
 // MaxPasskeys is how many passkeys one user may register.
@@ -562,6 +578,56 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		}
 		delete(st.Tokens, d.ID)
 		return nil, audit(fmt.Sprintf("revoked API token %q", t.Name), nil, nil), nil
+
+	case OpTokenUpdate:
+		var d TokenUpdate
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		t, ok := st.Tokens[d.ID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		var parts []string
+		if d.Name != nil {
+			name := strings.TrimSpace(*d.Name)
+			if name == "" {
+				return nil, nil, errors.New("a token needs a name")
+			}
+			if name != t.Name {
+				parts = append(parts, fmt.Sprintf("renamed it from %q", t.Name))
+				t.Name = name
+			}
+		}
+		if d.Perms != nil {
+			if len(d.Perms) == 0 {
+				return nil, nil, errors.New("choose at least one permission")
+			}
+			if !slices.Equal(d.Perms, t.Perms) {
+				parts = append(parts, "permissions now "+strings.Join(d.Perms, ", "))
+				t.Perms = slices.Clone(d.Perms)
+			}
+		}
+		if len(parts) == 0 {
+			return nil, nil, nil
+		}
+		pub := *t
+		pub.Hash = ""
+		return nil, audit(fmt.Sprintf("changed API token %q: %s", t.Name, strings.Join(parts, "; ")), nil, pub), nil
+
+	case OpTokenUsed:
+		var d TokenUsed
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		t, ok := st.Tokens[d.ID]
+		if !ok {
+			return nil, nil, nil // revoked meanwhile: nothing to record
+		}
+		if c.Time.After(t.LastUsed) {
+			t.LastUsed, t.LastAddr = c.Time, d.Addr
+		}
+		return nil, nil, nil // like sign-ins, token use isn't audited
 
 	case OpSettingsUpdate:
 		var d Settings
