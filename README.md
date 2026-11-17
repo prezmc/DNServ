@@ -89,6 +89,7 @@ Then add the second server as your router's second DNS server. For a trusted cer
 | [Backups and history](docs/backups.md) | Encrypted backups to a NAS, SMB share or S3, schedules, restore |
 | [Moving from AdGuard Home](docs/adguard-import.md) | What the importer brings across |
 | [Tunnel mode](docs/tunnel-mode.md) | Recursive DNS through a WireGuard VPN |
+| [Automating DNServ](docs/automation.md) | Scripts, Home Assistant and CI: make a token, then copy-paste recipes |
 | [Admin API](docs/api.md) | Endpoints, tokens, permissions, account recovery |
 | [Performance](docs/performance.md) | Benchmarks and the `dnsbench` load tester |
 | [Development](docs/development.md) | Building, tests and roadmap |
