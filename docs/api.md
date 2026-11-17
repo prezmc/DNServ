@@ -2,7 +2,9 @@
 
 Everything is under `/api/v1` on port 8080. Browsers use a session cookie
 plus the `X-CSRF-Token` header from the sign-in response; scripts use
-`Authorization: Bearer dns_…` tokens.
+`Authorization: Bearer dns_…` tokens. New to the API? Start with
+[Automating DNServ](automation.md): making a token, then recipes for curl,
+Home Assistant and Python.
 
 | | Endpoint |
 |---|---|
@@ -36,7 +38,7 @@ plus the `X-CSRF-Token` header from the sign-in response; scripts use
 | Status and audit | `GET /status` (each list's status includes `changed`, when its owner last changed it, and `changed_from`: `list` header date, `server` Last-Modified, or `seen` when new contents arrived), `GET /audit` |
 
 Permissions: `dashboard.view`, `querylog.view`, `data.export`,
-`domains.allowblock`, `rules.edit`, `lists.manage`, `devices.manage`,
+`domains.allowblock`, `rules.edit`, `lists.manage`, `filtering.pause`, `devices.manage`,
 `upstream.manage`, `network.manage` (any of these can be given to a power
 user), and the admin-only `users.manage`, `cluster.manage`,
 `backups.manage`, `audit.view`.
