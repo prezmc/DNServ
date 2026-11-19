@@ -17,3 +17,9 @@ binding = "DB"
 database_name = "dnserv-stats"
 database_id = "DATABASE_ID"
 migrations_dir = "migrations"
+
+# An overall cap on reports (not per sender: their address is never read).
+[[ratelimits]]
+name = "LIMITER"
+namespace_id = "1001"
+simple = { limit = 300, period = 60 }

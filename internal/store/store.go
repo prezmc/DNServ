@@ -215,8 +215,11 @@ type User struct {
 	TOTPLastStep   int64     `json:"totp_last_step,omitempty"`
 	RecoveryHashes []string  `json:"recovery_hashes,omitempty"`
 	MFAResetAt     time.Time `json:"mfa_reset_at,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	CreatedBy      string    `json:"created_by,omitempty"`
+	// SignedOutAt ends every session made before it, on every server
+	// (sessions themselves are kept per server).
+	SignedOutAt time.Time `json:"signed_out_at,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+	CreatedBy   string    `json:"created_by,omitempty"`
 
 	// Dashboard is the user's own order of the dashboard cards; a card
 	// listed with a leading "-" is hidden. Empty means the default.

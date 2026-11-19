@@ -10,6 +10,13 @@ const MAX_BODY = 4096;
 const KEEP_DAYS = 90;
 // A country is shown only when at least this many clusters share it.
 const MIN_GROUP = 5;
+// A week takes at most this many reports. Reports carry no identity (on
+// purpose), so this bounds what a flood of made-up ones can do to the
+// public numbers and the database.
+export const MAX_WEEK = 20000;
+// Totals are cached this long, so /v1/totals can't be used to make the
+// database do a full summary on every request.
+const TOTALS_TTL = 3600;
 
 const RANGES = ['0', '1-10', '11-50', '51-100', '101-250', '251-1000', '1000+'];
 const DAY_RANGES = ['0', '<1k', '1k-10k', '10k-100k', '100k-1M', '1M+'];
@@ -54,6 +61,13 @@ export function clean(r) {
 }
 
 async function report(request, env) {
+  // An overall limit (the LIMITER binding in wrangler.toml), keyed by
+  // nothing about the sender: their address is never read, not even to
+  // count it.
+  if (env.LIMITER) {
+    const { success } = await env.LIMITER.limit({ key: 'report' });
+    if (!success) return json({ error: 'busy, try later' }, 429);
+  }
   const len = Number(request.headers.get('content-length') || 0);
   if (len > MAX_BODY) return json({ error: 'too big' }, 413);
   const text = await request.text();
@@ -65,6 +79,8 @@ async function report(request, env) {
   // never read.
   const country = str(request.cf && request.cf.country, 2, /^[A-Z]{2}$/);
   const day = new Date().toISOString().slice(0, 10);
+  const have = await env.DB.prepare('SELECT COUNT(*) AS n FROM reports WHERE week = ?').bind(r.week).first();
+  if (have && have.n >= MAX_WEEK) return json({ error: 'this week is full' }, 429);
   await env.DB.prepare(`INSERT OR IGNORE INTO reports (report_id, week, received, country, schema, version, channel, arch,
       servers, witnesses, upstream_mode, devices, lookups_per_day, answer_ms_p50, answer_ms_p95, cache_hit_pct,
       blocked_pct, failed_pct, lists, features) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
@@ -112,7 +128,22 @@ export function summarize(week, rows) {
   };
 }
 
-async function totals(env) {
+async function totals(request, env, ctx) {
+  const cache = typeof caches !== 'undefined' ? caches.default : null;
+  const key = new Request(new URL('/v1/totals', request.url).toString());
+  if (cache) {
+    const hit = await cache.match(key);
+    if (hit) return hit;
+  }
+  const res = await buildTotals(env);
+  if (cache) {
+    const put = cache.put(key, res.clone());
+    if (ctx && ctx.waitUntil) ctx.waitUntil(put); else await put;
+  }
+  return res;
+}
+
+async function buildTotals(env) {
   const { results: weeks } = await env.DB.prepare('SELECT week, totals FROM weeks ORDER BY week').all();
   const done = new Map(weeks.map(w => [w.week, JSON.parse(w.totals)]));
   const { results: open } = await env.DB.prepare('SELECT DISTINCT week FROM reports ORDER BY week').all();
@@ -122,7 +153,7 @@ async function totals(env) {
     done.set(week, summarize(week, results));
   }
   const list = [...done.values()].sort((a, b) => a.week.localeCompare(b.week));
-  return json({ weeks: list, updated: new Date().toISOString() }, 200, { 'cache-control': 'public, max-age=3600' });
+  return json({ weeks: list, updated: new Date().toISOString() }, 200, { 'cache-control': `public, max-age=${TOTALS_TTL}` });
 }
 
 // tidy saves totals for weeks that are over, then deletes old reports.
@@ -137,11 +168,11 @@ async function tidy(env) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET' } });
     if (url.pathname === '/v1/report' && request.method === 'POST') return report(request, env);
-    if (url.pathname === '/v1/totals' && request.method === 'GET') return totals(env);
+    if (url.pathname === '/v1/totals' && request.method === 'GET') return totals(request, env, ctx);
     if (url.pathname === '/') return Response.redirect('https://dnserv.dev/stats.html', 302);
     return json({ error: 'not found' }, 404);
   },

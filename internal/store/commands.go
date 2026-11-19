@@ -101,6 +101,7 @@ const (
 	OpRecoveryReset  = "user.recovery_reset" // RecoveryReset
 	OpMFAReset       = "user.mfa_reset"      // IDOnly
 	OpUserDashboard  = "user.dashboard"      // UserDashboard
+	OpUserSignOut    = "user.sign_out"       // IDOnly: end sessions everywhere
 	OpTokenCreate    = "token.create"        // Token
 	OpTokenRevoke    = "token.revoke"        // IDOnly
 	OpTokenUpdate    = "token.update"        // TokenUpdate
@@ -460,6 +461,18 @@ func apply(st *State, c Command) (any, *AuditEntry, error) {
 		}
 		u.RecoveryHashes = slices.Delete(u.RecoveryHashes, i, i+1)
 		return nil, audit(fmt.Sprintf("%q signed in with a recovery code (%d left)", u.Username, len(u.RecoveryHashes)), nil, nil), nil
+
+	case OpUserSignOut:
+		var d IDOnly
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		u, ok := st.Users[d.ID]
+		if !ok {
+			return nil, nil, ErrNotFound
+		}
+		u.SignedOutAt = c.Time
+		return nil, audit(fmt.Sprintf("signed %q out on every server", u.Username), nil, nil), nil
 
 	case OpMFAReset:
 		var d IDOnly

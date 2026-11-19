@@ -24,3 +24,23 @@ test('summarize hides small countries', () => {
   assert.equal(t.features.https, 6);
   assert.equal(t.median.answer_ms_p50, 3);
 });
+
+test('report is refused once the week is full, and the limiter is honoured', async () => {
+  const { default: worker, MAX_WEEK } = await import('./index.js');
+  let inserted = 0;
+  const db = (count) => ({
+    prepare: (sql) => ({
+      bind: () => ({
+        first: async () => ({ n: count }),
+        run: async () => { inserted++; },
+      }),
+    }),
+  });
+  const body = JSON.stringify({ report_id: 'b'.repeat(32), week: '2026-W47', schema: 1 });
+  const req = () => new Request('https://stats.example/v1/report', { method: 'POST', body });
+  assert.equal((await worker.fetch(req(), { DB: db(MAX_WEEK) })).status, 429);
+  assert.equal(inserted, 0);
+  assert.equal((await worker.fetch(req(), { DB: db(0), LIMITER: { limit: async () => ({ success: false }) } })).status, 429);
+  assert.equal((await worker.fetch(req(), { DB: db(0), LIMITER: { limit: async () => ({ success: true }) } })).status, 204);
+  assert.equal(inserted, 1);
+});

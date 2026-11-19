@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -1034,7 +1035,7 @@ func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, ups 
 		fmt.Fprintln(w, "# TYPE dnserv_upstream_latency_ms gauge")
 		for _, g := range up.groups {
 			for _, s := range g.Stats() {
-				fmt.Fprintf(w, "dnserv_upstream_latency_ms{server=%q} %g\n", s.Server, s.LatencyMS)
+				fmt.Fprintf(w, "dnserv_upstream_latency_ms{server=%q} %g\n", metricsServer(s.Server), s.LatencyMS)
 			}
 		}
 		if up.unbound != nil {
@@ -1047,6 +1048,23 @@ func httpHandler(srv *server.Server, c *cache.Cache, engine *filter.Engine, ups 
 		}
 	})
 	return mux
+}
+
+// metricsServer names an upstream for /metrics, which needs no sign-in:
+// scheme and host only, so a DoH path that holds a NextDNS or ControlD
+// profile ID (or a user:password) isn't shown.
+func metricsServer(s string) string {
+	u, err := url.Parse(s)
+	if err != nil || u.Host == "" {
+		if strings.Contains(s, "://") {
+			return "upstream"
+		}
+		if i := strings.IndexAny(s, "/?#@"); i >= 0 {
+			return s[:i]
+		}
+		return s
+	}
+	return u.Scheme + "://" + u.Host
 }
 
 // probe checks a running node's health endpoint. Distroless images have no

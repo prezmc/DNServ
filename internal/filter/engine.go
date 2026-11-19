@@ -297,8 +297,13 @@ func (e *Engine) open(ctx context.Context, src string, force bool) (io.ReadClose
 		if err != nil {
 			return nil, false, time.Time{}, err
 		}
-		fi, _ := f.Stat()
-		return f, false, fi.ModTime(), nil
+		fi, err := f.Stat()
+		if err != nil || !fi.Mode().IsRegular() {
+			f.Close()
+			return nil, false, time.Time{}, fmt.Errorf("list %s isn't a file", src)
+		}
+		// Bounded like a download, so a huge file can't stall the rebuild.
+		return limitedFile{io.LimitReader(f, maxListBytes), f}, false, fi.ModTime(), nil
 	}
 
 	cachePath := e.localCopy(src)
@@ -322,6 +327,11 @@ func (e *Engine) open(ctx context.Context, src string, force bool) (io.ReadClose
 		return nil, false, time.Time{}, err
 	}
 	return f, false, time.Now(), nil
+}
+
+type limitedFile struct {
+	io.Reader
+	io.Closer
 }
 
 // DownloadURL is where a list is fetched from. GitHub file pages

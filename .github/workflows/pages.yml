@@ -25,7 +25,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Assemble the site
         run: |
           mkdir -p _site/images/setup
@@ -33,6 +33,6 @@ jobs:
           cp docs/images/*.png _site/images/
           cp docs/images/setup/*.webp _site/images/setup/
           cp internal/web/static/logo.svg internal/web/static/favicon-32.png internal/web/static/apple-touch-icon.png _site/
-      - uses: actions/upload-pages-artifact@v5
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
       - id: deploy
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

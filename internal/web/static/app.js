@@ -2732,7 +2732,7 @@ async function domainDialog(name, range) {
       x.partial ? h('p', { class: 'muted small' }, 'Some lists took too long to check.') : null);
   }).catch(e => fill(alsoOn, h('h3', {}, 'On your lists'), msg('err', e.message)));
   const vtBox = h('div', {});
-  api('GET', '/virustotal').then(x => {
+  if (can('domains.allowblock')) api('GET', '/virustotal').then(x => {
     if (!x.configured) return;
     const btn = h('button', { type: 'button', onclick: async () => {
       btn.disabled = true;
@@ -4609,6 +4609,7 @@ async function users(main) {
       h('button', { class: 'link', onclick: () => act(() => api('PATCH', '/users/' + u.id, { disabled: !u.disabled })) }, u.disabled ? 'Enable' : 'Disable'),
       h('button', { class: 'link', onclick: () => tempPassword(u) }, 'Set password'),
       u.mfa_enrolled ? h('button', { class: 'link', onclick: async () => (await ask('Reset two-factor sign-in for ' + u.username + '? Their passkeys are removed and they set up the app again at their next sign-in.', 'Reset 2FA')) && act(() => api('POST', '/users/' + u.id + '/reset-mfa')) }, 'Reset 2FA') : null,
+      u.id !== ME.user.id ? h('button', { class: 'link', onclick: async () => (await ask('Sign ' + u.username + ' out on every server? Their API tokens keep working; revoke those under Your account > API tokens.', 'Sign out')) && act(() => api('POST', '/users/' + u.id + '/sign-out')) }, 'Sign out') : null,
       u.id !== ME.user.id ? h('button', { class: 'link danger', onclick: async () => (await ask('Delete ' + u.username + '? Their API tokens stop working.', 'Delete user')) && act(() => api('DELETE', '/users/' + u.id)) }, 'Delete') : null))));
 
   const picker = permPicker('viewer', []);
@@ -5597,6 +5598,11 @@ async function account(main) {
     pkCard,
 
     h('div', { class: 'card' }, h('h2', {}, 'Signed-in sessions'),
+      h('p', { class: 'muted' }, 'Browsers signed in to this server. Each server keeps its own list; ', h('b', {}, 'Sign out everywhere else'), ' ends every other session on every server.'),
+      h('div', { class: 'actions' }, h('button', { type: 'button', onclick: async () => {
+        if (!(await ask('Sign out every other browser, on every server? This one stays signed in. API tokens keep working.', 'Sign out everywhere else'))) return;
+        try { await api('POST', '/auth/sessions/sign-out-others'); toast('Signed out everywhere else.'); route(); } catch (e) { toast(e.message, 'err'); }
+      } }, 'Sign out everywhere else')),
       h('div', { class: 'scroll' }, h('table', {},
         h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'IP'), h('th', {}, 'Signed in'), h('th', {}, 'Last used'), h('th', {}))),
         h('tbody', {}, sessions.filter(x => x.stage === 'full').map(x => h('tr', {},

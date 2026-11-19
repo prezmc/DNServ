@@ -33,7 +33,9 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/analytics/queries", a.authed(store.PermQueryLog, a.analyticsQueries))
 	m.HandleFunc("GET /api/v1/analytics/export", a.authed(store.PermExport, a.analyticsExport))
 	m.HandleFunc("GET /api/v1/analytics/alsoon", a.authed(store.PermDashboard, a.analyticsAlsoOn))
-	m.HandleFunc("POST /api/v1/analytics/virustotal", a.authed(store.PermDashboard, a.virusTotalLookup))
+	// Lookups spend the owner's VirusTotal quota and send the name to
+	// VirusTotal, so only people who can act on a domain can ask.
+	m.HandleFunc("POST /api/v1/analytics/virustotal", a.authed(store.PermAllowBlock, a.virusTotalLookup))
 	m.HandleFunc("GET /api/v1/virustotal", a.authed(store.PermDashboard, a.virusTotalStatus))
 	m.HandleFunc("PUT /api/v1/virustotal", a.authed(store.PermLists, a.virusTotalSetKey))
 	m.HandleFunc("PUT /api/v1/abusech", a.authed(store.PermLists, a.abuseCHSetKey))
@@ -721,7 +723,7 @@ func (a *API) analyticsExport(w http.ResponseWriter, r *http.Request, p *Princip
 			sc = strconv.Itoa(a.Intel.Score(e.Name).Score)
 			scores[e.Name] = sc
 		}
-		cw.Write([]string{e.Time, e.Node, e.Client, csvSafe(l.names[e.Client]), e.Name, e.Type, e.Result, strconv.FormatBool(e.Allowed),
+		cw.Write([]string{e.Time, csvSafe(e.Node), csvSafe(e.Client), csvSafe(l.names[e.Client]), csvSafe(e.Name), e.Type, e.Result, strconv.FormatBool(e.Allowed),
 			e.Rcode, strconv.Itoa(e.Answers), strconv.FormatFloat(e.Ms, 'f', 2, 64), csvSafe(e.Rule), csvSafe(e.List), sc, e.Country})
 	}
 	cw.Flush()

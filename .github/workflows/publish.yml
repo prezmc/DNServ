@@ -22,6 +22,9 @@ on:
 permissions:
   contents: read
   packages: write
+  # Signed build provenance (see "Attest" below).
+  id-token: write
+  attestations: write
 
 # One publish at a time, so an older run can't overwrite "latest" after a
 # newer one.
@@ -35,18 +38,18 @@ jobs:
     env:
       HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Log in to Docker Hub
         if: env.HAS_DOCKERHUB == 'true'
-        uses: docker/login-action@v4
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -63,9 +66,10 @@ jobs:
           if [ "$HAS_DOCKERHUB" = "true" ]; then echo "${DOCKERHUB_IMAGE,,}" >> "$GITHUB_OUTPUT"; fi
           echo "EOF" >> "$GITHUB_OUTPUT"
           echo "dockerhub=${DOCKERHUB_IMAGE,,}" >> "$GITHUB_OUTPUT"
+          echo "ghcr=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/dnserv" >> "$GITHUB_OUTPUT"
       - name: Image tags
         id: meta
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         env:
           # The revision and date also go on the multi-arch index, so a
           # running DNServ can see what's newest with one small request
@@ -84,7 +88,8 @@ jobs:
             type=raw,value=stable,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=sha,format=short
       - name: Build and push
-        uses: docker/build-push-action@v7
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -99,13 +104,22 @@ jobs:
           no-cache-filters: runtime
           cache-from: type=gha,scope=publish
           cache-to: type=gha,mode=max,scope=publish
+      # Signed provenance on ghcr.io: anyone can check an image was built
+      # by this workflow from this repository, with
+      #   gh attestation verify oci://ghcr.io/prezmc/dnserv:stable -R prezmc/DNServ
+      - name: Attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
+        with:
+          subject-name: ${{ steps.names.outputs.ghcr }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
       # Keep the Docker Hub page in step with docs/docker-hub.md. Needs the
       # token to have Read, Write & Delete access; if it doesn't, the image
       # is still published and only this step is marked as failed.
       - name: Update Docker Hub description
         if: env.HAS_DOCKERHUB == 'true' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         continue-on-error: true
-        uses: peter-evans/dockerhub-description@v4
+        uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77 # v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
