@@ -195,3 +195,28 @@ func TestRiskDismiss(t *testing.T) {
 		t.Error("empty name accepted")
 	}
 }
+
+func TestClusterCertPin(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A node from before pinning has no pin.
+	mustApply(t, s, OpClusterInit, ClusterInit{ID: "c1", CACert: "ca", CAKey: "k", Node: Node{ID: "n1", Name: "one", Addr: "x:1"}})
+	mustApply(t, s, OpClusterCert, ClusterCert{ID: "n1", CertFP: "fp1"})
+	if fp := s.State().Cluster.Nodes["n1"].CertFP; fp != "fp1" {
+		t.Fatalf("pin %q", fp)
+	}
+	mustApply(t, s, OpClusterCert, ClusterCert{ID: "n1", CertFP: "fp1"}) // same again is fine
+	if _, err := s.Apply(NewCommand(OpClusterCert, "t", ClusterCert{ID: "n1", CertFP: "fp2"})); err == nil {
+		t.Fatal("a pinned node was re-pinned")
+	}
+	if _, err := s.Apply(NewCommand(OpClusterCert, "t", ClusterCert{ID: "nope", CertFP: "fp"})); err == nil {
+		t.Fatal("pinned a node that isn't there")
+	}
+	// Renaming or moving a node keeps its pin, whatever the update says.
+	mustApply(t, s, OpClusterNode, Node{ID: "n1", Name: "renamed", Addr: "x:2", CertFP: "evil"})
+	if fp := s.State().Cluster.Nodes["n1"].CertFP; fp != "fp1" {
+		t.Fatalf("node update changed the pin to %q", fp)
+	}
+}

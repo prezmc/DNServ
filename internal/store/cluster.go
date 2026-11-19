@@ -37,6 +37,11 @@ type Node struct {
 	// leadership to a full node whenever it gets it.
 	Witness  bool      `json:"witness,omitempty"`
 	JoinedAt time.Time `json:"joined_at"`
+	// CertFP pins the node's own certificate (base64url SHA-256 of its
+	// DER). Every node holds the CA key, so a node that has left could
+	// otherwise sign itself a new certificate under a member's ID. Empty
+	// on nodes from before pinning until they send theirs (OpClusterCert).
+	CertFP string `json:"cert_fp,omitempty"`
 }
 
 // JoinCode lets one new node join. Only a hash of its secret is kept.
@@ -56,6 +61,7 @@ const (
 	OpJoinCodeCreate   = "cluster.join_code" // JoinCode
 	OpClusterJoin      = "cluster.join"      // ClusterJoin
 	OpClusterRecovered = "cluster.recovered" // ClusterRecovered
+	OpClusterCert      = "cluster.cert"      // ClusterCert
 	opClusterPrefix    = "cluster."
 )
 
@@ -68,6 +74,14 @@ type ClusterInit struct {
 	CAKey  string `json:"ca_key"`
 	Node   Node   `json:"node"`
 	Import *State `json:"import,omitempty"`
+}
+
+// ClusterCert pins a node's certificate where none is pinned yet. The
+// leader accepts it only from that node, over a connection made with that
+// certificate.
+type ClusterCert struct {
+	ID     string `json:"id"`
+	CertFP string `json:"cert_fp"`
 }
 
 // ClusterJoin uses a join code to add a node.
@@ -157,7 +171,7 @@ func applyCluster(st *State, c Command, dec func(any) error) (any, *AuditEntry, 
 		if d.NeverLeader && !old.NeverLeader && leaders(cs) <= 1 {
 			return nil, nil, errors.New("at least one node must be able to lead")
 		}
-		d.JoinedAt, d.Witness = old.JoinedAt, old.Witness
+		d.JoinedAt, d.Witness, d.CertFP = old.JoinedAt, old.Witness, old.CertFP
 		if d.Witness && d.NeverLeader {
 			return nil, nil, errors.New("a witness always votes; remove it instead")
 		}
@@ -260,6 +274,21 @@ func applyCluster(st *State, c Command, dec func(any) error) (any, *AuditEntry, 
 		delete(cs.JoinCodes, d.CodeID)
 		cs.Nodes[d.Node.ID] = &d.Node
 		return name, audit(fmt.Sprintf("node %q joined the cluster", name), nil, d.Node), nil
+
+	case OpClusterCert:
+		var d ClusterCert
+		if err := dec(&d); err != nil {
+			return nil, nil, err
+		}
+		n := cs.Nodes[d.ID]
+		if n == nil {
+			return nil, nil, ErrNotFound
+		}
+		if d.CertFP == "" || (n.CertFP != "" && n.CertFP != d.CertFP) {
+			return nil, nil, errors.New("this node's certificate is already pinned")
+		}
+		n.CertFP = d.CertFP
+		return nil, nil, nil
 
 	case OpClusterRecovered:
 		var d ClusterRecovered

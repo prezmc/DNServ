@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -50,11 +51,16 @@ func (a *API) passkeyRoutes(m *http.ServeMux) {
 const (
 	ceremonyTTL = 3 * time.Minute
 	maxCeremony = 500
+	// maxPerOwner bounds the ceremonies one client address (sign-in with
+	// a passkey alone, which needs no account) or one signed-in user can
+	// have open, so nobody can use up the whole pool.
+	maxPerOwner = 10
 )
 
 type ceremony struct {
 	kind    string // "register", "login", "mfa"
 	userID  string // "" for a sign-in with a passkey alone
+	owner   string // who started it: a client address block or a user
 	rpID    string
 	origin  string
 	data    webauthn.SessionData
@@ -72,15 +78,20 @@ func (c *ceremonies) put(x *ceremony, now time.Time) (string, error) {
 	if c.m == nil {
 		c.m = map[string]*ceremony{}
 	}
+	mine := 0
+	for k, v := range c.m {
+		switch {
+		case now.After(v.expires):
+			delete(c.m, k)
+		case v.owner == x.owner:
+			mine++
+		}
+	}
+	if mine >= maxPerOwner {
+		return "", errors.New("too many passkey sign-ins started from here; finish one or try again in a few minutes")
+	}
 	if len(c.m) >= maxCeremony {
-		for k, v := range c.m {
-			if now.After(v.expires) {
-				delete(c.m, k)
-			}
-		}
-		if len(c.m) >= maxCeremony {
-			return "", errors.New("too many passkey sign-ins in progress; try again in a minute")
-		}
+		return "", errors.New("too many passkey sign-ins in progress; try again in a minute")
 	}
 	id := auth.RandomID(18)
 	x.expires = now.Add(ceremonyTTL)
@@ -101,6 +112,21 @@ func (c *ceremonies) take(id, kind string, now time.Time) *ceremony {
 		return nil
 	}
 	return x
+}
+
+// addrBlock is the address a client is counted by: the address itself
+// for IPv4, its /64 for IPv6 (one home or phone has a whole /64).
+func addrBlock(ip string) string {
+	a, err := netip.ParseAddr(ip)
+	if err != nil {
+		return ip
+	}
+	a = a.Unmap()
+	if a.Is6() {
+		p, _ := a.Prefix(64)
+		return p.String()
+	}
+	return a.String()
 }
 
 // --- relying party ---
@@ -277,7 +303,7 @@ func (a *API) passkeyRegisterBegin(w http.ResponseWriter, r *http.Request, p *Pr
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ticket, err := a.passkeyCer.put(&ceremony{kind: "register", userID: p.User.ID, rpID: rpID, origin: origin, data: *data}, a.now())
+	ticket, err := a.passkeyAcct.put(&ceremony{kind: "register", userID: p.User.ID, owner: "u:" + p.User.ID, rpID: rpID, origin: origin, data: *data}, a.now())
 	if err != nil {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -296,7 +322,7 @@ func (a *API) passkeyRegisterFinish(w http.ResponseWriter, r *http.Request, p *P
 	if !readJSON(w, r, &req) {
 		return
 	}
-	c := a.passkeyCer.take(req.Ticket, "register", a.now())
+	c := a.passkeyAcct.take(req.Ticket, "register", a.now())
 	if c == nil || c.userID != p.User.ID {
 		writeErr(w, http.StatusBadRequest, "that took too long; try again")
 		return
@@ -401,7 +427,7 @@ func (a *API) passkeyLoginBegin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ticket, err := a.passkeyCer.put(&ceremony{kind: "login", rpID: rpID, origin: origin, data: *data}, a.now())
+	ticket, err := a.passkeyCer.put(&ceremony{kind: "login", owner: addrBlock(clientIP(r)), rpID: rpID, origin: origin, data: *data}, a.now())
 	if err != nil {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -479,7 +505,7 @@ func (a *API) passkeyMFABegin(w http.ResponseWriter, r *http.Request, p *Princip
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	ticket, err := a.passkeyCer.put(&ceremony{kind: "mfa", userID: p.User.ID, rpID: rpID, origin: origin, data: *data}, a.now())
+	ticket, err := a.passkeyAcct.put(&ceremony{kind: "mfa", userID: p.User.ID, owner: "u:" + p.User.ID, rpID: rpID, origin: origin, data: *data}, a.now())
 	if err != nil {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -500,7 +526,7 @@ func (a *API) passkeyMFAFinish(w http.ResponseWriter, r *http.Request, p *Princi
 		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("too many failed tries; try again in %s", wait.Round(time.Second)))
 		return
 	}
-	c := a.passkeyCer.take(req.Ticket, "mfa", a.now())
+	c := a.passkeyAcct.take(req.Ticket, "mfa", a.now())
 	if c == nil || c.userID != p.User.ID {
 		writeErr(w, http.StatusBadRequest, "that took too long; try again")
 		return

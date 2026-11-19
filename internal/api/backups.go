@@ -136,7 +136,9 @@ func (a *API) backupS3Set(w http.ResponseWriter, r *http.Request, p *Principal) 
 		return
 	}
 	if strings.TrimSpace(t.SecretKey) == "" {
-		if old := a.Store.State().BackupS3; old != nil {
+		// The saved secret is reused only for the same service and key
+		// ID, so it can't be pointed at somewhere else.
+		if old := a.Store.State().BackupS3; old != nil && sameS3(t, *old) {
 			t.SecretKey = old.SecretKey
 		}
 	}
@@ -174,7 +176,10 @@ func (a *API) backupSMBSet(w http.ResponseWriter, r *http.Request, p *Principal)
 		return
 	}
 	if t.Password == "" {
-		if old := a.Store.State().BackupSMB; old != nil {
+		// The saved password is reused only for the same server and
+		// account: signing in to another server would hand it a hash of
+		// the password that can be cracked offline.
+		if old := a.Store.State().BackupSMB; old != nil && sameSMB(t, *old) {
 			t.Password = old.Password
 		}
 	}
@@ -192,6 +197,26 @@ func (a *API) backupSMBSet(w http.ResponseWriter, r *http.Request, p *Principal)
 	if _, ok := a.apply(w, store.NewCommand(store.OpBackupSMB, p.Actor(), t)); ok {
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// sameS3 reports whether t (secret not filled in yet) is the same
+// service, region and access key as the saved target.
+func sameS3(t, old store.S3Target) bool {
+	t.SecretKey = "unchanged"
+	if t.Clean() != nil {
+		return false
+	}
+	return strings.EqualFold(t.Endpoint, old.Endpoint) && strings.EqualFold(t.Region, old.Region) && t.AccessKey == old.AccessKey
+}
+
+// sameSMB reports whether t (password not filled in yet) signs in to the
+// same server with the same account as the saved share.
+func sameSMB(t, old store.SMBTarget) bool {
+	t.Password = "unchanged"
+	if t.Clean() != nil {
+		return false
+	}
+	return strings.EqualFold(t.Server, old.Server) && strings.EqualFold(t.User, old.User) && strings.EqualFold(t.Domain, old.Domain)
 }
 
 // backupUpload makes a backup now and copies it to the bucket or share.
@@ -383,13 +408,29 @@ func (a *API) setupRestore(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, err.Error())
 		return
 	}
-	file, form, ok := readBackupForm(w, r)
-	if !ok {
+	// Everything that needs no upload is checked before the (large) file
+	// is read, so nobody can make a set-up node read uploads at all, or a
+	// new one read more than one at a time.
+	if a.SetupCode() == "" || len(a.Store.State().Users) > 0 {
+		writeErr(w, http.StatusConflict, "this node is already set up; sign in and use Backups to restore")
 		return
 	}
 	ip := clientIP(r)
 	if ok, wait := a.Throttle.Allowed("setup:" + ip); !ok {
 		writeErr(w, http.StatusTooManyRequests, fmt.Sprintf("too many attempts; try again in %s", wait.Round(time.Second)))
+		return
+	}
+	select {
+	case a.setupUpload <- struct{}{}:
+		defer func() { <-a.setupUpload }()
+	default:
+		writeErr(w, http.StatusTooManyRequests, "another restore is being uploaded; try again in a moment")
+		return
+	}
+	// A slow upload mustn't hold the one place for long.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(2 * time.Minute))
+	file, form, ok := readBackupForm(w, r)
+	if !ok {
 		return
 	}
 	a.setupOnce.Lock()

@@ -30,7 +30,9 @@ nobody can open one. Keep it in a password manager.
   mounting on the server. **Check and save** writes, reads and deletes a
   test file first; **Copy a backup now** sends one straight away. The
   leading node writes one copy of each scheduled backup and keeps the same
-  number there. The password is stored like the S3 secret key.
+  number there. The password is stored like the S3 secret key, and kept
+  when you save again with the box empty, but only for the same server and
+  user: point it at another server and you type the password again.
 - **Off-site in S3:** under **Where backups go**, choose **Set up** on **S3 storage**
   and enter the bucket. Amazon S3, Backblaze B2, Cloudflare R2, Wasabi,
   MinIO and other S3-compatible storage work: leave Endpoint empty for

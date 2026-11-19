@@ -16,6 +16,7 @@ package cluster
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,7 @@ type Cluster struct {
 	leaderSince  time.Time
 	lastTransfer atomic.Int64 // unix nanoseconds; also set by RPC handlers
 	lastAddrSync time.Time
+	lastCertSync time.Time
 	wasLeader    string
 
 	// initMu makes cluster.init the first change a new cluster takes:
@@ -641,6 +643,7 @@ func (c *Cluster) tick() {
 		c.reconcile(r)
 	}
 	c.syncAddr()
+	c.syncCert()
 }
 
 // ensureInit puts the cluster's CA and this node into the replicated
@@ -670,7 +673,7 @@ func (c *Cluster) ensureInit() {
 		return // joined node: the cluster's leader initializes it
 	}
 	init := store.ClusterInit{ID: id.ClusterID, CACert: id.CAPEM, CAKey: id.PendingCAKey,
-		Node: store.Node{ID: id.ID, Name: id.Name, Addr: c.advertise()}}
+		Node: store.Node{ID: id.ID, Name: id.Name, Addr: c.advertise(), CertFP: c.ownFP()}}
 	if st.Version > 0 {
 		init.Import = st
 	}
@@ -812,11 +815,48 @@ func (c *Cluster) caughtUp(r *raft.Raft, id string) bool {
 	return err == nil && ps.AppliedIndex+10 >= r.AppliedIndex()
 }
 
-// isMember reports whether a node may use Raft with this one. A node with
-// no members yet (it is joining) accepts the cluster's nodes.
-func (c *Cluster) isMember(nodeID string) bool {
+// isMember reports whether the node presenting cert (already checked
+// against the cluster CA) may use Raft and the node API with this one. A
+// node with no members yet (it is joining) accepts the cluster's nodes.
+// The certificate must be the one pinned for that node: every node holds
+// the CA key, so one that was removed could sign another for a member's
+// ID. Nodes from before pinning are known by ID until they send their pin.
+func (c *Cluster) isMember(cert *x509.Certificate) bool {
 	nodes := c.st.State().Cluster.Nodes
-	return len(nodes) == 0 || nodes[nodeID] != nil
+	if len(nodes) == 0 {
+		return true
+	}
+	if cert == nil {
+		return false
+	}
+	n := nodes[cert.Subject.CommonName]
+	return n != nil && (n.CertFP == "" || n.CertFP == certFP(cert.Raw))
+}
+
+// ownFP is the pin of this node's certificate ("" if unknown).
+func (c *Cluster) ownFP() string {
+	cr := c.creds.Load()
+	if cr == nil || len(cr.cert.Certificate) == 0 {
+		return ""
+	}
+	return certFP(cr.cert.Certificate[0])
+}
+
+// syncCert pins this node's certificate in the replicated list if it
+// isn't yet (nodes that joined before pinning existed).
+func (c *Cluster) syncCert() {
+	n := c.st.State().Cluster.Nodes[c.ID()]
+	if n == nil || n.CertFP != "" || time.Since(c.lastCertSync) < 5*time.Second {
+		return
+	}
+	c.lastCertSync = time.Now()
+	fp := c.ownFP()
+	if fp == "" {
+		return
+	}
+	if _, err := c.st.Apply(store.NewCommand(store.OpClusterCert, "system", store.ClusterCert{ID: n.ID, CertFP: fp})); err != nil {
+		c.log.Debug("pinning this node's certificate failed", "err", err)
+	}
 }
 
 // Joined reports whether this node joined another node's cluster (rather

@@ -293,3 +293,19 @@ func TestWrongService(t *testing.T) {
 		t.Fatal("good certificate treated as wrong")
 	}
 }
+
+func TestMovesDNSHost(t *testing.T) {
+	saved := map[string]string{"CF_DNS_API_TOKEN": "t", "PDNS_API_URL": "https://pdns.lan"}
+	for k, want := range map[string]bool{
+		"CLOUDFLARE_BASE_URL": true, "OVH_ENDPOINT": true, "INFOBLOX_HOST": true, "EFFICIENTIP_HOSTNAME": true,
+		"F5XC_SERVER": true, "DNSUPDATE_NAMESERVER": true, "BINDMAN_MANAGER_ADDRESS": true, "ACME_DNS_API_BASE": true,
+		"CLOUDFLARE_TTL": false, "AWS_HOSTED_ZONE_ID": false, "HOSTINGER_API_TOKEN": false, "CF_DNS_API_TOKEN": false,
+	} {
+		if got := MovesDNSHost(saved, map[string]string{k: "https://elsewhere"}); got != want {
+			t.Errorf("%s: moves = %v, want %v", k, got, want)
+		}
+	}
+	if MovesDNSHost(saved, map[string]string{"PDNS_API_URL": "https://pdns.lan", "CLOUDFLARE_BASE_URL": ""}) {
+		t.Error("an unchanged or empty address counted as a move")
+	}
+}

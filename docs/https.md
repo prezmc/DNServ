@@ -62,7 +62,9 @@ Let's Encrypt checks that you own each name with a TXT record at
   with *Zone / Zone / Read* and *Zone / DNS / Edit*. Other logins the host
   supports are under **Other ways to sign in**. For the rest, the form
   shows every setting lego lists for that host. Saved values aren't shown
-  again; leave a box empty to keep it. When you save, DNServ adds and
+  again; leave a box empty to keep it. If you change an address setting
+  (an API URL, endpoint or server), type the login again too, so a saved
+  token is never sent somewhere new. When you save, DNServ adds and
   removes a test record for each name, so a wrong login shows up straight
   away.
 - **Set once, with a CNAME record.** For DNS hosts with no API. DNServ

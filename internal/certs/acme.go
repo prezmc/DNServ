@@ -107,6 +107,36 @@ func CleanDNSSettings(host string, in map[string]string) (map[string]string, err
 	return out, nil
 }
 
+// MovesDNSHost reports whether next changes where a DNS host's API is
+// reached (an address, endpoint, host or server setting) from saved. An
+// empty value in next means "keep the saved one", so it moves nothing.
+func MovesDNSHost(saved, next map[string]string) bool {
+	for k, v := range next {
+		if v = strings.TrimSpace(v); v != "" && isDestinationSetting(k) && v != saved[k] {
+			return true
+		}
+	}
+	return false
+}
+
+// isDestinationSetting reports whether a lego setting name says where
+// requests go, such as CLOUDFLARE_BASE_URL, OVH_ENDPOINT, PDNS_API_URL or
+// INFOBLOX_HOST.
+func isDestinationSetting(name string) bool {
+	parts := strings.Split(strings.ToUpper(name), "_")
+	for i, p := range parts {
+		switch p {
+		case "URL", "ENDPOINT", "HOST", "HOSTNAME", "SERVER", "NAMESERVER", "ADDRESS":
+			return true
+		case "BASE":
+			if i > 0 && parts[i-1] == "API" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // lego's DNS hosts read their settings from environment variables when
 // they are made, so they are made one at a time with the settings set
 // only for that moment.
