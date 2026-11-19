@@ -363,6 +363,10 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
 		}
 		for _, l := range req.AddLists {
 			l.URL = strings.TrimSpace(l.URL)
+			if l.URL != "" && !known[l.URL] && !isWebURL(l.URL) {
+				writeErr(w, http.StatusBadRequest, "list "+strconv.Quote(l.URL)+": use an http:// or https:// address")
+				return
+			}
 			if l.URL != "" && !known[l.URL] {
 				known[l.URL] = true
 				addLists = append(addLists, config.ListConfig{Name: strings.TrimSpace(l.Name), URL: l.URL})
@@ -408,6 +412,21 @@ func (a *API) saveGroup(w http.ResponseWriter, r *http.Request, p *Principal) {
 				return
 			}
 		}
+	}
+	// Managing devices doesn't on its own let someone loosen a group's
+	// filtering: changing which lists it uses or its own rules needs the
+	// same permission as changing the household's.
+	var was store.Group
+	if old := st.Groups[id]; old != nil {
+		was = old.Shared()
+	}
+	if (g.ListMode != was.ListMode || !slices.Equal(g.Lists, was.Lists)) && !p.Can(store.PermLists) {
+		writeErr(w, http.StatusForbidden, "changing which blocklists a group uses needs permission to manage blocklists")
+		return
+	}
+	if (g.HouseholdRules != was.HouseholdRules || !sameRules(g.Rules, was.Rules) || !sameAllowRules(g.Schedules, was.Schedules)) && !p.Can(store.PermRules) {
+		writeErr(w, http.StatusForbidden, "changing a group's rules needs permission to edit custom rules")
+		return
 	}
 	if len(addLists) > 0 {
 		cur := slices.Clone(a.Effective().Filtering.Lists)
@@ -465,4 +484,36 @@ func serviceIDs(ids []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// sameRules compares two rule lists, ignoring blank lines, comments,
+// spacing and order.
+func sameRules(a, b []string) bool {
+	return slices.Equal(ruleSet(a, false), ruleSet(b, false))
+}
+
+// sameAllowRules compares the allow rules (@@) in two sets of schedules:
+// schedules otherwise only add blocking.
+func sameAllowRules(a, b []store.Schedule) bool {
+	var x, y []string
+	for _, s := range a {
+		x = append(x, s.Rules...)
+	}
+	for _, s := range b {
+		y = append(y, s.Rules...)
+	}
+	return slices.Equal(ruleSet(x, true), ruleSet(y, true))
+}
+
+func ruleSet(lines []string, allowOnly bool) []string {
+	out := []string{}
+	for _, l := range lines {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") || strings.HasPrefix(l, "!") || (allowOnly && !strings.HasPrefix(l, "@@")) {
+			continue
+		}
+		out = append(out, l)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }

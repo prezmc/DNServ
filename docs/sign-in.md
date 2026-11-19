@@ -90,7 +90,12 @@ could ask for them. To replace one:
 ## Signed-in sessions and API tokens
 
 **Your account** lists the browsers signed in to your account, and you can
-sign any of them out. Changing your password signs out your other sessions.
+sign any of them out. That list is per server, because each server keeps its
+own sign-ins. **Sign out everywhere else** ends your other sessions on every
+server at once, and an admin can sign another user out everywhere from the
+**Users** page. Changing your password signs out your other sessions, and so
+does an admin resetting your 2FA. API tokens are separate: remove them under
+**API tokens**.
 
 Scripts use API tokens instead of signing in. Create one under **Your
 account > API tokens**. You pick which of your permissions each token gets,

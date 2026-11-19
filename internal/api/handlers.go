@@ -365,6 +365,30 @@ func (a *API) revokeMySession(w http.ResponseWriter, r *http.Request, p *Princip
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// signOutOthers ends the caller's other sessions on every server. This
+// one carries on with a fresh token.
+func (a *API) signOutOthers(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if !personOnly(w, p, "sign sessions out") {
+		return
+	}
+	if _, ok := a.apply(w, store.NewCommand(store.OpUserSignOut, p.Actor(), store.IDOnly{ID: p.User.ID})); !ok {
+		return
+	}
+	a.Sessions.RevokeUser(p.User.ID, p.Session.ID)
+	a.finishSignIn(w, r)
+}
+
+// signOutUser ends all of a user's sessions on every server (their API
+// tokens keep working; revoke those under API tokens).
+func (a *API) signOutUser(w http.ResponseWriter, r *http.Request, p *Principal) {
+	id := r.PathValue("id")
+	if _, ok := a.apply(w, store.NewCommand(store.OpUserSignOut, p.Actor(), store.IDOnly{ID: id})); !ok {
+		return
+	}
+	a.Sessions.RevokeUser(id, "")
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // --- users ---
 
 func (a *API) listUsers(w http.ResponseWriter, r *http.Request, p *Principal) {
@@ -382,6 +406,9 @@ func (a *API) listUsers(w http.ResponseWriter, r *http.Request, p *Principal) {
 // createUser adds an account with a temporary password. The new user must
 // enroll MFA at first sign-in.
 func (a *API) createUser(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if !personOnly(w, p, "add users") {
+		return
+	}
 	var req struct {
 		Username, Password, Role string
 		Perms                    []string
@@ -414,6 +441,9 @@ func (a *API) updateUser(w http.ResponseWriter, r *http.Request, p *Principal) {
 	if !readJSON(w, r, &req) {
 		return
 	}
+	if (req.Role != nil || req.Perms != nil) && !personOnly(w, p, "change roles or permissions") {
+		return
+	}
 	id := r.PathValue("id")
 	if _, ok := a.apply(w, store.NewCommand(store.OpUserUpdate, p.Actor(), store.UserUpdate{ID: id, Role: req.Role, Perms: req.Perms, Disabled: req.Disabled})); !ok {
 		return
@@ -433,9 +463,23 @@ func (a *API) deleteUser(w http.ResponseWriter, r *http.Request, p *Principal) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// personOnly refuses API tokens for changes that create a way to sign in
+// or widen what an account can do: a token must never be turnable into a
+// full sign-in. Scripts can still list and disable users.
+func personOnly(w http.ResponseWriter, p *Principal, what string) bool {
+	if p.Session == nil {
+		writeErr(w, http.StatusForbidden, "API tokens can't "+what+"; sign in to do it")
+		return false
+	}
+	return true
+}
+
 // setUserPassword lets an admin set a temporary password; the user's
 // sessions end.
 func (a *API) setUserPassword(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if !personOnly(w, p, "set passwords") {
+		return
+	}
 	var req struct{ Password string }
 	if !readJSON(w, r, &req) {
 		return
@@ -465,6 +509,9 @@ func (a *API) setUserPassword(w http.ResponseWriter, r *http.Request, p *Princip
 // resetMFA clears a user's second factor (lost phone); they enroll again
 // at next sign-in.
 func (a *API) resetMFA(w http.ResponseWriter, r *http.Request, p *Principal) {
+	if !personOnly(w, p, "reset two-factor sign-in") {
+		return
+	}
 	id := r.PathValue("id")
 	if _, ok := a.apply(w, store.NewCommand(store.OpMFAReset, p.Actor(), store.IDOnly{ID: id})); !ok {
 		return
@@ -642,6 +689,19 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 		writeErr(w, http.StatusBadRequest, "nothing to change")
 		return
 	}
+	cur := a.Effective().Filtering
+	for _, l := range []struct {
+		next *[]config.ListConfig
+		cur  []config.ListConfig
+	}{{patch.Lists, cur.Lists}, {patch.Allowlists, cur.Allowlists}} {
+		if l.next == nil {
+			continue
+		}
+		if err := checkListURLs(*l.next, l.cur); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 	if patch.Rules != nil {
 		for _, rule := range *patch.Rules {
 			body := rule
@@ -710,6 +770,27 @@ func (a *API) patchSettings(w http.ResponseWriter, r *http.Request, p *Principal
 		return
 	}
 	a.getSettings(w, r, p)
+}
+
+// checkListURLs allows only web addresses for lists set from the UI or
+// API. A file on the server (only possible from the config file) may stay
+// where it already is, but none can be added: a list file is read with
+// DNServ's own access, so a path would let whoever manages lists probe
+// any file in the container.
+func checkListURLs(next, cur []config.ListConfig) error {
+	for _, l := range next {
+		u := strings.TrimSpace(l.URL)
+		if isWebURL(u) || slices.ContainsFunc(cur, func(c config.ListConfig) bool { return strings.TrimSpace(c.URL) == u }) {
+			continue
+		}
+		return fmt.Errorf("list %q: use an http:// or https:// address", u)
+	}
+	return nil
+}
+
+func isWebURL(u string) bool {
+	l := strings.ToLower(u)
+	return strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://")
 }
 
 func (a *API) resetSettings(w http.ResponseWriter, r *http.Request, p *Principal) {

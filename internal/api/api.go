@@ -177,6 +177,7 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("PUT /api/v1/auth/dashboard", a.authed("", a.setDashboard))
 	m.HandleFunc("GET /api/v1/auth/sessions", a.authed("", a.mySessions))
 	m.HandleFunc("DELETE /api/v1/auth/sessions/{id}", a.authed("", a.revokeMySession))
+	m.HandleFunc("POST /api/v1/auth/sessions/sign-out-others", a.authed("", a.signOutOthers))
 	m.HandleFunc("POST /api/v1/auth/recovery-codes", a.authed("", a.newRecoveryCodes))
 	m.HandleFunc("POST /api/v1/auth/authenticator/begin", a.authed("", a.replaceTOTPBegin))
 	m.HandleFunc("POST /api/v1/auth/authenticator/confirm", a.authed("", a.replaceTOTPConfirm))
@@ -189,6 +190,7 @@ func (a *API) Handler() http.Handler {
 	m.HandleFunc("DELETE /api/v1/users/{id}", a.authed(store.PermUsers, a.deleteUser))
 	m.HandleFunc("POST /api/v1/users/{id}/password", a.authed(store.PermUsers, a.setUserPassword))
 	m.HandleFunc("POST /api/v1/users/{id}/reset-mfa", a.authed(store.PermUsers, a.resetMFA))
+	m.HandleFunc("POST /api/v1/users/{id}/sign-out", a.authed(store.PermUsers, a.signOutUser))
 	m.HandleFunc("GET /api/v1/sessions", a.authed(store.PermUsers, a.allSessions))
 	m.HandleFunc("DELETE /api/v1/sessions/{id}", a.authed(store.PermUsers, a.revokeAnySession))
 
@@ -330,6 +332,7 @@ func (a *API) session(r *http.Request, st *store.State) (*auth.Session, *store.U
 	}
 	u, ok := st.Users[s.UserID]
 	if !ok || u.Disabled || s.Created.Before(u.PasswordChangedAt.Add(-time.Second)) ||
+		s.Created.Before(u.SignedOutAt.Add(-time.Second)) || s.Created.Before(u.MFAResetAt.Add(-time.Second)) ||
 		(s.Stage == auth.StageFull && !u.MFAEnrolled()) {
 		a.Sessions.Delete(c.Value)
 		return nil, nil
