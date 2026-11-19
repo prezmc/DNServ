@@ -55,7 +55,10 @@ Leadership controls, under **Servers**:
   be cut off (a node can't tell a switched-off server from a broken link,
   and recovering both sides would leave two separate clusters). Nodes left
   out are locked out (their certificates are no longer accepted) until
-  they join again with a new code; their Cluster page says so.
+  they join again with a new code; their Cluster page says so. Each
+  node's own certificate is pinned in the cluster's settings, so a node
+  that was removed can't get back in with a new certificate either, even
+  though it still has the cluster's signing key.
 - **Join another DNServ instead** moves a node that is set up already into
   another cluster, replacing its accounts and settings.
 

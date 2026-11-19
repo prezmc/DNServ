@@ -294,8 +294,15 @@ func (a *API) acmeFrom(ctx context.Context, in httpsIn, cur store.HTTPSConfig, n
 	case store.ACMEDNSAPI:
 		src.DNSHost = in.ACME.DNSHost
 		settings := map[string]string{}
+		// Saved values (the host's login) are kept only for the same host
+		// at the same address: a token must never be sent to an address
+		// typed in after it was saved.
 		if saved != nil && saved.Method == store.ACMEDNSAPI && saved.DNSHost == src.DNSHost {
-			maps.Copy(settings, saved.DNSSettings)
+			if !certs.MovesDNSHost(saved.DNSSettings, in.ACME.DNSSettings) {
+				maps.Copy(settings, saved.DNSSettings)
+			} else if !sendsLogin(src.DNSHost, in.ACME.DNSSettings) {
+				return nil, errors.New("you changed the address DNServ uses to reach your DNS host, so type its login (API key or token) again too")
+			}
 		}
 		for k, v := range in.ACME.DNSSettings {
 			if strings.TrimSpace(v) != "" {
@@ -337,6 +344,18 @@ func (a *API) acmeFrom(ctx context.Context, in httpsIn, cur store.HTTPSConfig, n
 		return nil, errors.New("choose how DNServ proves you own the names")
 	}
 	return src, nil
+}
+
+// sendsLogin reports whether settings fill in any of host's login
+// settings.
+func sendsLogin(host string, settings map[string]string) bool {
+	h, _ := certs.DNSHost(host)
+	for _, kv := range h.Credentials {
+		if strings.TrimSpace(settings[kv[0]]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // Replaced in tests.

@@ -224,7 +224,7 @@ func replyErr(w http.ResponseWriter, err error) {
 // current member.
 func (c *Cluster) member(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if id := peerID(r); id == "" || !c.isMember(id) {
+		if cert := peerCert(r); cert == nil || !c.isMember(cert) {
 			reply(w, http.StatusForbidden, rpcReply{Error: errNotMember.Error(), Code: codeNotMember})
 			return
 		}
@@ -244,6 +244,10 @@ func (c *Cluster) rpcApply(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusConflict, rpcReply{Code: codeNotLeader, Error: "not the leader"})
 		return
 	}
+	if err := checkPin(data, peerCert(r)); err != nil {
+		replyErr(w, err)
+		return
+	}
 	f := rf.Apply(data, 5*time.Second)
 	if err := f.Error(); err != nil {
 		if errors.Is(err, raft.ErrNotLeader) {
@@ -259,6 +263,23 @@ func (c *Cluster) rpcApply(w http.ResponseWriter, r *http.Request) {
 		rep.Error, rep.Code = ar.err.Error(), errCode(ar.err)
 	}
 	reply(w, http.StatusOK, rep)
+}
+
+// checkPin lets a node pin only its own certificate, the one it is
+// talking over.
+func checkPin(data []byte, peer *x509.Certificate) error {
+	var cmd store.Command
+	if json.Unmarshal(data, &cmd) != nil || cmd.Op != store.OpClusterCert {
+		return nil
+	}
+	var d store.ClusterCert
+	if err := json.Unmarshal(cmd.Data, &d); err != nil {
+		return err
+	}
+	if peer == nil || peer.Subject.CommonName != d.ID || certFP(peer.Raw) != d.CertFP {
+		return errors.New("a node can only pin its own certificate")
+	}
+	return nil
 }
 
 type transferReq struct {
@@ -330,6 +351,16 @@ func (c *Cluster) rpcJoin(w http.ResponseWriter, r *http.Request) {
 		replyErr(w, store.ErrUnavailable)
 		return
 	}
+	// The certificate is made first so the join pins it.
+	cert, err := issue(st.Cluster.CACert, st.Cluster.CAKey, req.Node.ID, pub)
+	if err != nil {
+		replyErr(w, err)
+		return
+	}
+	if req.Node.CertFP, err = fingerprint(cert); err != nil {
+		replyErr(w, err)
+		return
+	}
 	res, err := c.st.Apply(store.NewCommand(store.OpClusterJoin, "system", store.ClusterJoin{
 		CodeID: req.CodeID, Hash: auth.HashToken(req.Secret), Node: req.Node,
 	}))
@@ -338,11 +369,6 @@ func (c *Cluster) rpcJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cs := c.st.State().Cluster
-	cert, err := issue(cs.CACert, cs.CAKey, req.Node.ID, pub)
-	if err != nil {
-		replyErr(w, err)
-		return
-	}
 	name, _ := res.(string)
 	c.poke()
 	reply(w, http.StatusOK, joinReply{Cert: cert, CA: cs.CACert, ClusterID: cs.ID, Name: name, Addr: req.Node.Addr})

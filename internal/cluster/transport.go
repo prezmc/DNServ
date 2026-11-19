@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"log/slog"
 	"net"
@@ -28,7 +29,7 @@ var errClosed = errors.New("listener closed")
 type mux struct {
 	ln       net.Listener
 	tlsConf  func() *tls.Config
-	isMember func(nodeID string) bool
+	isMember func(cert *x509.Certificate) bool
 	log      *slog.Logger
 
 	mu   sync.Mutex
@@ -36,7 +37,7 @@ type mux struct {
 	rpc  *chanListener
 }
 
-func newMux(ln net.Listener, tlsConf func() *tls.Config, isMember func(string) bool, log *slog.Logger) *mux {
+func newMux(ln net.Listener, tlsConf func() *tls.Config, isMember func(*x509.Certificate) bool, log *slog.Logger) *mux {
 	return &mux{ln: ln, tlsConf: tlsConf, isMember: isMember, log: log, rpc: newChanListener(ln.Addr())}
 }
 
@@ -68,7 +69,7 @@ func (m *mux) handle(conn net.Conn) {
 	case alpnRaft:
 		// Raft only from current members: a node that was removed, or
 		// left behind by a forced recovery, can't disturb the cluster.
-		if len(cs.PeerCertificates) == 0 || !m.isMember(cs.PeerCertificates[0].Subject.CommonName) {
+		if len(cs.PeerCertificates) == 0 || !m.isMember(cs.PeerCertificates[0]) {
 			m.log.Debug("refused raft connection", "remote", conn.RemoteAddr())
 			conn.Close()
 			return
@@ -174,10 +175,17 @@ func connContext(ctx context.Context, c net.Conn) context.Context {
 	return ctx
 }
 
-func peerID(r *http.Request) string {
+func peerCert(r *http.Request) *x509.Certificate {
 	cs, _ := r.Context().Value(tlsStateKey{}).(*tls.ConnectionState)
 	if cs == nil || len(cs.PeerCertificates) == 0 {
-		return ""
+		return nil
 	}
-	return cs.PeerCertificates[0].Subject.CommonName
+	return cs.PeerCertificates[0]
+}
+
+func peerID(r *http.Request) string {
+	if c := peerCert(r); c != nil {
+		return c.Subject.CommonName
+	}
+	return ""
 }

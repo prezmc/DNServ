@@ -100,6 +100,13 @@ func fingerprint(certPEM string) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
+// certFP is a certificate's pin: base64url SHA-256 of its DER, as kept in
+// store.Node.CertFP.
+func certFP(der []byte) string {
+	sum := sha256.Sum256(der)
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
 func pemString(typ string, b []byte) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: b}))
 }

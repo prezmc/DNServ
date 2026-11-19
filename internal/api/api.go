@@ -105,9 +105,13 @@ type API struct {
 	// set it).
 	smbDial func(ctx context.Context, network, addr string) (net.Conn, error)
 
-	names      namesCache
-	passkeyCer ceremonies
-	imp        imports
+	names namesCache
+	// passkeyCer holds sign-ins with a passkey alone (no account yet);
+	// passkeyAcct holds those of signed-in or half-signed-in users, so
+	// strangers can't crowd them out.
+	passkeyCer  ceremonies
+	passkeyAcct ceremonies
+	imp         imports
 
 	// mfaSteps guards against reuse of authenticator codes when the
 	// cluster can't record them (no leader). Per node, in memory.
@@ -121,14 +125,16 @@ type API struct {
 
 	now       func() time.Time
 	setupOnce sync.Mutex
-	setupCode string
+	// setupUpload lets one first-run restore upload be read at a time.
+	setupUpload chan struct{}
+	setupCode   string
 }
 
 // New creates the API. When there are no users yet it generates a one-time
 // setup code and logs it, so only someone who can read the container's
 // logs can claim the node.
 func New(st *store.Store, sess *auth.Sessions, base config.Config, log *slog.Logger) *API {
-	a := &API{Store: st, Sessions: sess, Throttle: auth.NewThrottle(), Base: base, Log: log, now: time.Now}
+	a := &API{Store: st, Sessions: sess, Throttle: auth.NewThrottle(), Base: base, Log: log, now: time.Now, setupUpload: make(chan struct{}, 1)}
 	if len(st.State().Users) == 0 {
 		a.setupCode = auth.NewSetupCode()
 		log.Warn("first-run setup: open the dashboard and enter this setup code", "setup_code", a.setupCode)
