@@ -69,7 +69,20 @@ func (c *SMB) with(ctx context.Context, fn func(fs *smb2.Share) error) error {
 		return smbError("opening the share", err)
 	}
 	defer fs.Umount()
-	return fn(fs.WithContext(ctx))
+	return contained(func() error { return fn(fs.WithContext(ctx)) })
+}
+
+// contained runs fn and turns a panic into an error. The SMB library is
+// no longer maintained and has known parsing bugs (GO-2026-5051 panics on
+// a bad directory listing), so a broken or hostile file server must not
+// be able to take the DNS server down during a scheduled backup.
+func contained(fn func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("the file server sent a reply DNServ couldn't read (%v)", r)
+		}
+	}()
+	return fn()
 }
 
 // smbError makes an SMB failure readable and adds a hint to the common

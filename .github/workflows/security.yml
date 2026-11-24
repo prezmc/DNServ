@@ -37,7 +37,9 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version-file: go.mod
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      # -show verbose also lists problems in imported code DNServ does not
+      # call, so the weekly log says what is waiting for an update.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 -show verbose ./...
 
   image:
     runs-on: ubuntu-latest
