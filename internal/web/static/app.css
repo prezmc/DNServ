@@ -603,3 +603,7 @@ a.tile.link-tile:hover { box-shadow: var(--shadow); outline: 1px solid var(--lin
 .tld-list label.inline { margin: .2rem 0; min-width: 0; white-space: nowrap; }
 .tld-code { font-family: var(--mono, ui-monospace, monospace); min-width: 3.4ch; }
 .tld-name { color: var(--muted); overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+/* Analyze: the analyzed lookup in its timeline */
+.an-time tr.hl td { background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.an-time td { padding: .3rem .5rem; vertical-align: top; }

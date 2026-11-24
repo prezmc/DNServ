@@ -2260,6 +2260,7 @@ async function queries(main) {
         multi && e.node ? h('div', { class: 'muted' }, 'via ', e.node) : null),
       h('td', {}, can('dashboard.view') && useHistory ? h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(e.name, filter.range === '1h' ? '24h' : filter.range) }, e.name) : h('span', { class: 'mono' }, e.name),
         ' ', h('span', { class: 'muted small' }, e.type), ' ', riskBadge(risk[e.name], true),
+        risk[e.name] && useHistory ? [' ', h('button', { class: 'link small', type: 'button', title: 'Guess which app or site made this lookup', onclick: () => analyzeDialog(e.name, [{ key: e.client, label: names[e.client] || e.client }], e.t) }, 'Analyze')] : null,
         (e.ips || []).length || (e.cnames || []).length ? h('div', { class: 'muted small mono', title: (e.cnames || []).concat(e.ips || []).join('\n') },
           (e.cnames || []).length ? '\u2192 ' + e.cnames[e.cnames.length - 1] + ' ' : '', (e.ips || []).slice(0, 2).join(', '), (e.ips || []).length > 2 ? ' +' + ((e.ips.length) - 2) : '',
           e.country ? h('span', { class: 'ql-cc', title: 'Address in ' + countryName(e.country) + ' (location data by DB-IP)' }, ' · ', flag(e.country), ' ', e.country) : null) : null),
@@ -2578,6 +2579,57 @@ function bar(part, top, blocked) {
   return h('div', { class: 'meter' + (blocked ? ' blocked' : ''), 'aria-hidden': 'true' }, s);
 }
 
+// analyzeDialog guesses which app or site made a device look a (risky)
+// domain up, from the device's other lookups around the same time.
+// devices: [{key, label}] to choose from; t: the lookup (unix µs), or
+// the latest one.
+async function analyzeDialog(name, devices, t) {
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Looking at nearby lookups…'));
+  const d = dialog('Where did this come from?', [body, h('div', { class: 'actions' }, h('button', { type: 'button', onclick: () => d.close() }, 'Close'))]);
+  d.classList.add('wide');
+  let dev = devices[0];
+  const load = async () => {
+    fill(body, h('p', { class: 'muted' }, 'Looking at nearby lookups…'));
+    let r;
+    const u = new URLSearchParams({ name, client: dev.key });
+    if (t) u.set('t', String(t));
+    try { r = await api('GET', '/analytics/analyze?' + u); } catch (e) { fill(body, msg('err', e.message)); return; }
+    const who = r.device || dev.label;
+    const pick = devices.length > 1 ? h('select', { 'aria-label': 'Device', onchange: (ev) => { dev = devices[ev.target.selectedIndex]; t = 0; load(); } },
+      devices.map(x => h('option', { selected: x === dev }, x.label))) : null;
+    const when = r.t ? new Date(r.t / 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+    const off = (s) => s === 0 ? '0 s' : (s > 0 ? '+' : '−') + Math.abs(s) + ' s';
+    const guess = (g) => h('div', { class: 'att' },
+      h('div', {}, h('span', { class: 'badge' + (g.confidence === 'likely' ? ' ok' : '') }, g.confidence === 'likely' ? 'Likely' : 'Possible')),
+      h('div', { class: 'grow' }, h('b', {}, g.label), g.category ? h('span', { class: 'muted small' }, ' · ', g.category) : null,
+        h('div', { class: 'small' }, g.reasons.join(' · ')),
+        h('div', { class: 'muted small mono' }, g.domains.map(x => x.name).join(', '))));
+    const empty = !r.detail ? 'This server doesn’t keep individual queries, so there’s nothing to compare.'
+      : !r.lookups && !r.t ? who + ' hasn’t looked this up in the last day.'
+        : 'Nothing else was looked up near it, which usually means an app or service working in the background.';
+    fill(body,
+      h('p', {}, h('span', { class: 'mono' }, name), ' ', pick ? ['from ', pick] : ['from ', h('b', {}, who)], when ? [' at ', when] : null),
+      h('p', { class: 'muted small' }, 'Based on what the same device looked up in the minute either side', r.moments > 1 ? ', at ' + r.moments + ' of the times it asked' : '', '. A guess from timing, not proof.'),
+      r.service ? h('p', { class: 'small' }, 'This domain is known to belong to ', h('b', {}, r.service.service), r.service.name && r.service.name !== 'Other' ? ' (' + r.service.name + ')' : '', '.')
+        : r.owner && r.owner.company ? h('p', { class: 'small' }, 'This domain is run by ', h('b', {}, r.owner.company), r.owner.category && r.owner.category !== 'Other' ? ' (' + r.owner.category + ')' : '', '.') : null,
+      r.period ? h('p', { class: 'small' }, who, ' looks this up ', fmtEvery(r.period), ' (', plural(r.lookups, 'time', 'times'), ' in the last day), so it’s probably an installed app checking in, not something being opened.') : null,
+      h('h3', {}, 'Best guess'),
+      r.guesses.length ? h('div', { class: 'atts' }, r.guesses.map(guess)) : h('p', { class: 'muted' }, empty),
+      r.companions.length ? h('p', { class: 'small' }, 'Also nearby: ', r.companions.map((c, i) => [i ? ', ' : '', c.label, h('span', { class: 'muted' }, ' (', c.category, ')')]),
+        h('span', { class: 'muted' }, '. These are things an app or page loads, so they hint at what kind it is.')) : null,
+      r.timeline.length ? h('details', { class: 'small' }, h('summary', {}, 'All lookups in that minute either side (', fmtNum(r.timeline.length), ')'),
+        h('div', { class: 'scroll' }, h('table', { class: 'an-time' }, h('tbody', {}, r.timeline.map(x => {
+          const [label, kind] = RESULTS[x.result] || [x.result, ''];
+          return h('tr', { class: x.target ? 'hl' : '' }, h('td', { class: 'num nowrap' }, off(x.dt)),
+            h('td', {}, h('button', { class: 'link mono', type: 'button', onclick: () => domainDialog(x.name, '24h') }, x.name), ' ', riskBadge(x.risk, true),
+              h('span', { class: 'muted' }, ' ', x.types.join(', '), x.group && !x.name.endsWith(x.group) ? ' · ' + x.group : '')),
+            h('td', { class: 'nowrap' }, h('span', { class: 'badge ' + kind }, label)));
+        }))))) : null,
+      coverage(r.nodes));
+  };
+  load();
+}
+
 // riskParts shows the arithmetic behind a score, as a small table.
 function riskParts(risk) {
   const parts = risk.parts || [];
@@ -2725,6 +2777,7 @@ async function domainDialog(name, range) {
   try { r = await api('GET', '/analytics/domain?' + new URLSearchParams({ name, range })); } catch (e) { fill(body, msg('err', e.message)); return; }
   const c = r.counts || { total: 0, blocked: 0 };
   const now = r.now || {};
+  const risky = r.risk && r.risk.score > 0 && can('querylog.view');
   const alsoOn = h('div', {}, h('h3', {}, 'On your lists'), h('p', { class: 'muted small' }, 'Checking your lists\u2026'));
   api('GET', '/analytics/alsoon?' + new URLSearchParams({ name })).then(x => {
     fill(alsoOn, h('h3', {}, 'On your lists'), !x.lists.length ? h('p', { class: 'muted small' }, 'No enabled list has a rule for this domain.')
@@ -2777,10 +2830,11 @@ async function domainDialog(name, range) {
     alsoOn,
     vtBox,
     r.devices && r.devices.length ? [h('h3', {}, 'Devices that asked'), h('div', { class: 'scroll' }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Device'), h('th', {}, 'Queries'), h('th', {}, 'Blocked'), risky ? h('th', {}) : null)),
       h('tbody', {}, r.devices.map(x => h('tr', {},
         h('td', {}, h('a', { href: '#/queries?' + new URLSearchParams({ client: x.device || x.key, search: name }), onclick: () => d.close() }, x.label || x.key)),
-        h('td', {}, fmtNum(x.total)), h('td', {}, fmtNum(x.blocked)))))))] : null,
+        h('td', {}, fmtNum(x.total)), h('td', {}, fmtNum(x.blocked)),
+        risky ? h('td', {}, h('button', { class: 'link', type: 'button', title: 'Guess which app or site made this device look it up', onclick: () => analyzeDialog(name, [{ key: x.device || x.key, label: x.label || x.key }]) }, 'Analyze')) : null)))))] : null,
     coverage(r.nodes));
 }
 
@@ -3019,6 +3073,7 @@ function securityCard(box, range, sec, reload) {
           });
         } }, 'Trust'));
       }
+      if (shown.length && can('querylog.view')) actions.push(h('button', { type: 'button', title: 'Guess which app or site made these lookups', onclick: () => analyzeDialog(x.name, shown) }, 'Analyze'));
       if (can('domains.allowblock')) actions.push(h('button', { class: 'icon', type: 'button', 'aria-label': 'Dismiss', title: 'Dismiss until a device reaches it again', onclick: () => dismiss(x.name, false) }, '✕'));
     }
     return h('div', { class: 'att' + (x.dismissed ? ' dim' : '') },

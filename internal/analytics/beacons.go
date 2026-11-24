@@ -163,3 +163,10 @@ func mergeBeacons(parts []*Result) []Beacon {
 	})
 	return out
 }
+
+// Beat says whether lookup times (unix seconds, ascending, one per
+// second at most) come on a steady beat, and its period in seconds.
+func Beat(times []int64) (int64, bool) {
+	b, ok := beat(times)
+	return b.Period, ok
+}
