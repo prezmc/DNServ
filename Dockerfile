@@ -3,7 +3,7 @@
 # the target (amd64 or arm64), instead of compiling under emulation, which
 # was 5-10x slower for the arm64 image. The cache mounts keep Go's module
 # and build caches between local builds.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
