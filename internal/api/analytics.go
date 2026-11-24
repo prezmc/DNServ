@@ -45,6 +45,7 @@ func (a *API) analyticsRoutes(m *http.ServeMux) {
 	m.HandleFunc("GET /api/v1/analytics/security", a.authed(store.PermDashboard, a.analyticsSecurity))
 	m.HandleFunc("GET /api/v1/analytics/cache", a.authed(store.PermDashboard, a.analyticsCache))
 	m.HandleFunc("GET /api/v1/analytics/beacons", a.authed(store.PermDashboard, a.analyticsBeacons))
+	m.HandleFunc("GET /api/v1/analytics/analyze", a.authed(store.PermQueryLog, a.analyticsAnalyze))
 	m.HandleFunc("POST /api/v1/analytics/dismiss", a.authed(store.PermAllowBlock, a.riskDismiss))
 	m.HandleFunc("GET /api/v1/analytics/scoring", a.authed(store.PermDashboard, a.scoringInfo))
 	m.HandleFunc("POST /api/v1/analytics/scoring/preview", a.authed(store.PermDashboard, a.scoringPreview))

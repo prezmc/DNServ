@@ -38,6 +38,17 @@ to block.
 - **Domain details** show the score, the reasons and **how the score adds
   up**, or that the domain was checked and nothing was found.
 
+## Finding the app behind a risky lookup
+
+**Analyze** (on risky rows in the Query log, on Needs attention items, and next to each device in a risky domain's details) guesses which app or site made a device look the domain up. It reads that device's other lookups in the minute either side, at up to five of the times it asked, and weighs them:
+
+- lookups just before count most (an app looks up its own name before what it loads), and names that show up near every one of those times count more;
+- a lookup whose answer was a CNAME to the risky domain, or one on the same site, is a strong hint;
+- ads, trackers and CDNs, and anything your blocklists blocked every time, are listed under **Also nearby** rather than as the source;
+- something the device looks up all the time (a mail or iCloud check) is marked as maybe unrelated, and a risky domain that is itself looked up on a steady beat is called out as background activity.
+
+It is a guess from timing, never proof, and it only works when individual queries are kept (History in Settings). It runs only when you press the button, from saved history on every server, so it never slows DNS answers.
+
 ## Where the data comes from
 
 | Source | Lists | Default points |
