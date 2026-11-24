@@ -61,3 +61,17 @@ func TestSMB(t *testing.T) {
 		t.Fatalf("missing folder: %v %v", l, err)
 	}
 }
+
+func TestContainedPanic(t *testing.T) {
+	err := contained(func() error {
+		var b []byte
+		_ = b[3] // what a malformed SMB reply does inside the library
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "couldn't read") {
+		t.Fatalf("got %v", err)
+	}
+	if err := contained(func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+}
