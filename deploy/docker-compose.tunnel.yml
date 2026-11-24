@@ -45,7 +45,7 @@ services:
     network_mode: "service:vpn"
     depends_on: [vpn]
     environment:
-      - TZ=America/Chicago
+      - TZ=Europe/London
       # Tunnel mode without a config file. You can also change these
       # later under Settings in the dashboard.
       - DNSERV_UPSTREAM_MODE=tunnel

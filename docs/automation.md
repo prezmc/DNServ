@@ -65,7 +65,7 @@ curl -s -H "Authorization: Bearer $TOKEN" "$DNSERV/api/v1/auth/me"
 ```
 
 ```json
-{"token":"nightly-script","perms":["dashboard.view","lists.manage"],"user":{"username":"shannon","role":"admin", ...}}
+{"token":"nightly-script","perms":["dashboard.view","lists.manage"],"user":{"username":"admin","role":"admin", ...}}
 ```
 
 `perms` is what this token may do. If you see

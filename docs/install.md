@@ -12,7 +12,7 @@ On a Linux server with Docker and Docker Compose:
 ```bash
 mkdir -p ~/dnserv && cd ~/dnserv
 curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml
-echo "TZ=America/Chicago" > .env      # your time zone, used by schedules
+echo "TZ=Europe/London" > .env      # your time zone, used by schedules
 docker compose up -d
 docker compose logs | grep setup_code
 ```
@@ -65,7 +65,7 @@ Put anything specific to this server in `.env`, next to
 
 | Setting | When you need it |
 |---|---|
-| `TZ=America/Chicago` | Always a good idea: group schedules use it |
+| `TZ=Europe/London` | Always a good idea: group schedules use it |
 | `DNSERV_HTTPS_PORT=8443` | Something else on the server already uses port 443 |
 | `DNSERV_WEB_PORT=8090` | Something else already uses port 8080 |
 | `DNSERV_CLUSTER_PORT=8091` and `DNSERV_CLUSTER_ADVERTISE=192.168.1.10:8091` | Something else already uses port 8081. The second line tells the other servers the new port |
@@ -94,7 +94,7 @@ If you'd rather use `docker run`, this is the same as the compose file:
 ```bash
 docker run -d --name dnserv --restart unless-stopped \
   -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
-  -e TZ=America/Chicago -v dnserv-data:/data ghcr.io/prezmc/dnserv:stable
+  -e TZ=Europe/London -v dnserv-data:/data ghcr.io/prezmc/dnserv:stable
 ```
 
 To update, `docker pull ghcr.io/prezmc/dnserv:stable`, then remove the

@@ -112,13 +112,13 @@ func TestPasskeys(t *testing.T) {
 	if b.Domain != "dns1.example.com" || b.Options.RP.ID != "dns1.example.com" {
 		t.Fatalf("passkey domain %q / %q, want this server's name only", b.Domain, b.Options.RP.ID)
 	}
-	admin.want(201, "POST", "/api/v1/auth/passkeys/finish", map[string]any{"ticket": b.Ticket, "name": "Shannon's Mac", "credential": key.create(b.Options)}, nil)
+	admin.want(201, "POST", "/api/v1/auth/passkeys/finish", map[string]any{"ticket": b.Ticket, "name": "Sam's Mac", "credential": key.create(b.Options)}, nil)
 	// The challenge works once.
 	admin.want(400, "POST", "/api/v1/auth/passkeys/finish", map[string]any{"ticket": b.Ticket, "name": "x", "credential": key.create(b.Options)}, nil)
 
 	var list []passkeyView
 	admin.want(200, "GET", "/api/v1/auth/passkeys", nil, &list)
-	if len(list) != 1 || list[0].Name != "Shannon's Mac" || !list[0].Synced || list[0].Domain != "dns1.example.com" {
+	if len(list) != 1 || list[0].Name != "Sam's Mac" || !list[0].Synced || list[0].Domain != "dns1.example.com" {
 		t.Fatalf("list %+v", list)
 	}
 	admin.want(204, "PATCH", "/api/v1/auth/passkeys/"+list[0].ID, map[string]any{"name": "MacBook"}, nil)

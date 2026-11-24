@@ -25,7 +25,7 @@ nobody can open one. Keep it in a password manager.
   backup there.
 - **A network share (SMB):** under **Where backups go**, choose **Set up** on **Network share**
   and enter the share as Windows or macOS shows it
-  (`\\nas.local\backups\dnserv` or `smb://192.168.1.254/backups`), with
+  (`\\nas.local\backups\dnserv` or `smb://192.168.1.50/backups`), with
   a user name and password. DNServ talks SMB 2/3 itself, so nothing needs
   mounting on the server. **Check and save** writes, reads and deletes a
   test file first; **Copy a backup now** sends one straight away. The
