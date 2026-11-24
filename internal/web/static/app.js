@@ -5308,7 +5308,7 @@ async function backupsPage(main) {
       h('p', { class: 'muted small' }, 'A shared folder on a NAS or a Windows PC, reached directly over SMB 2 or newer, so nothing has to be mounted on the server.'),
       form({}, [
         h('label', { for: 'smbsv' }, 'Share'),
-        h('input', { id: 'smbsv', name: 'server', type: 'text', value: bk.smb ? t.where : '', placeholder: '\\\\nas.local\\backups\\dnserv  or  smb://192.168.1.254/backups', spellcheck: 'false', required: true }),
+        h('input', { id: 'smbsv', name: 'server', type: 'text', value: bk.smb ? t.where : '', placeholder: '\\\\nas.local\\backups\\dnserv  or  smb://192.168.1.50/backups', spellcheck: 'false', required: true }),
         h('p', { class: 'muted small' }, 'Server, share and (optionally) a folder inside it, written the way Windows or macOS show it. Add :port after the server if it doesn’t use 445.'),
         h('label', { for: 'smbus' }, 'User name'),
         h('input', { id: 'smbus', name: 'user', type: 'text', value: t.user || '', autocomplete: 'off', spellcheck: 'false', required: true }),

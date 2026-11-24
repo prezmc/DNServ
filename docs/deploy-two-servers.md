@@ -65,7 +65,7 @@ On each server, the [standard install](install.md#install):
 ```bash
 mkdir -p ~/dnserv && cd ~/dnserv
 curl -fsSLO https://raw.githubusercontent.com/prezmc/DNServ/main/docker-compose.yml
-echo "TZ=America/Chicago" > .env
+echo "TZ=Europe/London" > .env
 docker compose up -d
 docker compose logs | grep setup_code
 ```

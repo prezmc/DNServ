@@ -22,7 +22,7 @@ backups. Works on Intel/AMD (amd64) and ARM (arm64, e.g. Raspberry Pi 4/5).
 ```bash
 docker run -d --name dnserv --restart unless-stopped \
   -p 53:53/udp -p 53:53/tcp -p 853:853 -p 443:443 -p 8080:8080 -p 8081:8081 \
-  -e TZ=America/Chicago -v dnserv-data:/data prezmcmahon/dnserv:stable
+  -e TZ=Europe/London -v dnserv-data:/data prezmcmahon/dnserv:stable
 docker logs dnserv | grep setup_code
 ```
 
@@ -70,7 +70,7 @@ Only `TZ` is worth setting for most people. All of these are optional.
 
 | Variable | Example | When you need it |
 |---|---|---|
-| `TZ` | `America/Chicago` | Always a good idea: blocking schedules use your local time |
+| `TZ` | `Europe/London` | Always a good idea: blocking schedules use your local time |
 | `DNSERV_CLUSTER_ADVERTISE` | `192.168.1.10:8091` | You run 2+ servers and changed host port 8081, or this server is reached at a different address |
 | `DNSERV_HTTPS` | `off` | Only to get back in after a bad dashboard certificate. Remove it afterwards |
 
